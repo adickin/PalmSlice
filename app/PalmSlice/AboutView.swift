@@ -46,7 +46,7 @@ struct AboutView: View {
                         Text("Version \(appVersion)")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
-                        Text("An on-device 3D printing slicer. Slicing runs entirely on your device — nothing is uploaded, and the app makes no network requests.")
+                        Text("An on-device 3D printing slicer. Slicing runs entirely on your device. The only network connection is the optional upload to an OctoPrint server you set up.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)

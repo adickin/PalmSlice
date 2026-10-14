@@ -8,6 +8,7 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 - New **Export G-code** sheet: rename the file before saving, then **Save to Files…** (choose any folder in Files / iCloud Drive), **Share…**, or **Send to OctoPrint…**. Export no longer silently copies into the app's Documents folder
 - OctoPrint integration (`OctoPrintClient.swift`): set the server address and API key once (key stored in the Keychain, with a Test Connection button), browse the server's folders, create new folders, and upload into any of them with a progress bar. Optional "select after upload" and "start printing after upload" toggles. Verified against OctoPrint 1.11.8
 - Info.plist: added `NSLocalNetworkUsageDescription` and ATS `NSAllowsLocalNetworking` (plain HTTP allowed only to local hosts). README, `PRIVACY.md`, and `APP_STORE_LISTING.md` updated — the app is no longer network-free
+- About screen no longer claims the app makes no network requests; it now mentions the optional OctoPrint upload
 
 ## 2026-10-04
 
