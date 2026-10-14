@@ -2,6 +2,13 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-10-14
+
+- Fixed the Export button opening a blank sheet: the share sheet was presented with `.sheet(isPresented:)` and read the exported URL before it was set. Export is now driven by `.sheet(item:)`
+- New **Export G-code** sheet: rename the file before saving, then **Save to Files…** (choose any folder in Files / iCloud Drive), **Share…**, or **Send to OctoPrint…**. Export no longer silently copies into the app's Documents folder
+- OctoPrint integration (`OctoPrintClient.swift`): set the server address and API key once (key stored in the Keychain, with a Test Connection button), browse the server's folders, create new folders, and upload into any of them with a progress bar. Optional "select after upload" and "start printing after upload" toggles. Verified against OctoPrint 1.11.8
+- Info.plist: added `NSLocalNetworkUsageDescription` and ATS `NSAllowsLocalNetworking` (plain HTTP allowed only to local hosts). README, `PRIVACY.md`, and `APP_STORE_LISTING.md` updated — the app is no longer network-free
+
 ## 2026-10-04
 
 - New app icon (pickup truck on a printer bed, replacing the boat) — also applied to the launch/splash image and `images/PalmSliceAppIcon.PNG` — cut out of its white rounded-square backing and filled to full-bleed 1024×1024 like the previous icon

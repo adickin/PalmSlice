@@ -35,9 +35,8 @@ struct ContentView: View {
     @EnvironmentObject var materialProfileStore: MaterialProfileStore
 
     @State private var state: SliceState = .idle
-    @State private var showShareSheet = false
-    /// Documents-folder copy of the sliced G-code, set once the user taps Export.
-    @State private var exportedURL: URL? = nil
+    /// Set when the user taps Export; drives the export sheet.
+    @State private var exportRequest: ExportRequest? = nil
     @State private var showFilePicker = false
     @State private var showErrorAlert = false
     @State private var showProfilePicker = false
@@ -207,10 +206,8 @@ struct ContentView: View {
         .sheet(isPresented: $showFilePicker) {
             DocumentPickerView { url in importSTL(from: url) }
         }
-        .sheet(isPresented: $showShareSheet) {
-            if let url = exportedURL {
-                ShareSheetView(items: [url]).ignoresSafeArea()
-            }
+        .sheet(item: $exportRequest) { req in
+            ExportSheetView(request: req)
         }
         .sheet(isPresented: $showProfilePicker) { ProfilePickerView() }
         .sheet(isPresented: $showSliceProfilePicker) { SliceProfilePickerView() }
@@ -1010,23 +1007,11 @@ struct ContentView: View {
         return false
     }
 
-    /// Copies the previewed slice from the temp folder into Documents (visible in
-    /// Files) and presents the share sheet. Slicing alone never writes to Documents.
+    /// Opens the export sheet for the previewed slice, where the user can rename
+    /// it and choose Files, Share, or OctoPrint. Slicing alone never writes outside temp.
     private func exportGCode() {
         guard case .done(let tempURL, _, _) = state else { return }
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let dest = docs.appendingPathComponent(tempURL.lastPathComponent)
-        do {
-            if FileManager.default.fileExists(atPath: dest.path) {
-                try FileManager.default.removeItem(at: dest)
-            }
-            try FileManager.default.copyItem(at: tempURL, to: dest)
-            exportedURL = dest
-            showShareSheet = true
-        } catch {
-            state = .failed(message: "Could not export G-code: \(error.localizedDescription)")
-            showErrorAlert = true
-        }
+        exportRequest = ExportRequest(sourceURL: tempURL)
     }
 
     // MARK: - File import
@@ -1303,7 +1288,6 @@ struct ContentView: View {
 
         await MainActor.run {
             state = .done(gcodeURL: gcodeURL, printTime: printTime, filamentG: filamentG)
-            exportedURL = nil
             parsedLayers = layers
             currentLayerIndex = max(0, layers.count - 1)
             showLayerPreview = !layers.isEmpty

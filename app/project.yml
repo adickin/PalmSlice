@@ -180,8 +180,14 @@ targets:
 
         UILaunchStoryboardName: LaunchScreen
 
-        # No networking anywhere in the app (fully on-device) — skips the
-        # export-compliance question on every App Store Connect submission.
+        # OctoPrint export talks to a printer on the local network. Plain-HTTP
+        # access is allowed only for local hosts (IPs, .local, unqualified names).
+        NSLocalNetworkUsageDescription: PalmSlice connects to your OctoPrint server on the local network to upload G-code.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+
+        # Only OS-provided encryption (URLSession HTTPS for OctoPrint) — exempt,
+        # so this skips the export-compliance question on every submission.
         ITSAppUsesNonExemptEncryption: false
 
   PalmSliceTests:

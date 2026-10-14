@@ -17,7 +17,7 @@ can't be drafted here — see the bottom of this file.
 
 ## Promotional Text (170 chars max)
 
-Slice STL files into printer-ready G-code right on your iPhone or iPad. No account, no cloud, no network — everything runs on your device.
+Slice STL files into printer-ready G-code right on your iPhone or iPad. No account, no cloud — slicing runs on your device. Send G-code straight to OctoPrint.
 
 ## Description
 
@@ -29,7 +29,8 @@ SLICE ANYWHERE
 • Import STL files from the Files app
 • Slice on-device — no cloud, no account, no internet connection needed
 • Preview the sliced model layer by layer before you export
-• Export G-code to Files, AirDrop, or share it anywhere via the share sheet
+• Rename and export G-code to Files, AirDrop, or anywhere via the share sheet
+• Upload directly to OctoPrint — pick a folder or create a new one
 
 PLACE AND ADJUST MODELS
 • Move, rotate, and scale with on-screen 3D gizmos or type exact values
@@ -43,7 +44,7 @@ PROFILES FOR YOUR PRINTER
 • Control layer height, walls, infill, supports, brim/skirt/raft, ironing, speeds, temperatures, retraction, and fan settings
 
 PRIVATE BY DESIGN
-PalmSlice collects no data. It makes no network requests, has no analytics, and never leaves your device.
+PalmSlice collects no data. No analytics, no accounts, no servers of ours. The only network connection is the optional OctoPrint upload to a server you set up.
 
 BETA NOTE
 Profiles other than the Ender 3 S1 have not been print-tested and are marked "Untested" in the app. Please verify first layers and start/end G-code on your own printer.
@@ -70,11 +71,14 @@ Answer "None" to every content question (no objectionable content, no user-gener
 ## Export Compliance
 
 `ITSAppUsesNonExemptEncryption = false` is already set in Info.plist — answer
-"No" if asked about encryption.
+"No" if asked about encryption. (The OctoPrint upload uses only OS-provided
+HTTPS via URLSession, which is exempt.)
 
 ## App Review Notes
 
-PalmSlice has no login and no network access. To test: tap the + / import
+PalmSlice has no login. Network access is used only for the optional OctoPrint
+upload (Export → Set Up OctoPrint), which needs a user-run OctoPrint server on
+the local network; everything else works offline. To test: tap the + / import
 button, choose any `.stl` file from Files (or use a sample), pick a printer and
 slice profile, then tap Slice, review the layer preview, and tap Export G-code.
 The app is open source (AGPL-3.0): https://github.com/adickin/ISlicer

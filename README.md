@@ -1,8 +1,8 @@
 # PalmSlice
 
-An iOS on-device 3D printing slicer. Loads an STL, slices it using libslic3r (PrusaSlicer's C++ core compiled as a static library), and exports G-code directly to the iOS Files app.
+An iOS on-device 3D printing slicer. Loads an STL, slices it using libslic3r (PrusaSlicer's C++ core compiled as a static library), and exports G-code to the iOS Files app, the share sheet, or an OctoPrint server on your local network.
 
-No network calls. No cloud. Runs entirely on-device.
+No cloud. No account. Slicing runs entirely on-device; the only network traffic is the optional OctoPrint upload you trigger yourself.
 
 ## NOTE
 
