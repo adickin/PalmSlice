@@ -4,6 +4,8 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-10-16
 
+- iPad: the 3D view now runs edge to edge behind the Models and Slice columns, which are translucent dark glass (always dark, to match the viewer) instead of opaque grey/black panels; the floating portrait panels use the same glass
+- Build number bumped to 3 for the next TestFlight upload
 - **iPad layout**: on regular-width screens the viewer gets a **Models** column (model list with sizes, swipe/long-press to remove, plus the full Move / Rotate / Scale form inline) and a **Slice** column (output filename, profiles, status, Slice / Export, About). Columns dock beside the viewer when the window is ≥ 1000 pt wide and float over it one at a time when narrower (iPad portrait); Slide Over and narrow Split View fall back to the phone layout. Toolbar buttons show/hide each column
 - iPad drag-and-drop: drop STL files from Files onto the viewer to import them. Keyboard shortcuts ⌘O (add STL), ⌘R (slice), ⌘E (export)
 - **Apple Pencil**: Pencil drags models across the bed and drags gizmo handles while fingers orbit the camera; double-tap / squeeze cycles Move → Rotate → Scale (respects the system "Ignore" setting); Pencil hover (M2+ iPads) and trackpad pointer highlight the gizmo handle under the tip

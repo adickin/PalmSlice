@@ -14,7 +14,7 @@
 - [x] **Build number bumped to 2** — `CFBundleVersion: "2"` in `project.yml` (1.0 (1) already uploaded)
 - [x] **App Store listing copy drafted** — `APP_STORE_LISTING.md` (name, subtitle, description, keywords, category, age rating, review notes). Screenshots still need to be captured manually
 - [ ] **App Store screenshots** — required size 6.9"; suggested shot list in `APP_STORE_LISTING.md`
-- [x] **Upload build 1.0 (2)** — archived and uploaded via `xcodebuild -exportArchive` (`method: app-store-connect`, `destination: upload`) on 2026-10-14; includes the export sheet and OctoPrint upload. Next upload needs `CFBundleVersion: "3"`
+- [x] **Upload build 1.0 (2)** — archived and uploaded via `xcodebuild -exportArchive` (`method: app-store-connect`, `destination: upload`) on 2026-10-14; includes the export sheet and OctoPrint upload. `CFBundleVersion` bumped to `"3"` for the next upload (iPad UI + Apple Pencil)
 - [ ] **Broaden real-device test coverage** — currently validated on iPhone 14 Pro → Ender 3 S1 with real prints; try more STL geometries/sizes to rule out crashes/memory pressure on larger meshes
 - [x] **basic automated tests** — new `PalmSliceTests` XCTest target (hosted by `PalmSlice`, auto-attached by xcodegen); 15 tests covering profile Codable round-trips, built-in profile sanity, bridge-int enum uniqueness, and `GCodeParser` layer/extrusion-type parsing — all passing on `iphonesimulator`
 

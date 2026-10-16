@@ -154,7 +154,7 @@ targets:
       properties:
         CFBundleDisplayName: PalmSlice
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "2"
+        CFBundleVersion: "3"
 
         # Files app integration — shows app's Documents in the Files browser
         UIFileSharingEnabled: true

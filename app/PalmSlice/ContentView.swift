@@ -297,43 +297,42 @@ struct ContentView: View {
     /// the viewer one at a time instead of docking beside it.
     private static let dockedColumnsMinWidth: CGFloat = 1000
 
+    private static let sidebarWidth: CGFloat = 320
+    private static let inspectorWidth: CGFloat = 320
+
+    /// The 3D view always runs edge to edge; the columns sit on top of it as
+    /// translucent material so the scene shows through instead of hard black/grey walls.
     private var regularLayout: some View {
         GeometryReader { geo in
             let docked = geo.size.width >= Self.dockedColumnsMinWidth
-            Group {
-                if docked {
-                    HStack(spacing: 0) {
-                        if showSidebar {
-                            iPadSidebar
-                                .frame(width: 320)
-                                .transition(.move(edge: .leading))
-                            Divider().ignoresSafeArea()
+            ZStack {
+                sceneViewer
+                    .ignoresSafeArea()
+                    .onDrop(of: [UTType.data], isTargeted: nil, perform: importDroppedSTLs)
+
+                // In docked mode keep the overlay buttons beside the columns, not under them.
+                iPadViewerOverlay
+                    .padding(.leading, docked && showSidebar ? Self.sidebarWidth : 0)
+                    .padding(.trailing, docked && showInspector ? Self.inspectorWidth : 0)
+
+                HStack(spacing: 0) {
+                    if showSidebar {
+                        Group {
+                            if docked { dockedColumn(iPadSidebar, width: Self.sidebarWidth) }
+                            else { floatingColumn(iPadSidebar) }
                         }
-                        iPadViewer
-                        if showInspector {
-                            Divider().ignoresSafeArea()
-                            iPadInspector
-                                .frame(width: 320)
-                                .transition(.move(edge: .trailing))
-                        }
+                        .transition(.move(edge: .leading).combined(with: .opacity))
                     }
-                } else {
-                    ZStack {
-                        iPadViewer
-                        HStack(spacing: 0) {
-                            if showSidebar {
-                                floatingColumn(iPadSidebar)
-                                    .transition(.move(edge: .leading).combined(with: .opacity))
-                            }
-                            Spacer(minLength: 0)
-                            if showInspector {
-                                floatingColumn(iPadInspector)
-                                    .transition(.move(edge: .trailing).combined(with: .opacity))
-                            }
+                    Spacer(minLength: 0)
+                    if showInspector {
+                        Group {
+                            if docked { dockedColumn(iPadInspector, width: Self.inspectorWidth) }
+                            else { floatingColumn(iPadInspector) }
                         }
-                        .padding(.horizontal, 88)   // keep the overlay buttons uncovered
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
+                .padding(.horizontal, docked ? 0 : 88)   // floating: keep the overlay buttons uncovered
             }
             .onAppear { isFloatingColumns = !docked; enforceSingleFloatingColumn(preferInspector: true) }
             .onChange(of: docked) { d in
@@ -347,25 +346,26 @@ struct ContentView: View {
                 }
             }
         }
-        .background(Color(.systemGroupedBackground))
     }
 
-    private var iPadViewer: some View {
-        ZStack {
-            sceneViewer
-                .ignoresSafeArea(edges: [.top, .bottom])
-            iPadViewerOverlay
-        }
-        .onDrop(of: [UTType.data], isTargeted: nil, perform: importDroppedSTLs)
+    /// Full-height translucent column pinned to a screen edge (wide windows).
+    private func dockedColumn<Content: View>(_ content: Content, width: CGFloat) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .frame(width: width)
+            .background(.ultraThinMaterial, ignoresSafeAreaEdges: .all)
+            // The viewer is always dark; light-mode material over it reads as muddy grey.
+            .environment(\.colorScheme, .dark)
     }
 
     private func floatingColumn<Content: View>(_ content: Content) -> some View {
         content
             .scrollContentBackground(.hidden)
             .frame(width: 340)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .shadow(color: .black.opacity(0.25), radius: 16, y: 4)
+            .environment(\.colorScheme, .dark)
             .padding(.vertical, 12)
     }
 
