@@ -56,6 +56,12 @@ struct ContentView: View {
     @State private var configDecisionContinuation: CheckedContinuation<SliceConfigDecision, Never>?
     @State private var isPanelExpanded = true
 
+    // iPad (regular width) layout: collapsible side columns around the viewer.
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var showSidebar = true
+    @State private var showInspector = true
+    @State private var isFloatingColumns = false
+
     // Multi-model state
     @State private var models: [PlacedModel] = []
     @State private var selectedModelID: UUID? = nil
@@ -124,70 +130,13 @@ struct ContentView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Group {
-                if showLayerPreview && !parsedLayers.isEmpty {
-                    GCodeSceneView(
-                        layers: parsedLayers,
-                        currentLayerIndex: currentLayerIndex,
-                        bedX: bedXVal,
-                        bedY: bedYVal
-                    )
-                } else {
-                    STLSceneView(
-                        models: models,
-                        selectedModelID: selectedModelID,
-                        bedX: bedXVal,
-                        bedY: bedYVal,
-                        bedZ: bedZVal,
-                        showWireframe: showWireframe,
-                        gizmoMode: gizmoMode,
-                        lockScale: lockScale,
-                        didSetCamera: cameraHasBeenSet,
-                        onTransformChange: { id, newTransform in
-                            if let idx = models.firstIndex(where: { $0.id == id }) {
-                                models[idx].transform = newTransform
-                            }
-                        },
-                        onSelectionChange: { id in
-                            selectedModelID = id
-                        },
-                        onDragEnded: {
-                            updateIntersections()
-                        },
-                        onCameraSet: {
-                            cameraHasBeenSet = true
-                        }
-                    )
-                    .overlay {
-                        if isParsingSTL {
-                            Color(.systemGray6).opacity(0.7)
-                                .overlay { ProgressView("Loading…") }
-                        }
-                    }
-                }
+        Group {
+            if horizontalSizeClass == .regular {
+                regularLayout
+            } else {
+                compactLayout
             }
-            .ignoresSafeArea()
-
-            viewerControlsOverlay
-
-            if showLayerPreview && !parsedLayers.isEmpty {
-                layerSliderView
-            }
-
-            // Sits just above the collapsed panel's bottom-right corner; the
-            // expanded panel (full width, much taller) naturally draws over it
-            // since it's added to the ZStack afterward.
-            HStack {
-                Spacer()
-                infoButton
-            }
-            .padding(.trailing, 16)
-            .padding(.bottom, 140)
-
-            bottomPanel
         }
-        .ignoresSafeArea(edges: .top)
         .onChange(of: viewerColorMode) { _ in
             let mode = viewerColorMode
             for model in models {
@@ -206,6 +155,14 @@ struct ContentView: View {
         .sheet(isPresented: $showFilePicker) {
             DocumentPickerView { url in importSTL(from: url) }
         }
+        #if DEBUG
+        // Simulator scripting: `SIMCTL_CHILD_PALMSLICE_DEBUG_STL=/path/a.stl xcrun simctl launch …`
+        .task {
+            if let path = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_STL"], models.isEmpty {
+                importSTL(from: URL(fileURLWithPath: path))
+            }
+        }
+        #endif
         .sheet(item: $exportRequest) { req in
             ExportSheetView(request: req)
         }
@@ -300,6 +257,419 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Phone layout
+
+    private var compactLayout: some View {
+        ZStack(alignment: .bottom) {
+            sceneViewer
+                .ignoresSafeArea()
+
+            viewerControlsOverlay
+
+            if showLayerPreview && !parsedLayers.isEmpty {
+                layerSliderView
+            }
+
+            // Sits just above the collapsed panel's bottom-right corner; the
+            // expanded panel (full width, much taller) naturally draws over it
+            // since it's added to the ZStack afterward.
+            HStack {
+                Spacer()
+                infoButton
+            }
+            .padding(.trailing, 16)
+            .padding(.bottom, 140)
+
+            bottomPanel
+        }
+        .ignoresSafeArea(edges: .top)
+    }
+
+    // MARK: - iPad layout
+    //
+    // Regular width (iPad full screen, or the larger side of Split View): models +
+    // transform in a left sidebar, the viewer in the middle, and output / profiles /
+    // slice actions in a right inspector. Same state and actions as the phone layout;
+    // in Slide Over or narrow Split View the size class drops to compact and the phone
+    // layout takes over.
+
+    /// Below this width (iPad portrait, wide Split View) the side columns float over
+    /// the viewer one at a time instead of docking beside it.
+    private static let dockedColumnsMinWidth: CGFloat = 1000
+
+    private var regularLayout: some View {
+        GeometryReader { geo in
+            let docked = geo.size.width >= Self.dockedColumnsMinWidth
+            Group {
+                if docked {
+                    HStack(spacing: 0) {
+                        if showSidebar {
+                            iPadSidebar
+                                .frame(width: 320)
+                                .transition(.move(edge: .leading))
+                            Divider().ignoresSafeArea()
+                        }
+                        iPadViewer
+                        if showInspector {
+                            Divider().ignoresSafeArea()
+                            iPadInspector
+                                .frame(width: 320)
+                                .transition(.move(edge: .trailing))
+                        }
+                    }
+                } else {
+                    ZStack {
+                        iPadViewer
+                        HStack(spacing: 0) {
+                            if showSidebar {
+                                floatingColumn(iPadSidebar)
+                                    .transition(.move(edge: .leading).combined(with: .opacity))
+                            }
+                            Spacer(minLength: 0)
+                            if showInspector {
+                                floatingColumn(iPadInspector)
+                                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                            }
+                        }
+                        .padding(.horizontal, 88)   // keep the overlay buttons uncovered
+                    }
+                }
+            }
+            .onAppear { isFloatingColumns = !docked; enforceSingleFloatingColumn(preferInspector: true) }
+            .onChange(of: docked) { d in
+                isFloatingColumns = !d
+                if d {
+                    // Rotating to landscape: there's room again for whatever portrait hid.
+                    showSidebar = true
+                    showInspector = true
+                } else {
+                    enforceSingleFloatingColumn(preferInspector: true)
+                }
+            }
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private var iPadViewer: some View {
+        ZStack {
+            sceneViewer
+                .ignoresSafeArea(edges: [.top, .bottom])
+            iPadViewerOverlay
+        }
+        .onDrop(of: [UTType.data], isTargeted: nil, perform: importDroppedSTLs)
+    }
+
+    private func floatingColumn<Content: View>(_ content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .frame(width: 340)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: .black.opacity(0.25), radius: 16, y: 4)
+            .padding(.vertical, 12)
+    }
+
+    /// Floating columns overlap each other in portrait, so only one is open at a time.
+    private func enforceSingleFloatingColumn(preferInspector: Bool) {
+        guard isFloatingColumns, showSidebar, showInspector else { return }
+        if preferInspector { showSidebar = false } else { showInspector = false }
+    }
+
+    private func toggleSidebar() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            showSidebar.toggle()
+            enforceSingleFloatingColumn(preferInspector: false)
+        }
+    }
+
+    private func toggleInspector() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            showInspector.toggle()
+            enforceSingleFloatingColumn(preferInspector: true)
+        }
+    }
+
+    private var iPadViewerOverlay: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                overlayButton(icon: "sidebar.left", label: "Models", active: showSidebar) { toggleSidebar() }
+                Spacer()
+                VStack(spacing: 10) {
+                    overlayButton(icon: "sidebar.right", label: "Slice", active: showInspector) { toggleInspector() }
+                    Divider().frame(width: 36).padding(.vertical, 2)
+                    viewerToolButtons(includeValues: false)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            Spacer()
+
+            if !hasModels && !isParsingSTL {
+                emptyViewerHint
+                Spacer()
+            }
+
+            if showLayerPreview && !parsedLayers.isEmpty {
+                layerSliderCard
+                    .frame(maxWidth: 560)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 20)
+            }
+        }
+    }
+
+    private var emptyViewerHint: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "cube.transparent")
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
+            Text("Drop an STL here, or")
+                .foregroundStyle(.secondary)
+            Button { showFilePicker = true } label: {
+                Label("Add STL", systemImage: "plus.app")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(24)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var iPadSidebar: some View {
+        List {
+            Section {
+                ForEach(models) { model in
+                    sidebarModelRow(model)
+                }
+                Button { showFilePicker = true } label: {
+                    Label("Add STL…", systemImage: "plus")
+                }
+                .keyboardShortcut("o", modifiers: .command)
+                .disabled(isBusy)
+            } header: {
+                Text("Models")
+            } footer: {
+                if anyIntersecting {
+                    Text("Models highlighted in red overlap each other or extend past the bed.")
+                }
+            }
+
+            if showLayerPreview {
+                Section {
+                    Button { showLayerPreview = false } label: {
+                        Label("Back to Model View to Edit", systemImage: "cube.transparent")
+                    }
+                }
+            } else if let model = selectedModel {
+                TransformPanelView(
+                    transform: selectedTransformBinding,
+                    meshInfo: model.meshInfo,
+                    bedX: bedXVal,
+                    bedY: bedYVal,
+                    bedZ: bedZVal,
+                    lockScale: $lockScale,
+                    embedded: true
+                )
+                .disabled(isBusy)
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    @ViewBuilder
+    private func sidebarModelRow(_ model: PlacedModel) -> some View {
+        let isSelected = model.id == selectedModelID
+        Button { selectedModelID = model.id } label: {
+            HStack(spacing: 10) {
+                Image(systemName: model.isIntersecting ? "exclamationmark.triangle.fill" : "cube.fill")
+                    .foregroundStyle(model.isIntersecting ? Color.red : Color.accentColor)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.name)
+                        .lineLimit(1)
+                        .foregroundStyle(model.isIntersecting ? Color.red : Color.primary)
+                    if let info = model.meshInfo {
+                        let s = model.transform.scale
+                        Text(String(format: "%.1f \u{00d7} %.1f \u{00d7} %.1f mm",
+                                    info.sizeMMX * s.x, info.sizeMMZ * s.y, info.sizeMMY * s.z))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .listRowBackground(isSelected ? Color.accentColor.opacity(0.15) : nil)
+        .disabled(isBusy)
+        .swipeActions {
+            Button(role: .destructive) { removeModel(id: model.id) } label: {
+                Label("Remove", systemImage: "trash")
+            }
+        }
+        .contextMenu {
+            Button(role: .destructive) { removeModel(id: model.id) } label: {
+                Label("Remove", systemImage: "trash")
+            }
+        }
+    }
+
+    private var iPadInspector: some View {
+        List {
+            Section("Output") {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(panelModelSummary)
+                        .font(.headline)
+                    if let sp = sliceProfileStore.selectedProfile {
+                        Text(sp.pickerSubtitle)
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("No slice profile selected")
+                            .font(.caption).foregroundStyle(.red)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.badge.gearshape")
+                        .foregroundStyle(.secondary)
+                    TextField(autoOutputFileName, text: $exportFileName)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .disabled(isBusy)
+                }
+                .font(.subheadline)
+            }
+
+            Section("Profiles") {
+                profileRows
+            }
+
+            Section("Status") {
+                HStack(alignment: .top, spacing: 12) {
+                    statusIcon
+                    Text(statusMessage)
+                        .font(.subheadline)
+                        .multilineTextAlignment(.leading)
+                }
+                if case .slicing(_, let p) = state {
+                    ProgressView(value: p).animation(.linear(duration: 0.15), value: p)
+                }
+            }
+
+            Section {
+                actionButtons
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            }
+
+            Section {
+                Button { showAbout = true } label: {
+                    Label("About & Licenses", systemImage: "info.circle")
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    private func removeModel(id: UUID) {
+        models.removeAll { $0.id == id }
+        if selectedModelID == id {
+            selectedModelID = models.first?.id
+        }
+        updateIntersections()
+    }
+
+    /// Drag-and-drop from Files / other apps onto the viewer. Each provider's file is
+    /// only valid inside its load callback, so it's staged to temp before importSTL
+    /// (which makes its own copy) runs on the main actor.
+    private func importDroppedSTLs(_ providers: [NSItemProvider]) -> Bool {
+        let stlProviders = providers.filter { provider in
+            guard let name = provider.suggestedName else { return true }
+            let ext = URL(fileURLWithPath: name).pathExtension.lowercased()
+            return ext.isEmpty || ext == "stl"
+        }
+        guard !stlProviders.isEmpty, !isBusy else { return false }
+        for provider in stlProviders {
+            let typeID = provider.registeredTypeIdentifiers.first ?? UTType.data.identifier
+            provider.loadFileRepresentation(forTypeIdentifier: typeID) { url, _ in
+                guard let url else { return }
+                var name = provider.suggestedName ?? url.lastPathComponent
+                if URL(fileURLWithPath: name).pathExtension.isEmpty { name += ".stl" }
+                guard URL(fileURLWithPath: name).pathExtension.lowercased() == "stl" else { return }
+                let stagingDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("drop-" + UUID().uuidString, isDirectory: true)
+                let staged = stagingDir.appendingPathComponent(name)
+                do {
+                    try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+                    try FileManager.default.copyItem(at: url, to: staged)
+                } catch { return }
+                DispatchQueue.main.async {
+                    importSTL(from: staged)
+                    try? FileManager.default.removeItem(at: stagingDir)
+                }
+            }
+        }
+        return true
+    }
+
+    // MARK: - 3D viewer (shared by both layouts)
+
+    @ViewBuilder
+    private var sceneViewer: some View {
+        if showLayerPreview && !parsedLayers.isEmpty {
+            GCodeSceneView(
+                layers: parsedLayers,
+                currentLayerIndex: currentLayerIndex,
+                bedX: bedXVal,
+                bedY: bedYVal
+            )
+        } else {
+            STLSceneView(
+                models: models,
+                selectedModelID: selectedModelID,
+                bedX: bedXVal,
+                bedY: bedYVal,
+                bedZ: bedZVal,
+                showWireframe: showWireframe,
+                gizmoMode: gizmoMode,
+                lockScale: lockScale,
+                didSetCamera: cameraHasBeenSet,
+                onTransformChange: { id, newTransform in
+                    if let idx = models.firstIndex(where: { $0.id == id }) {
+                        models[idx].transform = newTransform
+                    }
+                },
+                onSelectionChange: { id in
+                    selectedModelID = id
+                },
+                onDragEnded: {
+                    updateIntersections()
+                },
+                onCameraSet: {
+                    cameraHasBeenSet = true
+                },
+                onPencilAction: { cycleGizmoMode() }
+            )
+            .overlay {
+                if isParsingSTL {
+                    Color(.systemGray6).opacity(0.7)
+                        .overlay { ProgressView("Loading…") }
+                }
+            }
+        }
+    }
+
+    /// Apple Pencil double-tap / squeeze: Move → Rotate → Scale → Move.
+    private func cycleGizmoMode() {
+        guard !showLayerPreview, selectedModelID != nil else { return }
+        gizmoMode = switch gizmoMode {
+        case .translate: .rotate
+        case .rotate:    .scale
+        case .scale:     .translate
+        }
+    }
+
     // MARK: - Viewer controls overlay
 
     private var viewerControlsOverlay: some View {
@@ -329,48 +699,57 @@ struct ContentView: View {
 
             // RIGHT column: gizmo & viewer buttons
             VStack(alignment: .trailing, spacing: 8) {
-                VStack(spacing: 10) {
-                    if !showLayerPreview && hasModels {
-                        overlayButton(
-                            icon: "square.3.layers.3d",
-                            label: showWireframe ? "Wire On" : "Wire Off",
-                            active: showWireframe
-                        ) { showWireframe.toggle() }
-
-                        overlayButton(
-                            icon: viewerColorMode.icon,
-                            label: viewerColorMode.displayName,
-                            active: viewerColorMode != .solid
-                        ) { viewerColorMode = viewerColorMode.next }
-
-                        if selectedModelID != nil {
-                            overlayButton(
-                                icon: "slider.vertical.3",
-                                label: "Values",
-                                active: !(selectedModel?.transform.isIdentity ?? true)
-                            ) { showTransformPanel = true }
-
-                            Divider().frame(width: 36).padding(.vertical, 2)
-                            overlayButton(icon: "move.3d",   label: "Move",   active: gizmoMode == .translate) { gizmoMode = .translate }
-                            overlayButton(icon: "rotate.3d", label: "Rotate", active: gizmoMode == .rotate)    { gizmoMode = .rotate }
-                            overlayButton(icon: "scale.3d",  label: "Scale",  active: gizmoMode == .scale)     { gizmoMode = .scale }
-                        }
-                    }
-
-                    if case .done = state, !parsedLayers.isEmpty {
-                        overlayButton(
-                            icon: showLayerPreview ? "cube.transparent" : "square.3.layers.3d.slash",
-                            label: showLayerPreview ? "Layers" : "Model",
-                            active: showLayerPreview
-                        ) { showLayerPreview.toggle() }
-                    }
-                }
-                .padding(.trailing, 16)
+                viewerToolButtons(includeValues: true)
+                    .padding(.trailing, 16)
 
                 Spacer()
             }
             .padding(.top, 60)
             .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    /// Wireframe / colour mode / gizmo mode / layer-preview toggles. The iPad
+    /// layout drops "Values" since its sidebar already shows the full transform form.
+    @ViewBuilder
+    private func viewerToolButtons(includeValues: Bool) -> some View {
+        VStack(spacing: 10) {
+            if !showLayerPreview && hasModels {
+                overlayButton(
+                    icon: "square.3.layers.3d",
+                    label: showWireframe ? "Wire On" : "Wire Off",
+                    active: showWireframe
+                ) { showWireframe.toggle() }
+
+                overlayButton(
+                    icon: viewerColorMode.icon,
+                    label: viewerColorMode.displayName,
+                    active: viewerColorMode != .solid
+                ) { viewerColorMode = viewerColorMode.next }
+
+                if selectedModelID != nil {
+                    if includeValues {
+                        overlayButton(
+                            icon: "slider.vertical.3",
+                            label: "Values",
+                            active: !(selectedModel?.transform.isIdentity ?? true)
+                        ) { showTransformPanel = true }
+                    }
+
+                    Divider().frame(width: 36).padding(.vertical, 2)
+                    overlayButton(icon: "move.3d",   label: "Move",   active: gizmoMode == .translate) { gizmoMode = .translate }
+                    overlayButton(icon: "rotate.3d", label: "Rotate", active: gizmoMode == .rotate)    { gizmoMode = .rotate }
+                    overlayButton(icon: "scale.3d",  label: "Scale",  active: gizmoMode == .scale)     { gizmoMode = .scale }
+                }
+            }
+
+            if case .done = state, !parsedLayers.isEmpty {
+                overlayButton(
+                    icon: showLayerPreview ? "cube.transparent" : "square.3.layers.3d.slash",
+                    label: showLayerPreview ? "Layers" : "Model",
+                    active: showLayerPreview
+                ) { showLayerPreview.toggle() }
+            }
         }
     }
 
@@ -566,7 +945,7 @@ struct ContentView: View {
     }
 
     private func centerOnBed() {
-        writeTransform { $0.positionMM.x = 0; $0.positionMM.z = 0 }
+        writeTransform { $0.positionMM.x = 0; $0.positionMM.y = 0 }
     }
 
     private func dropToBed() {
@@ -574,7 +953,7 @@ struct ContentView: View {
         if let info = selectedModel?.meshInfo {
             models[idx].transform = models[idx].transform.droppedToBed(meshInfo: info)
         } else {
-            models[idx].transform.positionMM.y = 0
+            models[idx].transform.positionMM.z = 0
         }
         updateIntersections()
     }
@@ -685,6 +1064,14 @@ struct ContentView: View {
     // MARK: - Layer slider
 
     private var layerSliderView: some View {
+        layerSliderCard
+            .padding(.leading, 16)
+            .padding(.trailing, 72)
+            .padding(.top, 60)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var layerSliderCard: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Text("Layer")
@@ -706,10 +1093,6 @@ struct ContentView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.leading, 16)
-        .padding(.trailing, 72)
-        .padding(.top, 60)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - Bottom Panel
@@ -871,49 +1254,7 @@ struct ContentView: View {
 
                 Divider()
 
-                // Printer profile row
-                Button { showProfilePicker = true } label: {
-                    HStack {
-                        Label(
-                            profileStore.selectedProfile?.name ?? "No Printer Selected",
-                            systemImage: "printer"
-                        )
-                        .font(.subheadline)
-                        .foregroundStyle(profileStore.selectedProfile == nil ? .red : .primary)
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .disabled(isBusy)
-
-                // Slice profile row
-                Button { showSliceProfilePicker = true } label: {
-                    HStack {
-                        Label(
-                            sliceProfileStore.selectedProfile?.name ?? "No Slice Profile Selected",
-                            systemImage: "slider.horizontal.3"
-                        )
-                        .font(.subheadline)
-                        .foregroundStyle(sliceProfileStore.selectedProfile == nil ? .red : .primary)
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .disabled(isBusy)
-
-                // Material profile row
-                Button { showMaterialProfilePicker = true } label: {
-                    HStack {
-                        Label(
-                            materialProfileStore.selectedProfile?.name ?? "No Material Selected",
-                            systemImage: "drop"
-                        )
-                        .font(.subheadline)
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .disabled(isBusy)
+                profileRows
 
                 Divider()
 
@@ -938,6 +1279,54 @@ struct ContentView: View {
 
             Color.clear.frame(height: 20)
         }
+    }
+
+    /// Printer / slice / material profile pickers.
+    @ViewBuilder
+    private var profileRows: some View {
+        // Printer profile row
+        Button { showProfilePicker = true } label: {
+            HStack {
+                Label(
+                    profileStore.selectedProfile?.name ?? "No Printer Selected",
+                    systemImage: "printer"
+                )
+                .font(.subheadline)
+                .foregroundStyle(profileStore.selectedProfile == nil ? .red : .primary)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(isBusy)
+
+        // Slice profile row
+        Button { showSliceProfilePicker = true } label: {
+            HStack {
+                Label(
+                    sliceProfileStore.selectedProfile?.name ?? "No Slice Profile Selected",
+                    systemImage: "slider.horizontal.3"
+                )
+                .font(.subheadline)
+                .foregroundStyle(sliceProfileStore.selectedProfile == nil ? .red : .primary)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(isBusy)
+
+        // Material profile row
+        Button { showMaterialProfilePicker = true } label: {
+            HStack {
+                Label(
+                    materialProfileStore.selectedProfile?.name ?? "No Material Selected",
+                    systemImage: "drop"
+                )
+                .font(.subheadline)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(isBusy)
     }
 
     // MARK: Sub-views
@@ -972,18 +1361,21 @@ struct ContentView: View {
                 triggerSlice()
             } label: {
                 Label(isSliced ? "Re-slice" : "Slice", systemImage: "slider.horizontal.3")
+                    .labelStyle(.titleAndIcon)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(isBusy || !hasModels)
+            .keyboardShortcut("r", modifiers: .command)
 
             if isBusy {
                 Button(role: .destructive) {
                     if let h = activeHandle { slicer_cancel(h) }
                 } label: {
                     Label("Cancel", systemImage: "xmark.circle")
-                        .frame(maxWidth: .infinity)
+                        .labelStyle(.titleAndIcon)
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
@@ -994,10 +1386,12 @@ struct ContentView: View {
                     exportGCode()
                 } label: {
                     Label("Export G-code", systemImage: "square.and.arrow.up")
-                        .frame(maxWidth: .infinity)
+                        .labelStyle(.titleAndIcon)
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+                .keyboardShortcut("e", modifiers: .command)
             }
         }
     }

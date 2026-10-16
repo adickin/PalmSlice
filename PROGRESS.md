@@ -43,13 +43,20 @@ Plan: `Plans/model_manipulation.md`
 ### Infrastructure
 - [x] **Proper bundleId** — `com.adickin.PalmSlice` via `bundleIdPrefix` in `project.yml` + `project.local.yml` (team ID set)
 - [x] **App icon + launch screen**
-- [ ] Remaining infrastructure items (iPad layout, haptics, iCloud sync, broader TestFlight distribution) — see `FUTURE_FEATURES.md`
+- [x] **iPad layout** — see Completed (2026-10-16)
+- [ ] Remaining infrastructure items (haptics, iCloud sync, broader TestFlight distribution) — see `FUTURE_FEATURES.md`
 
 ## Far future
 
 _(moved to `FUTURE_FEATURES.md`)_
 
 ## Completed
+
+### iPad UI + Apple Pencil (2026-10-16)
+- [x] **iPad layout** — regular width shows a Models sidebar (model list + inline transform form) and a Slice inspector (output name, profiles, status, Slice / Export) around the viewer; columns dock side by side at ≥ 1000 pt wide and float over the viewer one at a time when narrower (iPad portrait); compact width (Slide Over, narrow Split View) falls back to the phone layout. Same state and actions as the phone UI
+- [x] **Drag-and-drop STL import** onto the iPad viewer; keyboard shortcuts ⌘O (add STL), ⌘R (slice), ⌘E (export)
+- [x] **Apple Pencil** — Pencil drags models across the bed and drags gizmo handles while fingers orbit; double-tap / squeeze cycles Move → Rotate → Scale (respects the system "Ignore" preference); hover highlights the gizmo handle under the tip. Further Pencil ideas in `FUTURE_FEATURES.md`
+- [x] **Transform action buttons** stay single-line (no wrapping in the narrow sidebar)
 
 ### Slice / Export, Icon, Profiles (2026-10-04)
 - [x] **Split Slice and Export** — Slice writes G-code to the temp directory and opens the layer preview automatically; **Export G-code** (collapsed bar + expanded panel) copies it to Documents and presents the share sheet. Slice button becomes "Re-slice" once a slice exists

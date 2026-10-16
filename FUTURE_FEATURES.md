@@ -11,14 +11,32 @@ with a date stamp (per the existing convention) and delete its entry here.
 
 ---
 
-## iPad UI
+## Apple Pencil
 
-Split-view layout for iPad: a persistent settings/profile panel alongside the
-3D viewer instead of the iPhone-style collapsible bottom sheet. No detailed
-plan written yet — needs a design pass on how the existing bottom-panel
-sections (printer/material/slice profile rows, transform panel, layer slider)
-map onto a `NavigationSplitView` or custom two-pane layout, and how it
-degrades on the iPad's compact-width multitasking sizes.
+The first pass is in (see `PROGRESS.md`): Pencil drags models across the bed
+and drags gizmo handles while fingers orbit the camera; double-tap / squeeze
+cycles Move → Rotate → Scale; hover highlights the gizmo handle under the tip.
+Next ideas, in priority order:
+
+1. **Paint-on supports / blockers** *(top pick)* — paint facets of the model
+   to force or forbid support, like PrusaSlicer's support painting gizmo.
+   Pencil pressure could set brush size. Needs a new C bridge call to pass
+   per-facet enforcer/blocker state into libslic3r (its `TriangleSelector`
+   format on `ModelVolume::supported_facets`), plus a per-face colour layer
+   in `STLSceneView` to show the paint.
+2. **Paint seam position** *(top pick)* — same painting machinery, writing
+   `ModelVolume::seam_facets` so the seam lands where it's least visible.
+   Build after (1), since it reuses the brush, hit-testing and bridge plumbing.
+3. **Draw-to-cut** — draw a line across the model to define the cut plane;
+   pairs with the Cut tool phase under Model Manipulation.
+4. **Lasso multi-select** — draw around several models to select them for a
+   group move / rotate / scale (needs multi-selection in `ContentView`).
+5. **Hover inspect in layer preview** — hovering over the G-code preview shows
+   the extrusion type, speed and layer height of the path under the tip.
+6. **Snap on hold** — holding the Pencil still on a gizmo handle snaps
+   rotation to 15° steps and moves to the bed grid.
+7. **Scribble** already works in every numeric / text field (system feature,
+   no work needed) — worth calling out in the App Store listing.
 
 ## Color Customization
 
@@ -74,7 +92,6 @@ Full plan: `Plans/model_manipulation.md`. Remaining phases:
 
 ## Infrastructure
 
-- **iPad layout** — see iPad UI above.
 - **Haptic feedback** on slice complete.
 - **iCloud Drive sync** for profiles and recent files.
 - **Broader TestFlight distribution** — currently uploaded for internal

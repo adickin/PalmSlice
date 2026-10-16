@@ -47,44 +47,55 @@ struct TransformPanelView: View {
     let bedZ: Double
 
     @Binding var lockScale: Bool
+    /// When true, renders just the sections (no NavigationStack / Form) so the
+    /// caller can place them inside its own List — used by the iPad sidebar.
+    var embedded: Bool = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            Form {
-                moveSection
-                rotateSection
-                scaleSection
+        if embedded {
+            sections
+        } else {
+            NavigationStack {
+                Form { sections }
+                    .navigationTitle("Transform")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { dismiss() }
+                        }
+                        // Dismiss decimal keyboard
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button("Done") {
+                                UIApplication.shared.sendAction(
+                                    #selector(UIResponder.resignFirstResponder),
+                                    to: nil, from: nil, for: nil)
+                            }
+                        }
+                    }
+            }
+        }
+    }
 
-                Section {
-                    Button("Reset All", role: .destructive) {
-                        transform = .identity
-                    }
-                }
-            }
-            .navigationTitle("Transform")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-                // Dismiss decimal keyboard
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        UIApplication.shared.sendAction(
-                            #selector(UIResponder.resignFirstResponder),
-                            to: nil, from: nil, for: nil)
-                    }
-                }
-            }
-            // Auto-drop to bed whenever rotation changes
+    @ViewBuilder
+    private var sections: some View {
+        moveSection
+            // Auto-drop to bed whenever rotation changes. Attached to one section
+            // only — on a Group it would be duplicated onto every child.
             .onChange(of: transform.rotationDeg) { _ in
                 guard let info = meshInfo else { return }
                 let dropped = transform.droppedToBed(meshInfo: info)
                 if dropped.positionMM.z != transform.positionMM.z {
                     transform.positionMM.z = dropped.positionMM.z
                 }
+            }
+        rotateSection
+        scaleSection
+
+        Section {
+            Button("Reset All", role: .destructive) {
+                transform = .identity
             }
         }
     }
@@ -98,20 +109,17 @@ struct TransformPanelView: View {
             axisRow(label: "Z", color: .blue)  { FloatField(value: $transform.positionMM.z, fmt: "%g") }
 
             HStack(spacing: 12) {
-                Button("Center on Bed") {
+                rowButton("Center on Bed") {
                     transform.positionMM.x = 0
-                    transform.positionMM.z = 0
+                    transform.positionMM.y = 0
                 }
-                .buttonStyle(.bordered).frame(maxWidth: .infinity)
-
-                Button("Drop to Bed") {
+                rowButton("Drop to Bed") {
                     if let info = meshInfo {
                         transform = transform.droppedToBed(meshInfo: info)
                     } else {
-                        transform.positionMM.y = 0
+                        transform.positionMM.z = 0
                     }
                 }
-                .buttonStyle(.bordered).frame(maxWidth: .infinity)
             }
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
         }
@@ -127,11 +135,9 @@ struct TransformPanelView: View {
 
             HStack(spacing: 12) {
                 if meshInfo != nil {
-                    Button("Lay Flat") { layFlat() }
-                        .buttonStyle(.bordered).frame(maxWidth: .infinity)
+                    rowButton("Lay Flat") { layFlat() }
                 }
-                Button("Reset") { transform.rotationDeg = .zero }
-                    .buttonStyle(.bordered).frame(maxWidth: .infinity)
+                rowButton("Reset") { transform.rotationDeg = .zero }
             }
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
         }
@@ -149,11 +155,9 @@ struct TransformPanelView: View {
 
             HStack(spacing: 12) {
                 if meshInfo != nil {
-                    Button("Fit to Bed") { fitToBed() }
-                        .buttonStyle(.bordered).frame(maxWidth: .infinity)
+                    rowButton("Fit to Bed") { fitToBed() }
                 }
-                Button("Reset") { transform.scale = SIMD3(1, 1, 1) }
-                    .buttonStyle(.bordered).frame(maxWidth: .infinity)
+                rowButton("Reset") { transform.scale = SIMD3(1, 1, 1) }
             }
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
         }
@@ -190,6 +194,19 @@ struct TransformPanelView: View {
     }
 
     // MARK: - Row helpers
+
+    /// Equal-width, single-line bordered button for the action rows. The label (not the
+    /// button) takes the full width so the bordered background stretches with it, and
+    /// the text shrinks instead of wrapping in the narrow iPad sidebar.
+    private func rowButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+    }
 
     @ViewBuilder
     private func axisRow<F: View>(label: String, color: Color, @ViewBuilder field: () -> F) -> some View {

@@ -2,6 +2,16 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-10-16
+
+- **iPad layout**: on regular-width screens the viewer gets a **Models** column (model list with sizes, swipe/long-press to remove, plus the full Move / Rotate / Scale form inline) and a **Slice** column (output filename, profiles, status, Slice / Export, About). Columns dock beside the viewer when the window is ≥ 1000 pt wide and float over it one at a time when narrower (iPad portrait); Slide Over and narrow Split View fall back to the phone layout. Toolbar buttons show/hide each column
+- iPad drag-and-drop: drop STL files from Files onto the viewer to import them. Keyboard shortcuts ⌘O (add STL), ⌘R (slice), ⌘E (export)
+- **Apple Pencil**: Pencil drags models across the bed and drags gizmo handles while fingers orbit the camera; double-tap / squeeze cycles Move → Rotate → Scale (respects the system "Ignore" setting); Pencil hover (M2+ iPads) and trackpad pointer highlight the gizmo handle under the tip
+- Fixed **Center on Bed** zeroing the model's height instead of centring it front-to-back (a rotated model could sink into the bed), and the Drop to Bed fallback resetting front/back position instead of height
+- Transform action buttons (Center on Bed, Drop to Bed, Lay Flat, Fit to Bed, Reset) stay on one line instead of wrapping
+- Debug builds: `PALMSLICE_DEBUG_STL` environment variable auto-imports an STL at launch for scripted simulator screenshots
+- `FUTURE_FEATURES.md`: new Apple Pencil roadmap, led by paint-on supports and paint-on seams
+
 ## 2026-10-14
 
 - Fixed the Export button opening a blank sheet: the share sheet was presented with `.sheet(isPresented:)` and read the exported URL before it was set. Export is now driven by `.sheet(item:)`

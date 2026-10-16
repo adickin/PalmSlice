@@ -30,6 +30,8 @@ struct STLSceneView: UIViewRepresentable {
     var onSelectionChange: ((UUID?) -> Void)? = nil
     var onDragEnded: (() -> Void)? = nil
     var onCameraSet: (() -> Void)? = nil
+    /// Apple Pencil double-tap / squeeze (when the user's system preference isn't "Ignore").
+    var onPencilAction: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -92,12 +94,34 @@ struct STLSceneView: UIViewRepresentable {
         scnView.addGestureRecognizer(tap)
         context.coordinator.tapGesture = tap
 
+        // Fingers (and trackpad) drag gizmo handles; Apple Pencil has its own recognizer
+        // below that also lets it grab a model directly and slide it across the bed.
         let pan = UIPanGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleGizmoPan(_:)))
+        pan.allowedTouchTypes = [UITouch.TouchType.direct.rawValue as NSNumber,
+                                 UITouch.TouchType.indirectPointer.rawValue as NSNumber]
         pan.delegate = context.coordinator
         scnView.addGestureRecognizer(pan)
         context.coordinator.panGesture = pan
+
+        let pencilPan = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleGizmoPan(_:)))
+        pencilPan.allowedTouchTypes = [UITouch.TouchType.pencil.rawValue as NSNumber]
+        pencilPan.delegate = context.coordinator
+        scnView.addGestureRecognizer(pencilPan)
+        context.coordinator.pencilPanGesture = pencilPan
+
+        // Pencil hover (M2+ iPads) and trackpad pointer — highlights the gizmo handle under the tip.
+        let hover = UIHoverGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleHover(_:)))
+        scnView.addGestureRecognizer(hover)
+
+        let pencilInteraction = UIPencilInteraction()
+        pencilInteraction.delegate = context.coordinator
+        scnView.addInteraction(pencilInteraction)
 
         let ambient = SCNLight(); ambient.type = .ambient; ambient.intensity = 350
         let ambNode = SCNNode(); ambNode.light = ambient
@@ -129,6 +153,7 @@ struct STLSceneView: UIViewRepresentable {
         coord.onSelectionChange = onSelectionChange
         coord.onDragEnded       = onDragEnded
         coord.onCameraSet       = onCameraSet
+        coord.onPencilAction    = onPencilAction
         coord.didSetCamera      = didSetCamera
         coord.lockScale         = lockScale
 
@@ -602,7 +627,7 @@ func makeAxesNode(bedX: Double, bedY: Double) -> SCNNode {
 
 // MARK: - Coordinator
 
-final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
 
     // MARK: Per-model node tracking
     struct ModelEntry {
@@ -641,7 +666,14 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate {
     // MARK: Drag state
     weak var tapGesture:    UITapGestureRecognizer?
     weak var panGesture:    UIPanGestureRecognizer?
+    weak var pencilPanGesture: UIPanGestureRecognizer?
     var dragAxis:           GizmoAxis? = nil
+    /// Pencil drag of a whole model across the bed: the horizontal plane (scene Y) the
+    /// drag runs on, where it started on that plane, and the transform at that moment.
+    var bedDragPlaneY:      Float? = nil
+    var bedDragAnchor:      SIMD3<Float> = .zero
+    var bedDragStart:       ModelTransform = .identity
+    var isHoverHighlighting = false
     var dragMode:           GizmoMode = .translate
     var lastPanLocation:    CGPoint? = nil
     var currentTransform:   ModelTransform = .identity
@@ -651,6 +683,7 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate {
     var onSelectionChange: ((UUID?) -> Void)? = nil
     var onDragEnded:       (() -> Void)? = nil
     var onCameraSet:       (() -> Void)? = nil
+    var onPencilAction:    (() -> Void)? = nil
     var didSetCamera:      Bool = false
 
     // MARK: Gizmo visibility
@@ -712,15 +745,39 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         case .began:
             let loc  = gesture.location(in: scnView)
             let hits = scnView.hitTest(loc, options: [.searchMode: SCNHitTestSearchMode.all.rawValue])
-            if let info = hits.lazy.compactMap({ self.gizmoNodeInfo($0.node) }).first {
+            if gizmoContainerNode?.isHidden == false,
+               let info = hits.lazy.compactMap({ self.gizmoNodeInfo($0.node) }).first {
                 dragAxis = info.axis
                 dragMode = info.mode
                 lastPanLocation = loc
                 scnView.allowsCameraControl = false
+                isHoverHighlighting = false
                 setGizmoAxisHighlight(active: info.axis, mode: info.mode)
+            } else if gesture === pencilPanGesture,
+                      let hit = hits.first(where: { modelID(for: $0.node) != nil }),
+                      let id = modelID(for: hit.node) {
+                if id != selectedModelID { setSelected(id: id) }
+                let planeY = Float(hit.worldCoordinates.y)
+                guard let anchor = bedPlanePoint(loc, planeY: planeY, in: scnView) else { return }
+                bedDragPlaneY = planeY
+                bedDragAnchor = anchor
+                bedDragStart  = currentTransform
+                scnView.allowsCameraControl = false
             }
 
         case .changed:
+            if let planeY = bedDragPlaneY {
+                guard let id = selectedModelID,
+                      let p = bedPlanePoint(gesture.location(in: scnView), planeY: planeY, in: scnView)
+                else { return }
+                // Scene X = print X, scene Z = print Y; 1 scene unit = 100 mm.
+                var t = bedDragStart
+                t.positionMM.x += (p.x - bedDragAnchor.x) * 100
+                t.positionMM.y += (p.z - bedDragAnchor.z) * 100
+                currentTransform = t
+                onTransformChange?(id, t)
+                return
+            }
             guard let axis = dragAxis,
                   let last = lastPanLocation,
                   let id = selectedModelID,
@@ -772,6 +829,7 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate {
 
         case .ended, .cancelled:
             dragAxis = nil
+            bedDragPlaneY = nil
             lastPanLocation = nil
             scnView.allowsCameraControl = true
             restoreGizmoAxisHighlight()
@@ -784,15 +842,16 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate {
     // MARK: Gesture delegate
 
     func gestureRecognizerShouldBegin(_ gr: UIGestureRecognizer) -> Bool {
-        // We're the delegate for both tap and pan — only gate the gizmo pan.
+        // We're the delegate for tap and both pans — only gate the pans.
         // Anything else (notably the tap) must be allowed to recognize.
-        guard gr === panGesture else { return true }
-        guard let scnView = gr.view as? SCNView,
-              selectedModelID != nil,
-              gizmoContainerNode?.isHidden == false else { return false }
+        guard gr === panGesture || gr === pencilPanGesture else { return true }
+        guard let scnView = gr.view as? SCNView else { return false }
         let hits = scnView.hitTest(gr.location(in: scnView),
                                    options: [.searchMode: SCNHitTestSearchMode.all.rawValue])
-        return hits.contains { gizmoNodeInfo($0.node) != nil }
+        let gizmoVisible = selectedModelID != nil && gizmoContainerNode?.isHidden == false
+        if gizmoVisible, hits.contains(where: { gizmoNodeInfo($0.node) != nil }) { return true }
+        // Pencil can also grab any model body; on empty space it falls through to the camera.
+        return gr === pencilPanGesture && hits.contains { modelID(for: $0.node) != nil }
     }
 
     func gestureRecognizer(_ gr: UIGestureRecognizer,
@@ -800,7 +859,51 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         // Allow tap to coexist with the camera's orbit gesture — without this, the camera pan
         // cancels the tap, making it impossible to re-select a model after deselecting.
         return gr === panGesture || other === panGesture
+            || gr === pencilPanGesture || other === pencilPanGesture
             || gr === tapGesture || other === tapGesture
+    }
+
+    // MARK: Hover
+
+    @objc func handleHover(_ hover: UIHoverGestureRecognizer) {
+        guard let scnView = hover.view as? SCNView,
+              dragAxis == nil, bedDragPlaneY == nil else { return }
+        var hovered: (axis: GizmoAxis, mode: GizmoMode)? = nil
+        if hover.state == .began || hover.state == .changed,
+           gizmoContainerNode?.isHidden == false {
+            let hits = scnView.hitTest(hover.location(in: scnView),
+                                       options: [.searchMode: SCNHitTestSearchMode.all.rawValue])
+            hovered = hits.lazy.compactMap({ self.gizmoNodeInfo($0.node) }).first
+        }
+        if let info = hovered {
+            setGizmoAxisHighlight(active: info.axis, mode: info.mode)
+            isHoverHighlighting = true
+        } else if isHoverHighlighting {
+            restoreGizmoAxisHighlight()
+            isHoverHighlighting = false
+        }
+    }
+
+    // MARK: Pencil double-tap / squeeze
+
+    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+        guard UIPencilInteraction.preferredTapAction != .ignore else { return }
+        onPencilAction?()
+    }
+
+    @available(iOS 17.5, *)
+    func pencilInteraction(_ interaction: UIPencilInteraction,
+                           didReceiveTap tap: UIPencilInteraction.Tap) {
+        guard UIPencilInteraction.preferredTapAction != .ignore else { return }
+        onPencilAction?()
+    }
+
+    @available(iOS 17.5, *)
+    func pencilInteraction(_ interaction: UIPencilInteraction,
+                           didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
+        guard squeeze.phase == .ended,
+              UIPencilInteraction.preferredSqueezeAction != .ignore else { return }
+        onPencilAction?()
     }
 
     // MARK: Helpers
@@ -850,6 +953,18 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         for group in [gizmoTranslateGroup, gizmoRotateGroup, gizmoScaleGroup] {
             group?.enumerateChildNodes { node, _ in node.opacity = 1.0 }
         }
+    }
+
+    /// Where the screen ray through `point` meets the horizontal plane at scene height `planeY`.
+    private func bedPlanePoint(_ point: CGPoint, planeY: Float, in v: SCNView) -> SIMD3<Float>? {
+        let near = SIMD3<Float>(v.unprojectPoint(SCNVector3(Float(point.x), Float(point.y), 0)))
+        let far  = SIMD3<Float>(v.unprojectPoint(SCNVector3(Float(point.x), Float(point.y), 1)))
+        let dir = far - near
+        // A near-horizontal view ray would fling the model toward the horizon.
+        guard abs(dir.y) > 1e-4 * simd_length(dir) else { return nil }
+        let t = (planeY - near.y) / dir.y
+        guard t > 0 else { return nil }
+        return near + dir * t
     }
 
     private func axisDeltaMM(screenDelta: CGPoint, dir: SIMD3<Float>,
