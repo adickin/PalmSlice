@@ -1,6 +1,6 @@
 # PalmSlice
 
-An iOS on-device 3D printing slicer. Loads an STL, slices it using libslic3r (PrusaSlicer's C++ core compiled as a static library), and exports G-code to the iOS Files app, the share sheet, or an OctoPrint server on your local network.
+An iOS on-device 3D printing slicer. Loads an STL, 3MF, OBJ or AMF model, slices it using libslic3r (PrusaSlicer's C++ core compiled as a static library), and exports G-code to the iOS Files app, the share sheet, or an OctoPrint server on your local network.
 
 No cloud. No account. Slicing runs entirely on-device; the only network traffic is the optional OctoPrint upload you trigger yourself.
 
@@ -28,7 +28,7 @@ Building this from source? See **[BUILDING.md](BUILDING.md)**.
 
 Single-screen SwiftUI app with a live 3D viewer:
 
-- Load an STL via the document picker
+- Load an STL, 3MF, OBJ or AMF file via the document picker or drag-and-drop (3MF/AMF print settings are ignored; geometry and layout are kept)
 - View it in an interactive SceneKit viewer — orbit/pan/zoom, wireframe, overhang/face-normal color modes, layer preview after slicing
 - Move / rotate / scale the model with on-screen gizmos, "Lay Flat" snap-to-face, fit-to-bed/center/drop-to-bed helpers
 - Choose a printer profile, slice profile, and material profile (built-ins provided, fully editable)

@@ -153,13 +153,13 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showFilePicker) {
-            DocumentPickerView { url in importSTL(from: url) }
+            DocumentPickerView { url in importModel(from: url) }
         }
         #if DEBUG
         // Simulator scripting: `SIMCTL_CHILD_PALMSLICE_DEBUG_STL=/path/a.stl xcrun simctl launch …`
         .task {
             if let path = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_STL"], models.isEmpty {
-                importSTL(from: URL(fileURLWithPath: path))
+                importModel(from: URL(fileURLWithPath: path))
             }
         }
         #endif
@@ -227,7 +227,7 @@ struct ContentView: View {
             let s = unitScaleAlertOriginalSizeMM
             Text("""
             This model is \(String(format: "%.3f", s.x)) \u{00d7} \(String(format: "%.3f", s.y)) \u{00d7} \(String(format: "%.3f", s.z)) mm — \
-            too small to print. STL files don't store units, so this is likely modeled in meters, not millimeters. \
+            too small to print. STL and OBJ files don't store units, so this is likely modeled in meters, not millimeters. \
             Scale \u{00d7}\(Int(unitScaleAlertScale)) to fix it?
             """)
         }
@@ -308,7 +308,7 @@ struct ContentView: View {
             ZStack {
                 sceneViewer
                     .ignoresSafeArea()
-                    .onDrop(of: [UTType.data], isTargeted: nil, perform: importDroppedSTLs)
+                    .onDrop(of: [UTType.data], isTargeted: nil, perform: importDroppedModels)
 
                 // In docked mode keep the overlay buttons beside the columns, not under them.
                 iPadViewerOverlay
@@ -424,10 +424,10 @@ struct ContentView: View {
             Image(systemName: "cube.transparent")
                 .font(.system(size: 44))
                 .foregroundStyle(.secondary)
-            Text("Drop an STL here, or")
+            Text("Drop a model here, or")
                 .foregroundStyle(.secondary)
             Button { showFilePicker = true } label: {
-                Label("Add STL", systemImage: "plus.app")
+                Label("Add Model", systemImage: "plus.app")
             }
             .buttonStyle(.borderedProminent)
         }
@@ -442,7 +442,7 @@ struct ContentView: View {
                     sidebarModelRow(model)
                 }
                 Button { showFilePicker = true } label: {
-                    Label("Add STL…", systemImage: "plus")
+                    Label("Add Model…", systemImage: "plus")
                 }
                 .keyboardShortcut("o", modifiers: .command)
                 .disabled(isBusy)
@@ -581,22 +581,22 @@ struct ContentView: View {
     }
 
     /// Drag-and-drop from Files / other apps onto the viewer. Each provider's file is
-    /// only valid inside its load callback, so it's staged to temp before importSTL
+    /// only valid inside its load callback, so it's staged to temp before importModel
     /// (which makes its own copy) runs on the main actor.
-    private func importDroppedSTLs(_ providers: [NSItemProvider]) -> Bool {
-        let stlProviders = providers.filter { provider in
+    private func importDroppedModels(_ providers: [NSItemProvider]) -> Bool {
+        let modelProviders = providers.filter { provider in
             guard let name = provider.suggestedName else { return true }
             let ext = URL(fileURLWithPath: name).pathExtension.lowercased()
-            return ext.isEmpty || ext == "stl"
+            return ext.isEmpty || supportedModelExtensions.contains(ext)
         }
-        guard !stlProviders.isEmpty, !isBusy else { return false }
-        for provider in stlProviders {
+        guard !modelProviders.isEmpty, !isBusy else { return false }
+        for provider in modelProviders {
             let typeID = provider.registeredTypeIdentifiers.first ?? UTType.data.identifier
             provider.loadFileRepresentation(forTypeIdentifier: typeID) { url, _ in
                 guard let url else { return }
                 var name = provider.suggestedName ?? url.lastPathComponent
                 if URL(fileURLWithPath: name).pathExtension.isEmpty { name += ".stl" }
-                guard URL(fileURLWithPath: name).pathExtension.lowercased() == "stl" else { return }
+                guard supportedModelExtensions.contains(URL(fileURLWithPath: name).pathExtension.lowercased()) else { return }
                 let stagingDir = FileManager.default.temporaryDirectory
                     .appendingPathComponent("drop-" + UUID().uuidString, isDirectory: true)
                 let staged = stagingDir.appendingPathComponent(name)
@@ -605,7 +605,7 @@ struct ContentView: View {
                     try FileManager.default.copyItem(at: url, to: staged)
                 } catch { return }
                 DispatchQueue.main.async {
-                    importSTL(from: staged)
+                    importModel(from: staged)
                     try? FileManager.default.removeItem(at: stagingDir)
                 }
             }
@@ -1233,7 +1233,7 @@ struct ContentView: View {
                     }
                     Spacer()
                     Button { showFilePicker = true } label: {
-                        Label("Add STL", systemImage: "plus.app")
+                        Label("Add Model", systemImage: "plus.app")
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
@@ -1410,65 +1410,128 @@ struct ContentView: View {
 
     // MARK: - File import
 
-    private func importSTL(from url: URL) {
+    /// Imports an STL directly, or converts a 3MF / OBJ / AMF file into one STL per
+    /// object via libslic3r and imports each of those.
+    private func importModel(from url: URL) {
+        let ext = url.pathExtension.lowercased()
+        guard supportedModelExtensions.contains(ext) else {
+            state = .failed(message: "\(url.lastPathComponent) isn't a supported model file. PalmSlice can open STL, 3MF, OBJ and AMF files.")
+            showErrorAlert = true
+            return
+        }
+
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
 
-        let id   = UUID()
+        let importID = UUID()
         let dest = FileManager.default.temporaryDirectory
-            .appendingPathComponent(id.uuidString + "_" + url.lastPathComponent)
+            .appendingPathComponent(importID.uuidString + "_" + url.lastPathComponent)
         do {
             if FileManager.default.fileExists(atPath: dest.path) {
                 try FileManager.default.removeItem(at: dest)
             }
             try FileManager.default.copyItem(at: url, to: dest)
+        } catch {
+            state = .failed(message: "Could not import \(url.lastPathComponent): \(error.localizedDescription)")
+            showErrorAlert = true
+            return
+        }
 
-            // Offset each additional model along X so they don't land exactly on top of
-            // each other in the slicer (which can crash libslic3r with coincident objects).
-            var initialTransform = ModelTransform()
-            if !models.isEmpty {
-                initialTransform.positionMM.x = Float(models.count) * 50
+        let checkUnits = modelFormatLacksUnits(ext)
+        if ext == "stl" {
+            addModels([ConvertedModelObject(url: dest, name: url.lastPathComponent, offsetMM: .zero)],
+                      checkUnits: checkUnits)
+            return
+        }
+
+        let fileName = url.lastPathComponent
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("import-" + importID.uuidString, isDirectory: true)
+        isParsingSTL = true
+        Task.detached(priority: .userInitiated) {
+            let result = Result { try convertModelFile(at: dest, outputDir: outputDir) }
+            try? FileManager.default.removeItem(at: dest)
+            await MainActor.run {
+                isParsingSTL = false
+                switch result {
+                case .success(var objects):
+                    // A single-object file keeps the file's name, like an STL import.
+                    if objects.count == 1 {
+                        objects[0] = ConvertedModelObject(url: objects[0].url, name: fileName,
+                                                          offsetMM: .zero)
+                    }
+                    addModels(objects, checkUnits: checkUnits)
+                case .failure(let error):
+                    state = .failed(message: "Could not import \(fileName): \(error.localizedDescription)")
+                    showErrorAlert = true
+                }
             }
-            let newModel = PlacedModel(
+        }
+    }
+
+    /// Adds STL-backed models to the plate, keeping their relative layout, and parses
+    /// their geometry in the background.
+    private func addModels(_ objects: [ConvertedModelObject], checkUnits: Bool) {
+        guard !objects.isEmpty else { return }
+
+        // Offset each additional import along X so it doesn't land exactly on top of
+        // existing models in the slicer (which can crash libslic3r with coincident objects).
+        let baseX: Float = models.isEmpty ? 0 : Float(models.count) * 50
+        var added: [(id: UUID, url: URL, name: String)] = []
+        for object in objects {
+            var initialTransform = ModelTransform()
+            initialTransform.positionMM.x = baseX + object.offsetMM.x
+            // positionMM.y is SceneKit Z, which points opposite to print Y.
+            initialTransform.positionMM.y = -object.offsetMM.y
+            let id = UUID()
+            models.append(PlacedModel(
                 id: id,
-                url: dest,
-                name: url.lastPathComponent,
+                url: object.url,
+                name: object.name,
                 geometry: nil,
                 transform: initialTransform
-            )
-            models.append(newModel)
-            selectedModelID = id
-            state = .idle
-            showLayerPreview = false
-            parsedLayers = []
+            ))
+            added.append((id, object.url, object.name))
+        }
+        selectedModelID = added.last?.id
+        state = .idle
+        showLayerPreview = false
+        parsedLayers = []
 
-            let mode = viewerColorMode
-            isParsingSTL = true
+        let mode = viewerColorMode
+        isParsingSTL = true
 
-            Task.detached(priority: .userInitiated) {
-                let geo  = try? parseSTL(url: dest, colorMode: mode)
-                let info = try? parseSTLMeshInfo(url: dest)
-                let bvh  = info.flatMap { TriangleBVH.build(triangleVertices: $0.vertices) }
+        Task.detached(priority: .userInitiated) {
+            for model in added {
+                let parsed = Result { () throws -> (SCNGeometry, STLMeshInfo) in
+                    (try parseSTL(url: model.url, colorMode: mode), try parseSTLMeshInfo(url: model.url))
+                }
+                let bvh = (try? parsed.get()).flatMap { TriangleBVH.build(triangleVertices: $0.1.vertices) }
                 await MainActor.run {
-                    if let idx = models.firstIndex(where: { $0.id == id }) {
+                    guard let idx = models.firstIndex(where: { $0.id == model.id }) else { return }
+                    switch parsed {
+                    case .success(let (geo, info)):
                         models[idx].geometry = geo
                         models[idx].meshInfo = info
                         models[idx].bvh      = bvh
                         updateIntersections()
 
-                        if let info, let scale = info.suspectedUnitScale {
-                            unitScaleAlertModelID = id
+                        if checkUnits, !showUnitScaleAlert, let scale = info.suspectedUnitScale {
+                            unitScaleAlertModelID = model.id
                             unitScaleAlertScale = scale
                             unitScaleAlertOriginalSizeMM = SIMD3(info.sizeMMX, info.sizeMMY, info.sizeMMZ)
                             showUnitScaleAlert = true
                         }
+                    case .failure(let error):
+                        models.remove(at: idx)
+                        if selectedModelID == model.id { selectedModelID = models.last?.id }
+                        updateIntersections()
+                        state = .failed(message: "Could not read \(model.name): \(error.localizedDescription)")
+                        showErrorAlert = true
                     }
-                    isParsingSTL = false
                 }
             }
-        } catch {
-            state = .failed(message: "Could not import STL: \(error.localizedDescription)")
-            showErrorAlert = true
+            await MainActor.run { isParsingSTL = false }
         }
     }
 
@@ -1850,8 +1913,7 @@ struct DocumentPickerView: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let stlType = UTType(filenameExtension: "stl", conformingTo: .data) ?? UTType.data
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [stlType, UTType.data])
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: supportedModelContentTypes)
         picker.allowsMultipleSelection = false
         picker.delegate = context.coordinator
         return picker

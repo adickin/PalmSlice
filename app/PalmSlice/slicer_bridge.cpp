@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 // ── libslic3r core ────────────────────────────────────────────────────────────
 #include <libslic3r/libslic3r.h>
@@ -22,6 +23,11 @@
 #include <libslic3r/Print.hpp>
 #include <libslic3r/PrintConfig.hpp>
 #include <libslic3r/Format/STL.hpp>
+#include <libslic3r/Format/3mf.hpp>
+#include <libslic3r/Format/AMF.hpp>
+#include <libslic3r/Format/OBJ.hpp>
+#include <libslic3r/Semver.hpp>
+#include <libslic3r/TriangleMesh.hpp>
 // GCode export lives inside Print::export_gcode in recent PrusaSlicer builds.
 // If your version has a separate GCode.hpp, add: #include <libslic3r/GCode.hpp>
 
@@ -42,6 +48,14 @@ struct SlicerContext {
     // slicer_slice_with_progress doesn't clobber the slice settings with its
     // legacy layer_height / infill_percent parameters.
     bool   slice_config_applied = false;
+
+    // Results of the last slicer_import_model_file call.
+    struct ImportedObject {
+        std::string name;
+        float offset_x_mm = 0.f;
+        float offset_y_mm = 0.f;
+    };
+    std::vector<ImportedObject> imported;
 
     SlicerContext() {
         // Start from factory defaults so we have a valid config baseline.
@@ -847,6 +861,97 @@ int slicer_set_object_transform(SlicerHandle handle, int object_index,
     } catch (const std::exception& e) {
         return set_err(ctx, e);
     }
+}
+
+int slicer_import_model_file(SlicerHandle handle, const char* path, const char* out_dir) {
+    auto ctx = CTX(handle);
+    try {
+        ctx->imported.clear();
+        // Dispatch on extension ourselves rather than via FileReader::load_model,
+        // which also links the STEP loader (needs OpenCASCADE, not built for iOS).
+        std::string p(path);
+        std::string ext = p.substr(p.find_last_of('.') + 1);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+        Slic3r::Model model;
+        Slic3r::DynamicPrintConfig file_config;  // embedded print settings, ignored
+        Slic3r::ConfigSubstitutionContext substitutions(
+            Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
+        bool ok = false;
+        if (ext == "3mf") {
+            boost::optional<Slic3r::Semver> generator_version;
+            ok = Slic3r::load_3mf(path, file_config, substitutions, &model,
+                                  /*check_version=*/false, generator_version);
+        } else if (ext == "amf") {
+            ok = Slic3r::load_amf(path, &file_config, &substitutions, &model,
+                                  /*check_version=*/false);
+        } else if (ext == "obj") {
+            ok = Slic3r::load_obj(path, &model);
+        } else if (ext == "stl") {
+            ok = Slic3r::load_stl(path, &model);
+        } else {
+            return set_err(ctx, "Unsupported file type (expected .3mf, .obj, .amf or .stl)");
+        }
+        if (!ok) return set_err(ctx, ("Could not read ." + ext + " file").c_str());
+        model.add_default_instances();
+
+        // One output mesh per object instance, with the instance's rotation /
+        // scale / mirroring baked in. Translation is kept separately as an offset
+        // from the file's overall centre so arranged plates keep their layout.
+        struct Baked { Slic3r::TriangleMesh mesh; std::string name; Slic3r::Vec3d centre; };
+        std::vector<Baked> baked;
+        Slic3r::BoundingBoxf3 all_bb;
+        for (const auto* obj : model.objects) {
+            Slic3r::TriangleMesh raw = obj->raw_mesh();
+            if (raw.empty()) continue;
+            int n_inst = static_cast<int>(obj->instances.size());
+            for (int i = 0; i < n_inst; ++i) {
+                const auto* inst = obj->instances[i];
+                Baked b;
+                b.mesh = raw;
+                b.mesh.transform(inst->get_matrix_no_offset(), /*fix_left_handed=*/true);
+                Slic3r::BoundingBoxf3 bb = b.mesh.bounding_box();
+                b.centre = bb.center() + inst->get_offset();
+                all_bb.merge(Slic3r::BoundingBoxf3(bb.min + inst->get_offset(),
+                                                   bb.max + inst->get_offset()));
+                b.name = obj->name.empty() ? "Object " + std::to_string(baked.size() + 1)
+                                           : obj->name;
+                if (n_inst > 1) b.name += " (" + std::to_string(i + 1) + ")";
+                baked.push_back(std::move(b));
+            }
+        }
+        if (baked.empty()) return set_err(ctx, "File contains no printable objects");
+
+        Slic3r::Vec3d centre = all_bb.center();
+        for (size_t i = 0; i < baked.size(); ++i) {
+            std::string out = std::string(out_dir) + "/" + std::to_string(i) + ".stl";
+            baked[i].mesh.write_binary(out.c_str());
+            SlicerContext::ImportedObject io;
+            io.name        = baked[i].name;
+            io.offset_x_mm = static_cast<float>(baked[i].centre.x() - centre.x());
+            io.offset_y_mm = static_cast<float>(baked[i].centre.y() - centre.y());
+            ctx->imported.push_back(std::move(io));
+        }
+        return static_cast<int>(baked.size());
+    } catch (const std::exception& e) {
+        return set_err(ctx, e);
+    }
+}
+
+const char* slicer_imported_object_name(SlicerHandle handle, int index) {
+    auto ctx = CTX(handle);
+    if (index < 0 || index >= static_cast<int>(ctx->imported.size())) return "";
+    return ctx->imported[index].name.c_str();
+}
+
+int slicer_imported_object_offset(SlicerHandle handle, int index,
+                                  float* offset_x_mm, float* offset_y_mm) {
+    auto ctx = CTX(handle);
+    if (index < 0 || index >= static_cast<int>(ctx->imported.size()))
+        return set_err(ctx, "imported object index out of range");
+    if (offset_x_mm) *offset_x_mm = ctx->imported[index].offset_x_mm;
+    if (offset_y_mm) *offset_y_mm = ctx->imported[index].offset_y_mm;
+    return 0;
 }
 
 } // extern "C"

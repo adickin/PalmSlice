@@ -2,6 +2,13 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-10-17
+
+- **3MF, OBJ and AMF import** (file picker and drag-and-drop), alongside STL. Each object in the file becomes its own model, named from the file, with its rotation/scale baked in and the file's plate layout kept. Print settings embedded in 3MF/AMF files are ignored. New bridge call `slicer_import_model_file` uses libslic3r's format loaders directly (not `FileReader`, which would link the OpenCASCADE-dependent STEP loader)
+- Fixed picking a non-STL file silently adding an invisible, empty model: unsupported extensions and unreadable meshes now show an error alert
+- "Add STL" buttons renamed "Add Model"; the meters-vs-millimeters prompt only appears for unitless formats (STL, OBJ)
+- `ModelImporterTests`: 3MF names/rotation/layout, AMF, OBJ, corrupt file, and convert-then-slice of two 3MFs (fixtures in `app/PalmSliceTests/Fixtures/`)
+
 ## 2026-10-16
 
 - iPad: the 3D view now runs edge to edge behind the Models and Slice columns, which are translucent dark glass (always dark, to match the viewer) instead of opaque grey/black panels; the floating portrait panels use the same glass

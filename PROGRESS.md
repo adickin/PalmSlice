@@ -52,6 +52,11 @@ _(moved to `FUTURE_FEATURES.md`)_
 
 ## Completed
 
+### 3MF / OBJ / AMF import (2026-10-17)
+- [x] **3MF, OBJ and AMF import** via picker and drag-and-drop — `slicer_import_model_file` loads the file with libslic3r's format loaders and writes one STL per object instance (rotation/scale/mirroring baked in); each becomes its own model, named from the file, keeping the file's relative layout. Embedded 3MF/AMF print settings are ignored. STEP is not supported (needs OpenCASCADE)
+- [x] **Import failures now alert** — unsupported extensions and unreadable meshes show an error instead of silently adding an empty model
+- [x] **`ModelImporterTests`** — 3MF names/rotation/layout, AMF, OBJ, corrupt file, and converting + slicing two 3MFs
+
 ### iPad UI + Apple Pencil (2026-10-16)
 - [x] **iPad layout** — regular width shows a Models sidebar (model list + inline transform form) and a Slice inspector (output name, profiles, status, Slice / Export) around the viewer; columns dock side by side at ≥ 1000 pt wide and float over the viewer one at a time when narrower (iPad portrait); compact width (Slide Over, narrow Split View) falls back to the phone layout. Same state and actions as the phone UI
 - [x] **Drag-and-drop STL import** onto the iPad viewer; keyboard shortcuts ⌘O (add STL), ⌘R (slice), ⌘E (export)

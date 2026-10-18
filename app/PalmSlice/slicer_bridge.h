@@ -275,6 +275,25 @@ int slicer_add_stl(SlicerHandle handle, const char* path);
 int slicer_set_object_transform(SlicerHandle handle, int object_index,
                                 const SlicerModelTransform* t);
 
+// ── Model file import ─────────────────────────────────────────────────────────
+
+// Loads a 3MF, OBJ, AMF or STL file and writes each object instance as a binary
+// STL to "<out_dir>/<i>.stl" (i = 0..count-1), with the instance's rotation,
+// scale and mirroring baked in. Embedded print settings are ignored.
+// Returns the number of objects written (> 0), or a negative error code.
+// Does not touch the handle's model; only the import results below.
+int slicer_import_model_file(SlicerHandle handle, const char* path, const char* out_dir);
+
+// Name of the Nth object from the last slicer_import_model_file call ("" if out of range).
+// The pointer is valid until the next import call or slicer_destroy.
+const char* slicer_imported_object_name(SlicerHandle handle, int index);
+
+// Position of the Nth imported object's bounding-box centre relative to the
+// centre of all imported objects, in print coordinates (X, Y = bed depth), mm.
+// Returns 0 on success, negative on error.
+int slicer_imported_object_offset(SlicerHandle handle, int index,
+                                  float* offset_x_mm, float* offset_y_mm);
+
 #ifdef __cplusplus
 }
 #endif
