@@ -75,5 +75,27 @@ enum BuiltInSliceProfiles {
         ironingSpacing: 0.1
     )
 
-    static let all: [SliceProfile] = [draft, standard, fine, thickWalls]
+    // Pairs with the "eSUN PLA-LW (Lightweight)" material. Foaming PLA is used for
+    // light, thin-walled parts, so: 2 walls, thin shells, sparse infill. eSUN says
+    // not to slow the first layer (its flow already matches the foamed layers),
+    // so first-layer speed equals print speed; fast travel limits oozing, since
+    // retraction is barely effective with foaming filament.
+    static let lightweight = SliceProfile(
+        name: "Lightweight LW-PLA (0.2 mm)",
+        layerHeight: 0.2,
+        firstLayerHeight: 0.2,
+        wallCount: 2,
+        topLayers: 3,
+        bottomLayers: 3,
+        infillDensity: 10,
+        infillPattern: .gyroid,
+        printSpeed: 45,
+        infillSpeed: 45,
+        travelSpeed: 150,
+        firstLayerSpeed: 45,
+        solidInfillSpeed: 30,
+        topSolidInfillSpeed: 25
+    )
+
+    static let all: [SliceProfile] = [draft, standard, fine, thickWalls, lightweight]
 }

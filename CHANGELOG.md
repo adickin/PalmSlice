@@ -4,6 +4,10 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-10-18
 
+- First-launch notice reworded as **"Before You Print"** (sliced output can contain errors, use at your own risk, supervise the printer) with no "beta" wording — App Review guideline 2.2 rejects apps that describe themselves as beta. Listing's "BETA NOTE" renamed "PROFILE NOTE"
+- New built-in material **eSUN PLA-LW (Lightweight)** for foaming lightweight PLA: 240 °C all layers, 60% flow, 0.8 mm retraction, part fan mostly off (from eSUN's guidance and 3DLabPrint's thin-wall FAQ). Untested
+- New built-in slice profile **Lightweight LW-PLA (0.2 mm)** to pair with it: 2 walls, 3 top/bottom layers, 10% gyroid, 45 mm/s with no first-layer slowdown, 150 mm/s travel
+- App updates now deliver newly added built-in material and slice profiles to existing installs (previously only fresh installs got them). Each is offered once, so a deleted built-in doesn't return
 - First-launch disclaimer: removed the developer liability bullet. **Decline** no longer quits the app (`exit(0)`, which App Review rejects); it keeps the disclaimer up with a note that the terms must be accepted to use PalmSlice
 
 ## 2026-10-17

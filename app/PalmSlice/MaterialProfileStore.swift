@@ -35,9 +35,37 @@ final class MaterialProfileStore: ObservableObject {
             save()
         }
 
+        if mergeInNewBuiltIns() {
+            save()
+        }
+
         if selectedProfileId == nil || !profiles.contains(where: { $0.id == selectedProfileId }) {
             selectedProfileId = profiles.first?.id
         }
+    }
+
+    private static let offeredBuiltInsKey = "materialBuiltInsOffered"
+    // Built-ins that every install seeded before offeredBuiltInsKey existed.
+    private static let originalBuiltInNames = ["PLA", "PETG", "ABS", "TPU"]
+
+    // Appends built-in materials added since this install last loaded, so app
+    // updates deliver new templates to existing users. Each built-in is offered
+    // only once (tracked by name), so one the user deleted doesn't come back.
+    @discardableResult
+    private func mergeInNewBuiltIns() -> Bool {
+        let defaults = UserDefaults.standard
+        var offered = Set(defaults.stringArray(forKey: Self.offeredBuiltInsKey)
+                          ?? Self.originalBuiltInNames)
+        var added = false
+        for template in BuiltInMaterialProfiles.all where !offered.contains(template.name) {
+            if !profiles.contains(where: { $0.name == template.name }) {
+                profiles.append(template)
+                added = true
+            }
+            offered.insert(template.name)
+        }
+        defaults.set(offered.sorted(), forKey: Self.offeredBuiltInsKey)
+        return added
     }
 
     func save() {

@@ -10,10 +10,10 @@ struct EULAView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Beta Software")
+                    Text("Before You Print")
                         .font(.title2.weight(.semibold))
 
-                    Text("PalmSlice is beta software under active development. Please read before continuing.")
+                    Text("PalmSlice turns 3D models into instructions your printer follows. Please read before continuing.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
@@ -64,9 +64,9 @@ struct EULAView: View {
 
     private var bulletList: some View {
         VStack(alignment: .leading, spacing: 12) {
-            bullet("This is beta software. Bugs, crashes, and inaccurate slicing results may occur.")
+            bullet("Sliced output can contain errors. Check the layer preview, and your printer's settings, before printing.")
             bullet("You use PalmSlice, and print any G-code it produces, entirely at your own risk.")
-            bullet("Always supervise your 3D printer during operation, and review sliced output before printing.")
+            bullet("Always supervise your 3D printer while it is running.")
         }
     }
 

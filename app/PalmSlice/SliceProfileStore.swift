@@ -35,9 +35,38 @@ final class SliceProfileStore: ObservableObject {
             save()
         }
 
+        if mergeInNewBuiltIns() {
+            save()
+        }
+
         if selectedProfileId == nil || !profiles.contains(where: { $0.id == selectedProfileId }) {
             selectedProfileId = profiles.first?.id
         }
+    }
+
+    private static let offeredBuiltInsKey = "sliceBuiltInsOffered"
+    // Built-ins that every install seeded (seed version 4) before offeredBuiltInsKey existed.
+    private static let originalBuiltInNames = ["Draft (0.3 mm)", "Standard (0.2 mm)",
+                                               "Fine (0.1 mm)", "Thick Walls (0.2 mm)"]
+
+    // Appends built-in slice profiles added since this install last loaded, so app
+    // updates deliver new templates to existing users. Each built-in is offered
+    // only once (tracked by name), so one the user deleted doesn't come back.
+    @discardableResult
+    private func mergeInNewBuiltIns() -> Bool {
+        let defaults = UserDefaults.standard
+        var offered = Set(defaults.stringArray(forKey: Self.offeredBuiltInsKey)
+                          ?? Self.originalBuiltInNames)
+        var added = false
+        for template in BuiltInSliceProfiles.all where !offered.contains(template.name) {
+            if !profiles.contains(where: { $0.name == template.name }) {
+                profiles.append(template)
+                added = true
+            }
+            offered.insert(template.name)
+        }
+        defaults.set(offered.sorted(), forKey: Self.offeredBuiltInsKey)
+        return added
     }
 
     func save() {
