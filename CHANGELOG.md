@@ -2,6 +2,10 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-10-18
+
+- First-launch disclaimer: removed the developer liability bullet. **Decline** no longer quits the app (`exit(0)`, which App Review rejects); it keeps the disclaimer up with a note that the terms must be accepted to use PalmSlice
+
 ## 2026-10-17
 
 - **3MF, OBJ and AMF import** (file picker and drag-and-drop), alongside STL. Each object in the file becomes its own model, named from the file, with its rotation/scale baked in and the file's plate layout kept. Print settings embedded in 3MF/AMF files are ignored. New bridge call `slicer_import_model_file` uses libslic3r's format loaders directly (not `FileReader`, which would link the OpenCASCADE-dependent STEP loader)
