@@ -81,7 +81,7 @@ Select the **iPhone simulator** target, hit **⌘R**. The app builds and runs in
 
 ## PrusaSlicer Modifications
 
-libslic3r is built from the unmodified PrusaSlicer source tree with two categories of changes:
+libslic3r is built from the PrusaSlicer source tree, pinned to the release tag `PRUSA_TAG` in `scripts/common.sh` (currently **2.9.6**), with two categories of changes:
 
 ### CMake option: `SLIC3R_IOS`
 
@@ -90,6 +90,7 @@ Added to `CMakeLists.txt` and `src/libslic3r/CMakeLists.txt`. When `ON`:
 - **Z3 / libseqarrange** — excluded from build (sequential arrangement is a GUI feature)
 - **JPEG** — excluded (only used for gcode thumbnails, which are optional)
 - **PrusaSlicer binary install** — skipped (iOS toolchain would treat it as a MACOSX_BUNDLE)
+- **`sla_time_estimate_app`** (`src/sla-time-estimates/CMakeLists.txt`) — skipped for the same reason; only its static library is linked
 
 ### Stub source files
 
@@ -108,15 +109,26 @@ Two small stub `.cpp` files are compiled instead of their JPEG/Z3-dependent orig
 | `nlopt.h` | Included by `NLoptOptimizer.hpp` (SLA code); SLA is never called in FDM path |
 | `nanosvg/nanosvg.h` | Included by `EmbossShape.hpp`; embossing is not in the slicing path |
 
+### Updating PrusaSlicer
+
+1. Pick the new release tag and set `PRUSA_TAG` in `scripts/common.sh`. Set `LIBBGCODE_COMMIT` to the commit in that tag's `deps/+LibBGCode/LibBGCode.cmake`.
+2. Move the source tree: `cd ~/ios-sources/PrusaSlicer && git fetch --depth=1 origin tag <tag> && git checkout -- . && git checkout <tag>`, and delete the two `*_ios_stub.cpp` files from it.
+3. `git apply --reject ~/work/IosSlicer/patches/prusaslicer_ios.patch`, fix any `.rej` hunks by hand, copy the stub `.cpp` files back in (step 02 does this), then regenerate the patch: `git diff HEAD -- CMakeLists.txt src/CMakeLists.txt src/libslic3r/CMakeLists.txt src/sla-time-estimates/CMakeLists.txt > ~/work/IosSlicer/patches/prusaslicer_ios.patch`.
+4. Check `git diff <old> <new> -- src/libslic3r/ArrangeHelper.hpp src/libslic3r/GCode/Thumbnails.hpp` — the stubs must still match those headers.
+5. Look for new libraries linked by `src/libslic3r/CMakeLists.txt`; add each `.a` to the bundled-lib loop in `scripts/10_libslic3r.sh` and to `OTHER_LDFLAGS` in `app/project.yml`.
+6. Delete the `libbgcode_core.a` and `libslic3r.a` sentinels in both sysroots, run steps 17 and 18 for simulator and device (`PLATFORM=OS64`), then step 20, `xcodegen`, and the test suite.
+
 ## Known Friction Points
 
 | Step | Likely issue | Fix |
 |------|-------------|-----|
 | Boost (07) | Build time ~30 min on first run | Let it run; subsequent runs skip via sentinel |
 | GMP (11) | `--disable-assembly` makes it slower but portable to iOS simulator | No action needed; it's intentional |
-| CGAL version | PrusaSlicer 2.7/2.8 uses CGAL 5.6.2 API; CGAL 6.x changed `property_map()` return type | Script installs CGAL 5.6.2 headers from source, not homebrew |
+| CGAL version | PrusaSlicer 2.7–2.9 uses CGAL 5.6.2 API; CGAL 6.x changed `property_map()` return type | Script installs CGAL 5.6.2 headers from source, not homebrew |
 | libslic3r (14) | `Print::apply()` / `export_gcode()` signature may differ from cloned version | Check `git log` in `~/ios-sources/PrusaSlicer`; adjust the flagged lines in `slicer_bridge.cpp` |
 | Xcode link | Missing `.a` symbols at link time | Verify `~/ios-sysroot-sim/lib/` has all expected files; cross-check `OTHER_LDFLAGS` in `app/project.yml` |
+| Xcode update | CMake caches keep the old SDK path; if that SDK is gone, clang silently targets Mac Catalyst and the XCFramework step fails with a duplicate `ios-arm64-maccatalyst` slice | Steps 17 and 18 now wipe a build dir whose cached SDK no longer exists; for other steps, delete the build dir by hand |
+| Clang 19+ (Xcode 16.3+) | `error: a template argument list is expected after a name prefixed by the template keyword` in Boost / CGAL headers | Step 18 passes `-Wno-missing-template-arg-list-after-template-kw` |
 | `cmake_minimum_required < 3.5` error | CMake 4.x broke older projects | Add `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` to the cmake invocation |
 | Undefined symbol at link | A new dep was added to libslic3r but not to `OTHER_LDFLAGS` | Add the `.a` path to `app/project.yml` and run `xcodegen` |
 

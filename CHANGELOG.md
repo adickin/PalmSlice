@@ -2,6 +2,14 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-10-21
+
+- **Slicing engine updated to PrusaSlicer 2.9.6** (from 2.9.4, Nov 2025). Mostly SLA / multi-material work upstream; FFF-relevant fixes include bridge anchoring and cooling slowdown. All 14 built-in printer profiles and the 3MF import tests slice cleanly; G-code output is within 0.01% of 2.9.4's
+- Build chain pins upstream versions: `PRUSA_TAG` (`version_2.9.6`) and `LIBBGCODE_COMMIT` in `scripts/common.sh`. Step 02 refuses to build a different PrusaSlicer checkout; step 17 checks out the pinned LibBGCode commit (previously both cloned whatever `main` was)
+- iOS patch updated for 2.9.6: libslic3r now links the new `prusa_fdm_mixer` and `sla_time_estimate` libraries (installed by step 18, added to `OTHER_LDFLAGS`); the `sla_time_estimate_app` CLI is skipped on iOS
+- Build fixes found during the update: step 18 now fails on a compile error instead of installing a stale `libslic3r.a`; stale CMake caches pointing at a removed SDK (which silently built Mac Catalyst objects) are wiped automatically; Clang 19's new template-keyword error in Boost/CGAL headers is suppressed; step 20 verifies the XCFramework was actually created
+- `BUILDING.md`: new "Updating PrusaSlicer" procedure
+
 ## 2026-10-18
 
 - First-launch notice reworded as **"Before You Print"** (sliced output can contain errors, use at your own risk, supervise the printer) with no "beta" wording — App Review guideline 2.2 rejects apps that describe themselves as beta. Listing's "BETA NOTE" renamed "PROFILE NOTE"

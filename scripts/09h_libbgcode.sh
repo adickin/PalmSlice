@@ -21,11 +21,16 @@ BUILD="$LIBBGCODE_SRC/build-$BUILD_SUFFIX"
 
 log_step "Cloning LibBGCode (Prusa binary gcode format)"
 if [ ! -d "$LIBBGCODE_SRC/.git" ]; then
-    git clone --depth 1 --branch main \
-        https://github.com/prusa3d/libbgcode.git "$LIBBGCODE_SRC"
+    git clone https://github.com/prusa3d/libbgcode.git "$LIBBGCODE_SRC"
+fi
+# Pinned to the commit PrusaSlicer $PRUSA_TAG builds against (see common.sh).
+if [ "$(git -C "$LIBBGCODE_SRC" rev-parse HEAD)" != "$LIBBGCODE_COMMIT" ]; then
+    git -C "$LIBBGCODE_SRC" fetch origin "$LIBBGCODE_COMMIT"
+    git -C "$LIBBGCODE_SRC" checkout --detach "$LIBBGCODE_COMMIT"
 fi
 
-log_step "Building LibBGCode for iOS Simulator"
+reset_stale_cmake_build "$BUILD"
+log_step "Building LibBGCode ($BUILD_SUFFIX)"
 cmake -S "$LIBBGCODE_SRC" -B "$BUILD" \
     "${CMAKE_COMMON[@]}" \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \

@@ -12,9 +12,15 @@ clone_and_patch() {
     if [ ! -d "$PRUSA_SRC/.git" ]; then
         log_step "Cloning PrusaSlicer"
         mkdir -p "$IOS_SOURCES"
-        git clone --depth=1 https://github.com/prusa3d/PrusaSlicer.git "$PRUSA_SRC"
+        git clone --depth=1 --branch "$PRUSA_TAG" https://github.com/prusa3d/PrusaSlicer.git "$PRUSA_SRC"
     else
         log_ok "PrusaSlicer already cloned at $PRUSA_SRC"
+    fi
+    # The patch only matches one release; refuse to build anything else.
+    if [ "$(git -C "$PRUSA_SRC" rev-parse HEAD)" != "$(git -C "$PRUSA_SRC" rev-parse "$PRUSA_TAG^{commit}" 2>/dev/null)" ]; then
+        log_error "PrusaSlicer at $PRUSA_SRC is not checked out at $PRUSA_TAG."
+        log_error "  cd $PRUSA_SRC && git fetch --depth=1 origin tag $PRUSA_TAG && git checkout -- . && git checkout $PRUSA_TAG"
+        exit 1
     fi
 
     # Ensure submodules are initialised

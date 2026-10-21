@@ -88,6 +88,8 @@ targets:
           $(IOS_SYSROOT)/lib/libglu-libtess.a
           $(IOS_SYSROOT)/lib/libsemver.a
           $(IOS_SYSROOT)/lib/libclipper.a
+          $(IOS_SYSROOT)/lib/libprusa_fdm_mixer.a
+          $(IOS_SYSROOT)/lib/libsla_time_estimate.a
           $(IOS_SYSROOT)/lib/libClipper2.a
           $(IOS_SYSROOT)/lib/libClipper2Z.a
           $(IOS_SYSROOT)/lib/libbgcode_core.a

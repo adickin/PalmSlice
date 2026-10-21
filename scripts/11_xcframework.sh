@@ -40,3 +40,9 @@ else
         -output "$XCFW"
     log_ok "XCFramework (simulator only) → $XCFW"
 fi
+
+# xcodebuild -create-xcframework can print an error yet exit 0; verify the output.
+if [ ! -f "$XCFW/Info.plist" ]; then
+    log_error "XCFramework was not created at $XCFW"
+    exit 1
+fi

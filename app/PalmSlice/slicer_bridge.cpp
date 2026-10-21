@@ -1,7 +1,7 @@
 // slicer_bridge.cpp
 // C wrapper implementation over libslic3r.
 //
-// Targets: PrusaSlicer 2.7 / 2.8 libslic3r API.
+// Targets: PrusaSlicer 2.9.6 libslic3r API (pinned via PRUSA_TAG in scripts/common.sh).
 // If the build fails due to missing symbols, check the PrusaSlicer version:
 //   cd ~/ios-sources/PrusaSlicer && git log --oneline -5
 // and adjust the include paths or method names accordingly.

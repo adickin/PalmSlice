@@ -14,6 +14,7 @@ fi
 
 log_step "Building libslic3r"
 BUILD="$IOS_SOURCES/libslic3r-build-$BUILD_SUFFIX"
+reset_stale_cmake_build "$BUILD"
 mkdir -p "$BUILD"
 
 # Gather all Boost library paths for explicit passing
@@ -39,7 +40,7 @@ cmake -S "$PRUSA_SRC" -B "$BUILD" \
     -DSLIC3R_PCH=OFF \
     \
     -DCMAKE_CXX_STANDARD=17 \
-    -DCMAKE_CXX_FLAGS="-I$IOS_SYSROOT/include" \
+    -DCMAKE_CXX_FLAGS="-I$IOS_SYSROOT/include -Wno-missing-template-arg-list-after-template-kw" \
     -DCMAKE_C_FLAGS="-I$IOS_SYSROOT/include" \
     \
     -DBoost_NO_SYSTEM_PATHS=ON \
@@ -61,11 +62,23 @@ cmake -S "$PRUSA_SRC" -B "$BUILD" \
     \
     2>&1 | tee "$IOS_SOURCES/libslic3r_cmake.log"
 
+# Remove any previous output so a failed build can't install a stale library.
+find "$BUILD" -name 'liblibslic3r.a' -delete
+
 log_step "Compiling libslic3r (this takes several minutes)..."
+# Clang 19+ (Xcode 16.3+) makes -Wmissing-template-arg-list-after-template-kw an
+# error by default; the Boost and CGAL 5.6.2 headers trip it. Disabled above.
+set +e
 cmake --build "$BUILD" -j"$NCPU" \
     --target libslic3r slic3r-arrange slic3r-arrange-wrapper \
-    2>&1 | tee "$IOS_SOURCES/libslic3r_build.log" \
-    | grep -E '(error:|warning: \[|Building|Linking|FAILED|\d+%)' || true
+    > "$IOS_SOURCES/libslic3r_build.log" 2>&1
+BUILD_STATUS=$?
+set -e
+grep -E '(error:|FAILED)' "$IOS_SOURCES/libslic3r_build.log" | head -40 || true
+if [ $BUILD_STATUS -ne 0 ]; then
+    log_error "libslic3r build failed (exit $BUILD_STATUS). See $IOS_SOURCES/libslic3r_build.log"
+    exit 1
+fi
 
 # Find and install the library + headers
 LIB=$(find "$BUILD" -name 'liblibslic3r.a' | head -1)
@@ -93,7 +106,8 @@ done
 
 # Install bundled dep static libs built by libslic3r (admesh, miniz, etc.)
 for bundled_lib in libadmesh.a libminiz_static.a liblocalesutils.a \
-                   libsemver.a libglu-libtess.a libqoi.a libclipper.a; do
+                   libsemver.a libglu-libtess.a libqoi.a libclipper.a \
+                   libprusa_fdm_mixer.a libsla_time_estimate.a; do
     FOUND=$(find "$BUILD" -name "$bundled_lib" | head -1)
     [ -n "$FOUND" ] && cp "$FOUND" "$IOS_SYSROOT/lib/$bundled_lib"
 done

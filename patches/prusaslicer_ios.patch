@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 57b60ea..6b0eee9 100644
+index 57b60ea620..6b0eee9a6e 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -35,6 +35,7 @@ endif()
@@ -120,10 +120,10 @@ index 57b60ea..6b0eee9 100644
  set(TOP_LEVEL_PROJECT_DIR ${PROJECT_SOURCE_DIR})
  function(prusaslicer_copy_dlls target)
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index c6ddf2e..c7eb8f6 100644
+index ae7d061689..74b061815a 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -20,7 +20,9 @@ endif ()
+@@ -21,7 +21,9 @@ endif ()
  
  add_subdirectory(slic3r-arrange)
  add_subdirectory(slic3r-arrange-wrapper)
@@ -134,7 +134,7 @@ index c6ddf2e..c7eb8f6 100644
  
  
  if (SLIC3R_GUI)
-@@ -286,6 +288,7 @@ else ()
+@@ -287,6 +289,7 @@ else ()
  endif ()
  
  # Slic3r binary install target
@@ -142,13 +142,13 @@ index c6ddf2e..c7eb8f6 100644
  if (WIN32)
      install(TARGETS PrusaSlicer RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}")
      if (MSVC)
-@@ -298,3 +301,4 @@ else ()
+@@ -299,3 +302,4 @@ else ()
      # Install the symlink for gcodeviewer
      install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink prusa-slicer prusa-gcodeviewer WORKING_DIRECTORY \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR})")
  endif ()
 +endif () # NOT SLIC3R_IOS
 diff --git a/src/libslic3r/CMakeLists.txt b/src/libslic3r/CMakeLists.txt
-index 51e54ff..b811786 100644
+index 777744bee6..d39d78ed07 100644
 --- a/src/libslic3r/CMakeLists.txt
 +++ b/src/libslic3r/CMakeLists.txt
 @@ -26,6 +26,15 @@ slic3r_remap_configs(LibBGCode::bgcode_core RelWithDebInfo Release)
@@ -177,7 +177,7 @@ index 51e54ff..b811786 100644
      Algorithm/LineSegmentation/LineSegmentation.cpp
      Algorithm/LineSegmentation/LineSegmentation.hpp
      Algorithm/PathSorting.hpp
-@@ -163,8 +171,7 @@ set(SLIC3R_SOURCES
+@@ -165,8 +173,7 @@ set(SLIC3R_SOURCES
      Format/PrintRequest.cpp
      GCode/ThumbnailData.cpp
      GCode/ThumbnailData.hpp
@@ -187,7 +187,7 @@ index 51e54ff..b811786 100644
      GCode/ConflictChecker.cpp
      GCode/ConflictChecker.hpp
      GCode/CoolingBuffer.cpp
-@@ -610,7 +617,9 @@ target_compile_definitions(libslic3r PUBLIC -DUSE_TBB -DTBB_USE_CAPTURED_EXCEPTI
+@@ -620,7 +627,9 @@ target_compile_definitions(libslic3r PUBLIC -DUSE_TBB -DTBB_USE_CAPTURED_EXCEPTI
  target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR})
  target_include_directories(libslic3r PUBLIC ${EXPAT_INCLUDE_DIRS})
  
@@ -198,7 +198,7 @@ index 51e54ff..b811786 100644
  find_package(nlohmann_json REQUIRED)
  
  target_link_libraries(libslic3r PRIVATE
-@@ -627,7 +636,7 @@ target_link_libraries(libslic3r PRIVATE
+@@ -638,7 +647,7 @@ target_link_libraries(libslic3r PRIVATE
      ${CMAKE_DL_LIBS}
      PNG::PNG
      ZLIB::ZLIB
@@ -207,12 +207,28 @@ index 51e54ff..b811786 100644
      qoi
      fastfloat
      int128
-@@ -645,7 +654,7 @@ target_link_libraries(libslic3r PUBLIC
+@@ -656,7 +665,7 @@ target_link_libraries(libslic3r PUBLIC
      agg
      ankerl
      boost_headeronly
 -    libseqarrange
 +    $<$<NOT:$<BOOL:${SLIC3R_IOS}>>:libseqarrange>
+     prusa_fdm_mixer
  )
  
- if (APPLE)
+diff --git a/src/sla-time-estimates/CMakeLists.txt b/src/sla-time-estimates/CMakeLists.txt
+index 81b8100301..7248d8c756 100644
+--- a/src/sla-time-estimates/CMakeLists.txt
++++ b/src/sla-time-estimates/CMakeLists.txt
+@@ -12,5 +12,9 @@ add_library(sla_time_estimate STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/SLATimeEst
+ target_include_directories(sla_time_estimate PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+ target_link_libraries(sla_time_estimate PUBLIC nlohmann_json::nlohmann_json)
+ 
+-add_executable(sla_time_estimate_app main.cpp)
+-target_link_libraries(sla_time_estimate_app PRIVATE sla_time_estimate)
++# iOS cross-builds can't produce a host executable (iOS CMake toolchain treats it
++# as an app bundle); only the static library is needed there.
++if (NOT SLIC3R_IOS)
++    add_executable(sla_time_estimate_app main.cpp)
++    target_link_libraries(sla_time_estimate_app PRIVATE sla_time_estimate)
++endif ()
