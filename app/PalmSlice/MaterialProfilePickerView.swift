@@ -7,6 +7,7 @@ struct MaterialProfilePickerView: View {
 
     @State private var newProfile: MaterialProfile? = nil
     @State private var showPresetPicker = false
+    @State private var showIniImport = false
     @State private var profileToEdit: MaterialProfile? = nil
 
     var body: some View {
@@ -23,6 +24,10 @@ struct MaterialProfilePickerView: View {
                     )
                 }
             }
+            .iniImporter(MaterialProfile.self, isPresented: $showIniImport) { imported in
+                for profile in imported { materialProfileStore.add(profile) }
+                if let last = imported.last { materialProfileStore.select(id: last.id) }
+            }
             .navigationTitle("Material Profile")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(
@@ -32,6 +37,7 @@ struct MaterialProfilePickerView: View {
                         newProfile = .newProfile(for: profileStore.selectedProfile)
                     }
                     Button("From PrusaSlicer Filament…") { showPresetPicker = true }
+                    Button("Import PrusaSlicer .ini…") { showIniImport = true }
                 } label: {
                     Image(systemName: "plus")
                 }

@@ -7,6 +7,7 @@ struct SliceProfilePickerView: View {
 
     @State private var newProfile: SliceProfile? = nil
     @State private var showPresetPicker = false
+    @State private var showIniImport = false
     @State private var profileToEdit: SliceProfile? = nil
 
     var body: some View {
@@ -23,6 +24,10 @@ struct SliceProfilePickerView: View {
                     )
                 }
             }
+            .iniImporter(SliceProfile.self, isPresented: $showIniImport) { imported in
+                for profile in imported { sliceProfileStore.add(profile) }
+                if let last = imported.last { sliceProfileStore.select(id: last.id) }
+            }
             .navigationTitle("Slice Profile")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(
@@ -32,6 +37,7 @@ struct SliceProfilePickerView: View {
                         newProfile = .newProfile(for: profileStore.selectedProfile)
                     }
                     Button("From PrusaSlicer Preset…") { showPresetPicker = true }
+                    Button("Import PrusaSlicer .ini…") { showIniImport = true }
                 } label: {
                     Image(systemName: "plus")
                 }

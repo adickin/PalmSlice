@@ -71,7 +71,7 @@ struct SettingInfo {
 
 /// "PrusaSlicer" section shown at the bottom of each profile editor: which
 /// PrusaSlicer preset the profile builds on, and every PrusaSlicer setting.
-struct PrusaSlicerSection<P: PrusaSettingsConvertible>: View {
+struct PrusaSlicerSection<P: PrusaIniProfile>: View {
     @Binding var profile: P
     /// Name of the PrusaSlicer preset this profile is layered on.
     let basePresetName: String?
@@ -101,6 +101,11 @@ struct PrusaSlicerSection<P: PrusaSettingsConvertible>: View {
                     let changed = profile.extraSettings.count
                     Text(changed == 0 ? "" : "\(changed) changed")
                 }
+            }
+            ShareLink(item: PrusaIniFile(fileName: profile.name,
+                                         text: ProfileIni.text(profile, baseSettings: baseSettings)),
+                      preview: SharePreview("\(profile.name).ini")) {
+                Label("Export PrusaSlicer .ini", systemImage: "square.and.arrow.up")
             }
         } header: {
             Text("PrusaSlicer")

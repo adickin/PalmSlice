@@ -52,8 +52,17 @@ _(moved to `FUTURE_FEATURES.md`)_
 
 ## Completed
 
+### Profiles on PrusaSlicer presets (2026-10-22)
+- [x] **PrusaSlicer vendor presets as the base of every slice** — 32 vendor bundles shipped (`PrusaSlicerProfiles/vendor`, build step 21), loaded with libslic3r's `PresetBundle`; printer preset + print preset + filament preset, then PalmSlice profiles. `PresetDriftTests` fails if a setting PalmSlice doesn't control differs from the vendor preset
+- [x] **Lossless profile ↔ PrusaSlicer settings conversion** (`ProfileSettings.swift`): typed fields + `extraSettings`; imported print / filament / printer presets slice to byte-identical G-code
+- [x] **One settings path** (`SliceSetup` → `slicer_apply_settings`, validated by libslic3r)
+- [x] **Built-in printers generated from vendor presets**; "From PrusaSlicer Library…" adds any of ~1,000 printers; new slice/material profiles seeded from the printer's presets or any compatible preset
+- [x] **All Settings screen** (every PrusaSlicer setting, categories, help text, validated edits), base preset shown/changeable
+- [x] **3MF per-part settings** (object overrides, height ranges, variable layer heights) with badge + Settings from File sheet; **Create Profiles from This File**. Parity with slicing the 3MF project directly verified on Piper J-3 Cub parts
+- [x] **PrusaSlicer .ini import** (flat configs and config bundles with inheritance) **and export**
+
 ### 3MF / OBJ / AMF import (2026-10-17)
-- [x] **3MF, OBJ and AMF import** via picker and drag-and-drop — `slicer_import_model_file` loads the file with libslic3r's format loaders and writes one STL per object instance (rotation/scale/mirroring baked in); each becomes its own model, named from the file, keeping the file's relative layout. Embedded 3MF/AMF print settings are ignored. STEP is not supported (needs OpenCASCADE)
+- [x] **3MF, OBJ and AMF import** via picker and drag-and-drop — `slicer_import_model_file` loads the file with libslic3r's format loaders and writes one STL per object instance (rotation/scale/mirroring baked in); each becomes its own model, named from the file, keeping the file's relative layout. (Embedded 3MF/AMF settings were ignored until 2026-10-22, see above.) STEP is not supported (needs OpenCASCADE)
 - [x] **Import failures now alert** — unsupported extensions and unreadable meshes show an error instead of silently adding an empty model
 - [x] **`ModelImporterTests`** — 3MF names/rotation/layout, AMF, OBJ, corrupt file, and converting + slicing two 3MFs
 

@@ -6,6 +6,7 @@ struct ProfilePickerView: View {
 
     @State private var showAddEditor = false
     @State private var showPresetPicker = false
+    @State private var showIniImport = false
     @State private var profileToEdit: PrinterProfile? = nil
     @State private var pendingUntestedSelection: PrinterProfile? = nil
 
@@ -55,6 +56,10 @@ struct ProfilePickerView: View {
                     Text("From PrusaSlicer's printer library but not yet verified on real hardware in this app. Once one prints well on your printer, swipe right on it (or touch and hold) and choose Mark Verified.")
                 }
             }
+            .iniImporter(PrinterProfile.self, isPresented: $showIniImport) { imported in
+                for profile in imported { profileStore.add(profile) }
+                if let last = imported.last { profileStore.select(id: last.id) }
+            }
             .navigationTitle("Printer Profile")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(
@@ -62,6 +67,7 @@ struct ProfilePickerView: View {
                 trailing: Menu {
                     Button("From PrusaSlicer Library…") { showPresetPicker = true }
                     Button("Custom Printer") { showAddEditor = true }
+                    Button("Import PrusaSlicer .ini…") { showIniImport = true }
                 } label: {
                     Image(systemName: "plus")
                 }

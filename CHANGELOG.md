@@ -4,6 +4,8 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-10-22
 
+- **PrusaSlicer .ini import and export.** "+" in the printer, material and slice profile lists has **Import PrusaSlicer .ini…**: a flat exported config (File > Export > Export Config) becomes one profile, named after its preset; a config bundle imports every preset of that type, resolving `inherits` (another preset in the bundle, or a PrusaSlicer system preset, which becomes the profile's base). Each editor's PrusaSlicer section has **Export PrusaSlicer .ini**: the profile's complete settings, preset values included, for desktop PrusaSlicer's Import Config
+
 - **3MF files keep their per-part PrusaSlicer settings.** Overrides for the whole part, overrides for height ranges (e.g. a 3DLabPrint aileron's solid end caps, or a two-wall first layer) and variable layer heights are imported with each part and applied on top of the profiles when slicing. Parts carrying them get a badge (model strip on iPhone, sidebar on iPad; also in the touch-and-hold menu) that opens **Settings from File**: what the file sets, in plain language, a switch to turn them off, and a warning when a tilted part makes the height-based ones not line up (they're skipped then; a Z scale stretches them)
 - **Create Profiles from This File**: adds the slice profile and material a 3MF was set up with (e.g. "0.3 mm 3DLabPrint" / "3DLabPrint PolyLight 1.0 LW-PLA"), with every one of its settings, and selects them; selects the existing ones if already added
 - Verified against the 3MF projects themselves: four Piper J-3 Cub parts imported the PalmSlice way produce the same layer heights and filament use (to 0.001%) as slicing the project directly
