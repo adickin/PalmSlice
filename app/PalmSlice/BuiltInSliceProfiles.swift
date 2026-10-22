@@ -97,5 +97,36 @@ enum BuiltInSliceProfiles {
         topSolidInfillSpeed: 25
     )
 
-    static let all: [SliceProfile] = [draft, standard, fine, thickWalls, lightweight]
+    // 3DLabPrint RC plane parts, with the settings from 3dlabprint.com/faq/prusaslicer
+    // (LW-PLA values). Their models build skins, ribs and spars into the geometry,
+    // so the slicer prints one wall and nothing else: no top/bottom shells, no
+    // infill. Even/Odd slicing, Classic walls and a 0 gap-closing radius are
+    // required for that geometry to slice correctly. First layer is 50% of wall
+    // speed, as specified there. Not for ordinary models: they would print as
+    // hollow single-wall shells.
+    static let rcPlane = SliceProfile(
+        name: "3DLabPrint RC Plane (LW-PLA 0.3 mm)",
+        layerHeight: 0.3,
+        firstLayerHeight: 0.3,
+        wallCount: 1,
+        wallGenerator: .classic,
+        externalPerimetersFirst: true,
+        topLayers: 0,
+        bottomLayers: 0,
+        infillDensity: 0,
+        infillPattern: .gyroid,
+        slicingMode: .evenOdd,
+        gapClosingRadius: 0,
+        extrusionWidth: 0.42,
+        firstLayerExtrusionWidth: 0.44,
+        printSpeed: 40,
+        infillSpeed: 40,
+        travelSpeed: 150,
+        firstLayerSpeed: 20,
+        solidInfillSpeed: 30,
+        topSolidInfillSpeed: 25,
+        adhesionType: .skirt
+    )
+
+    static let all: [SliceProfile] = [draft, standard, fine, thickWalls, lightweight, rcPlane]
 }

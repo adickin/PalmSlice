@@ -47,7 +47,7 @@ PRIVATE BY DESIGN
 PalmSlice collects no data. No analytics, no accounts, no servers of ours. The only network connection is the optional OctoPrint upload to a server you set up.
 
 PROFILE NOTE
-Profiles other than the Ender 3 S1 have not been print-tested and are marked "Untested" in the app. Please verify first layers and start/end G-code on your own printer.
+Profiles other than the Creality Ender-3 S1 have not been print-tested and are marked "Untested" in the app. Please verify first layers and start/end G-code on your own printer.
 
 PalmSlice is open-source software licensed under AGPL-3.0. Source code and licenses are linked from the in-app About screen.
 

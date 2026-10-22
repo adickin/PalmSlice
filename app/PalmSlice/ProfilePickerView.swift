@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct ProfilePickerView: View {
     @EnvironmentObject var profileStore: ProfileStore
@@ -30,15 +29,11 @@ struct ProfilePickerView: View {
                             onToggleVerified: { setVerified(profile, false) },
                             canDelete: profileStore.profiles.count > 1
                         )
-                        .draggable(profile.id.uuidString)
                     }
                 } header: {
                     Text("Verified")
                 } footer: {
                     Text("Confirmed to print correctly on real hardware.")
-                }
-                .dropDestination(for: String.self) { items, _ in
-                    handleDrop(items, verified: true)
                 }
 
                 Section {
@@ -52,15 +47,11 @@ struct ProfilePickerView: View {
                             onToggleVerified: { setVerified(profile, true) },
                             canDelete: profileStore.profiles.count > 1
                         )
-                        .draggable(profile.id.uuidString)
                     }
                 } header: {
                     Text("Untested")
                 } footer: {
-                    Text("Imported from an open-source printer configuration library but not yet verified on real hardware in this app. Drag a profile up to Verified once you've confirmed it prints well on your printer.")
-                }
-                .dropDestination(for: String.self) { items, _ in
-                    handleDrop(items, verified: false)
+                    Text("Imported from an open-source printer configuration library but not yet verified on real hardware in this app. Once one prints well on your printer, swipe right on it (or touch and hold) and choose Mark Verified.")
                 }
             }
             .navigationTitle("Printer Profile")
@@ -110,14 +101,6 @@ struct ProfilePickerView: View {
         var updated = profile
         updated.verified = verified
         profileStore.update(updated)
-    }
-
-    private func handleDrop(_ items: [String], verified: Bool) -> Bool {
-        guard let idString = items.first,
-              let id = UUID(uuidString: idString),
-              let profile = profileStore.profiles.first(where: { $0.id == id }) else { return false }
-        setVerified(profile, verified)
-        return true
     }
 }
 

@@ -96,6 +96,8 @@ typedef struct {
     // Walls
     int   wall_count;            // perimeters
     float horizontal_expansion;  // mm — xy_size_compensation (negative = shrink)
+    int   wall_generator;        // 0=classic, 1=arachne — perimeter_generator
+    int   external_perimeters_first; // bool — external_perimeters_first
 
     // Top / Bottom
     int   top_layers;            // top_solid_layers
@@ -110,6 +112,12 @@ typedef struct {
     // width. Stock PrusaSlicer is 25%; lower it to reduce material being forced
     // out through the walls on dense/solid parts (at the cost of wall bonding).
     float infill_overlap;        // % — infill_overlap
+
+    // Advanced
+    int   slicing_mode;          // 0=regular, 1=even/odd — slicing_mode
+    float gap_closing_radius;    // mm — slice_closing_radius
+    float extrusion_width;       // mm — extrusion_width (0 = auto)
+    float first_layer_extrusion_width; // mm — first_layer_extrusion_width (0 = PrusaSlicer default)
 
     // Speed (mm/s)
     float print_speed;           // perimeter_speed

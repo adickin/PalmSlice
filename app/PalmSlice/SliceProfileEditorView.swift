@@ -27,6 +27,7 @@ struct SliceProfileEditorView: View {
                 speedSection
                 supportSection
                 adhesionSection
+                advancedSection
                 helpButtonSection
             }
             .navigationTitle(mode == .add ? "New Slice Profile" : "Edit Slice Profile")
@@ -84,6 +85,10 @@ struct SliceProfileEditorView: View {
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
             }
+            Picker("Wall Generator", selection: $draft.wallGenerator) {
+                ForEach(WallGenerator.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Toggle("Outer Wall First", isOn: $draft.externalPerimetersFirst)
         }
     }
 
@@ -199,6 +204,33 @@ struct SliceProfileEditorView: View {
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
             }
+        }
+    }
+
+    private var advancedSection: some View {
+        Section {
+            Picker("Slicing Mode", selection: $draft.slicingMode) {
+                ForEach(SlicingMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            LabeledContent("Gap Closing Radius (mm)") {
+                TextField("0.049", value: $draft.gapClosingRadius, format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+            }
+            LabeledContent("Line Width (mm)") {
+                TextField("Auto", value: $draft.extrusionWidth, format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+            }
+            LabeledContent("First Layer Line Width (mm)") {
+                TextField("Auto", value: $draft.firstLayerExtrusionWidth, format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+            }
+        } header: {
+            Text("Advanced")
+        } footer: {
+            Text("Line widths of 0 mean automatic. Leave these at their defaults unless a model's instructions say otherwise.")
         }
     }
 
@@ -378,6 +410,10 @@ private let helpSections: [HelpSection] = [
                   description: "Number of perimeter loops printed around the outside of the model. More walls means a stronger, more watertight shell. 2–3 walls is typical; increase to 4+ for parts that need to hold stress or be watertight."),
         HelpEntry(name: "Horizontal Expansion",
                   description: "Shrinks or expands the model outline in XY. Positive values make the print slightly larger (compensates for material shrinkage); negative values make it smaller (useful for tight-tolerance holes or press fits). 0 means no adjustment."),
+        HelpEntry(name: "Wall Generator",
+                  description: "Arachne (the default) varies line width so thin features and gaps between walls fill cleanly. Classic prints every wall at the same width. Use Classic when a model was designed for it, such as 3DLabPrint planes."),
+        HelpEntry(name: "Outer Wall First",
+                  description: "Prints the outermost wall before the inner ones on each layer. Gives more accurate outside dimensions and a cleaner skin, but overhangs can sag more because the outer wall has nothing to lean on. Off is PrusaSlicer's default."),
     ]),
     HelpSection(title: "Top / Bottom", entries: [
         HelpEntry(name: "Top Layers",
@@ -396,6 +432,16 @@ private let helpSections: [HelpSection] = [
                   description: "The geometry of the infill structure inside the model. Gyroid is strong in all directions and prints well at high speeds. Grid is simple and fast. Honeycomb is efficient. Adaptive Cubic gets denser near surfaces automatically. Lightning is ultra-fast with minimal material but weak — good for display models only."),
         HelpEntry(name: "Infill Overlap",
                   description: "How far infill lines push into the perimeters, as a percent of extrusion width. Some overlap is needed to bond the infill to the walls. The stock value is 25%, but on dense or fully-solid parts that over-packs material with nowhere to go, forcing it out through the walls (bulging, rough layer lines). 15% is a good balance; lower it further (10%) if solid parts still bulge, raise it if infill separates from the walls. If bulging persists at low overlap, the cause is likely over-extrusion — calibrate flow via the Material profile's extrusion multiplier."),
+    ]),
+    HelpSection(title: "Advanced", entries: [
+        HelpEntry(name: "Slicing Mode",
+                  description: "Regular treats everything inside the model's outer surface as solid. Even/Odd treats areas inside two overlapping shells as empty, so overlaps cancel out. 3DLabPrint planes need Even/Odd to form their internal ribs; other models should use Regular."),
+        HelpEntry(name: "Gap Closing Radius",
+                  description: "Closes cracks in the model's outline smaller than this radius when slicing, which hides small mesh errors. PrusaSlicer's default is 0.049 mm. Set 0 for models with intentional tiny gaps, such as 3DLabPrint planes."),
+        HelpEntry(name: "Line Width",
+                  description: "Width of each extruded line in mm. 0 (Auto) picks a width from the nozzle size, about 0.45 mm for a 0.4 mm nozzle. Only set this when a model's instructions give a specific width."),
+        HelpEntry(name: "First Layer Line Width",
+                  description: "Line width for the first layer only. 0 (Auto) uses PrusaSlicer's default of twice the first layer height. A slightly wider first layer helps it stick to the bed."),
     ]),
     HelpSection(title: "Speed", entries: [
         HelpEntry(name: "Print Speed (Perimeter)",

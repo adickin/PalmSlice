@@ -383,6 +383,12 @@ int slicer_apply_slice_config(SlicerHandle handle, const SlicerSliceConfig* cfg)
             new Slic3r::ConfigOptionInt(cfg->wall_count));
         ctx->config.set_key_value("xy_size_compensation",
             new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->horizontal_expansion)));
+        ctx->config.set_key_value("perimeter_generator",
+            new Slic3r::ConfigOptionEnum<Slic3r::PerimeterGeneratorType>(
+                cfg->wall_generator == 0 ? Slic3r::PerimeterGeneratorType::Classic
+                                         : Slic3r::PerimeterGeneratorType::Arachne));
+        ctx->config.set_key_value("external_perimeters_first",
+            new Slic3r::ConfigOptionBool(cfg->external_perimeters_first != 0));
 
         // Top / Bottom
         ctx->config.set_key_value("top_solid_layers",
@@ -409,6 +415,29 @@ int slicer_apply_slice_config(SlicerHandle handle, const SlicerSliceConfig* cfg)
         ctx->config.set_key_value("infill_overlap",
             new Slic3r::ConfigOptionFloatOrPercent(
                 static_cast<double>(cfg->infill_overlap), true));
+
+        // Advanced. Even/Odd slicing cancels overlapping shells (models such
+        // as 3DLabPrint planes form internal ribs this way).
+        ctx->config.set_key_value("slicing_mode",
+            new Slic3r::ConfigOptionEnum<Slic3r::SlicingMode>(
+                cfg->slicing_mode == 1 ? Slic3r::SlicingMode::EvenOdd
+                                       : Slic3r::SlicingMode::Regular));
+        ctx->config.set_key_value("slice_closing_radius",
+            new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->gap_closing_radius)));
+        // 0 = auto width, which is also PrusaSlicer's own default.
+        ctx->config.set_key_value("extrusion_width",
+            new Slic3r::ConfigOptionFloatOrPercent(
+                static_cast<double>(cfg->extrusion_width), false));
+        // PrusaSlicer's default is 200% (of first layer height), so restore
+        // that rather than "auto" when unset.
+        if (cfg->first_layer_extrusion_width > 0.0f) {
+            ctx->config.set_key_value("first_layer_extrusion_width",
+                new Slic3r::ConfigOptionFloatOrPercent(
+                    static_cast<double>(cfg->first_layer_extrusion_width), false));
+        } else {
+            ctx->config.set_key_value("first_layer_extrusion_width",
+                new Slic3r::ConfigOptionFloatOrPercent(200, true));
+        }
 
         // Speed — types verified against PrintConfig.hpp:
         // perimeter_speed: ConfigOptionFloat

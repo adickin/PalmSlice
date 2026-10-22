@@ -1616,7 +1616,7 @@ struct ContentView: View {
 
         // 7. Apply slice profile
         await setPhase("Applying slice profile…")
-        var sliceCfg = buildSliceConfig(sliceProfile)
+        var sliceCfg = sliceProfile.bridgeConfig()
         if slicer_apply_slice_config(handle, &sliceCfg) != 0 {
             let msg = String(cString: slicer_last_error(handle))
             await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
@@ -1771,48 +1771,6 @@ struct ContentView: View {
     }
 
     // MARK: Profiles → C bridge
-
-    private func buildSliceConfig(_ profile: SliceProfile) -> SlicerSliceConfig {
-        var cfg = SlicerSliceConfig()
-        cfg.layer_height         = Float(profile.layerHeight)
-        cfg.first_layer_height   = Float(profile.firstLayerHeight)
-        cfg.wall_count           = Int32(profile.wallCount)
-        cfg.horizontal_expansion = Float(profile.horizontalExpansion)
-        cfg.top_layers           = Int32(profile.topLayers)
-        cfg.bottom_layers        = Int32(profile.bottomLayers)
-        cfg.top_thickness        = Float(profile.topThickness)
-        cfg.bottom_thickness     = Float(profile.bottomThickness)
-        cfg.infill_density       = Int32(profile.infillDensity)
-        cfg.infill_pattern       = profile.infillPattern.bridgeInt
-        cfg.infill_overlap       = Float(profile.infillOverlap)
-        cfg.print_speed          = Float(profile.printSpeed)
-        cfg.infill_speed         = Float(profile.infillSpeed)
-        cfg.travel_speed         = Float(profile.travelSpeed)
-        cfg.first_layer_speed    = Float(profile.firstLayerSpeed)
-        cfg.solid_infill_speed     = Float(profile.solidInfillSpeed)
-        cfg.top_solid_infill_speed = Float(profile.topSolidInfillSpeed)
-        cfg.ironing              = profile.ironingEnabled ? 1 : 0
-        cfg.ironing_type         = profile.ironingType.bridgeInt
-        cfg.ironing_flowrate     = Float(profile.ironingFlowrate)
-        cfg.ironing_speed        = Float(profile.ironingSpeed)
-        cfg.ironing_spacing      = Float(profile.ironingSpacing)
-        cfg.generate_support     = profile.generateSupport ? 1 : 0
-        cfg.support_style        = profile.supportStyle.bridgeInt
-        cfg.support_buildplate_only = profile.supportPlacement == .buildplateOnly ? 1 : 0
-        cfg.support_overhang_angle  = Int32(profile.supportOverhangAngle)
-        cfg.support_xy_spacing      = Float(profile.supportHorizontalExpansion)
-        cfg.support_use_towers      = profile.supportUseTowers ? 1 : 0
-        cfg.support_contact_distance = Float(profile.supportContactDistance)
-        cfg.support_interface_layers = Int32(profile.supportInterfaceLayers)
-        cfg.support_interface_spacing = Float(profile.supportInterfaceSpacing)
-        cfg.adhesion_type        = profile.adhesionType.bridgeInt
-        cfg.brim_type            = profile.brimType.bridgeInt
-        cfg.brim_width           = Float(profile.brimWidth)
-        cfg.skirt_loops          = Int32(profile.skirtLoops)
-        cfg.skirt_distance       = Float(profile.skirtDistance)
-        cfg.raft_layers          = Int32(profile.raftLayers)
-        return cfg
-    }
 
     private func applyMaterialProfile(_ profile: MaterialProfile, to handle: SlicerHandle) -> Bool {
         var cfg = SlicerMaterialConfig()

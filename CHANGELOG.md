@@ -4,6 +4,12 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-10-21
 
+- New built-in slice profile **3DLabPrint RC Plane (LW-PLA 0.3 mm)**, following 3DLabPrint's PrusaSlicer guide: 1 wall, no top/bottom layers, 0% infill, Even/Odd slicing, Classic walls, outer wall first, 0 gap-closing radius, 0.42/0.44 mm line widths, 40 mm/s walls, 20 mm/s first layer. For 3DLabPrint plane parts only
+- Slice profiles gain **Wall Generator** (Arachne/Classic) and **Outer Wall First** under Walls, and a new **Advanced** section with **Slicing Mode** (Regular/Even-Odd), **Gap Closing Radius** and **Line Width** / **First Layer Line Width**. Defaults match PrusaSlicer, so existing profiles slice as before
+- Saved slice profiles now load even when a newer app version adds settings (missing settings take their defaults), instead of being discarded and reseeded
+- **eSUN PLA-LW** material retuned to 3DLabPrint's LW-filament settings: 50% flow, 0.01 mm retraction, fan up to 50% when a layer takes under 10 s; still 240 °C. Installs with an unedited copy get the new values automatically
+- **Ender 3 S1:** the PrusaSlicer vendor profile, now named **Creality Ender-3 S1**, was print-tested and is the Verified built-in. The app's original hand-written "Ender 3 S1" profile is removed, including from existing installs (one-time migration)
+- Printer picker: removed drag-and-drop between Verified and Untested (it didn't work in the list). Use a right swipe or touch-and-hold → Mark Verified / Mark Untested; the Untested footer now says so
 - **Slicing engine updated to PrusaSlicer 2.9.6** (from 2.9.4, Nov 2025). Mostly SLA / multi-material work upstream; FFF-relevant fixes include bridge anchoring and cooling slowdown. All 14 built-in printer profiles and the 3MF import tests slice cleanly; G-code output is within 0.01% of 2.9.4's
 - Build chain pins upstream versions: `PRUSA_TAG` (`version_2.9.6`) and `LIBBGCODE_COMMIT` in `scripts/common.sh`. Step 02 refuses to build a different PrusaSlicer checkout; step 17 checks out the pinned LibBGCode commit (previously both cloned whatever `main` was)
 - iOS patch updated for 2.9.6: libslic3r now links the new `prusa_fdm_mixer` and `sla_time_estimate` libraries (installed by step 18, added to `OTHER_LDFLAGS`); the `sla_time_estimate_app` CLI is skipped on iOS

@@ -35,7 +35,9 @@ final class MaterialProfileStore: ObservableObject {
             save()
         }
 
-        if mergeInNewBuiltIns() {
+        let added = mergeInNewBuiltIns()
+        let updated = updateUneditedLWPLA()
+        if added || updated {
             save()
         }
 
@@ -66,6 +68,23 @@ final class MaterialProfileStore: ObservableObject {
         }
         defaults.set(offered.sorted(), forKey: Self.offeredBuiltInsKey)
         return added
+    }
+
+    // The eSUN PLA-LW built-in was retuned to 3DLabPrint's LW settings after it
+    // shipped. Installs that already have it keep their saved copy, so update
+    // that copy too, but only if it still has the original values (an edited
+    // copy is left alone).
+    private func updateUneditedLWPLA() -> Bool {
+        let template = BuiltInMaterialProfiles.esunPLALW
+        guard let idx = profiles.firstIndex(where: {
+            $0.name == template.name && $0.extrusionMultiplier == 0.6
+                && $0.retractionLength == 0.8 && $0.maxFanSpeed == 30
+                && $0.fanBelowLayerTime == 15
+        }) else { return false }
+        var p = template
+        p.id = profiles[idx].id
+        profiles[idx] = p
+        return true
     }
 
     func save() {

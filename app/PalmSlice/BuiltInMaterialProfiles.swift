@@ -99,10 +99,12 @@ enum BuiltInMaterialProfiles {
 
     // eSUN PLA-LW (foaming lightweight PLA). Sources: eSUN's notes (210–270 °C foaming
     // range, ~45% flow at 270 °C, retraction mostly ineffective, bed 45–55 °C) and
-    // 3DLabPrint's thin-wall FAQ (part fan off, ~0.8 mm direct-drive retraction at
-    // 15–20 mm/s, 0.05–0.2 mm restart extra). 240 °C on every layer keeps the foaming —
-    // and so the 60% multiplier — consistent from the first layer up. Stays under 250 °C
-    // because the stock Ender 3 S1 hotend is PTFE-lined.
+    // 3DLabPrint's PrusaSlicer settings for LW filaments (0.4–0.5 multiplier,
+    // 0.01 mm retraction, no retract on layer change, fan 0–50% only when a layer
+    // takes under 10 s). 240 °C on every layer keeps the foaming, and so the 50%
+    // multiplier, consistent from the first layer up; 3DLabPrint's 230 °C is for
+    // their own filament. Stays under 250 °C because the stock Ender 3 S1 hotend
+    // is PTFE-lined. Calibrate the multiplier by weighing a test part.
     static let esunPLALW = MaterialProfile(
         name: "eSUN PLA-LW (Lightweight)",
         filamentDiameter: 1.75,
@@ -110,19 +112,19 @@ enum BuiltInMaterialProfiles {
         otherLayersTemp: 240,
         firstLayerBedTemp: 55,
         otherLayersBedTemp: 50,
-        extrusionMultiplier: 0.6,
+        extrusionMultiplier: 0.5,
         retractionEnabled: true,
-        retractionLength: 0.8,
-        retractionSpeed: 20.0,
-        retractionRestartExtra: 0.1,
+        retractionLength: 0.01,
+        retractionSpeed: 30.0,
+        retractionRestartExtra: 0.0,
         zHop: 0.0,
         minTravelForRetraction: 2.0,
         coolingEnabled: true,
         minFanSpeed: 0,
-        maxFanSpeed: 30,
+        maxFanSpeed: 50,
         bridgeFanSpeed: 50,
         disableFanFirstLayers: 3,
-        fanBelowLayerTime: 15,
+        fanBelowLayerTime: 10,
         slowdownBelowLayerTime: 5,
         minPrintSpeed: 10.0
     )

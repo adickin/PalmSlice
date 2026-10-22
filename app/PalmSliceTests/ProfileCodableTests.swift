@@ -6,7 +6,7 @@ final class ProfileCodableTests: XCTestCase {
     // MARK: - Round-trip encode/decode
 
     func testPrinterProfileRoundTrip() throws {
-        let original = BuiltInProfiles.ender3S1
+        let original = BuiltInProfiles.crealityEnder3S1
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(PrinterProfile.self, from: data)
 
@@ -59,8 +59,8 @@ final class ProfileCodableTests: XCTestCase {
     }
 
     func testEnder3S1HasAtLeastOneExtruder() {
-        XCTAssertFalse(BuiltInProfiles.ender3S1.extruders.isEmpty)
-        XCTAssertEqual(BuiltInProfiles.ender3S1.numberOfExtruders, BuiltInProfiles.ender3S1.extruders.count)
+        XCTAssertFalse(BuiltInProfiles.crealityEnder3S1.extruders.isEmpty)
+        XCTAssertEqual(BuiltInProfiles.crealityEnder3S1.numberOfExtruders, BuiltInProfiles.crealityEnder3S1.extruders.count)
     }
 
     // MARK: - Bridge-int mappings must stay unique per enum

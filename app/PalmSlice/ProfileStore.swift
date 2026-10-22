@@ -37,13 +37,42 @@ final class ProfileStore: ObservableObject {
             save()
         }
 
-        if mergeInMissingBuiltIns() {
+        let added = mergeInMissingBuiltIns()
+        let migrated = retireCustomEnder3S1()
+        if added || migrated {
             save()
         }
 
         if selectedProfileId == nil || !profiles.contains(where: { $0.id == selectedProfileId }) {
-            selectedProfileId = profiles.first?.id
+            selectedProfileId = (profiles.first { $0.verified } ?? profiles.first)?.id
         }
+    }
+
+    // One-time migration: the original hand-written "Ender 3 S1" built-in was
+    // replaced by the PrusaSlicer vendor profile once that was print-tested.
+    // Removes the old profile and promotes the vendor one to Verified (under
+    // its new name, unless the user renamed it). Runs once, so a later
+    // "Mark Untested" sticks.
+    private static let retiredEnderKey = "retiredCustomEnder3S1"
+
+    private func retireCustomEnder3S1() -> Bool {
+        guard !UserDefaults.standard.bool(forKey: Self.retiredEnderKey) else { return false }
+        UserDefaults.standard.set(true, forKey: Self.retiredEnderKey)
+
+        let replacement = BuiltInProfiles.crealityEnder3S1
+        profiles.removeAll { p in
+            p.builtInKey == "ender3s1" || (p.builtInKey == nil && p.name == "Ender 3 S1")
+        }
+        if let idx = profiles.firstIndex(where: { $0.builtInKey == replacement.builtInKey }) {
+            profiles[idx].verified = true
+            if profiles[idx].name == "Creality Ender-3 S1 (PrusaSlicer)" {
+                profiles[idx].name = replacement.name
+            }
+            // Keep verified profiles at the top so the fallback selection lands on it.
+            let p = profiles.remove(at: idx)
+            profiles.insert(p, at: 0)
+        }
+        return true
     }
 
     // Adds any BuiltInProfiles template not already present, so a user who
