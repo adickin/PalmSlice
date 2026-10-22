@@ -40,8 +40,18 @@ struct MaterialProfileEditorView: View {
         }
     }
 
+    // PrusaSlicer filament_type values found in its vendor filament presets.
+    // FLEX covers TPU/TPE. A saved type not in this list is kept and shown.
+    static let baseFilamentTypes = ["PLA", "PETG", "ABS", "ASA", "FLEX", "PA", "PC", "HIPS", "PVA", "PP"]
+    private var filamentTypes: [String] {
+        Self.baseFilamentTypes.contains(draft.filamentType)
+            ? Self.baseFilamentTypes : Self.baseFilamentTypes + [draft.filamentType]
+    }
     private var filamentSection: some View {
         Section("Filament & Temperature") {
+            Picker("Type", selection: $draft.filamentType) {
+                ForEach(filamentTypes, id: \.self) { Text($0).tag($0) }
+            }
             Picker("Diameter", selection: $draft.filamentDiameter) {
                 Text("1.75 mm").tag(1.75)
                 Text("2.85 mm").tag(2.85)

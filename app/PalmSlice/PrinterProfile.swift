@@ -17,6 +17,13 @@ struct PrinterProfile: Codable, Identifiable {
     // customized. nil for user-created profiles.
     var builtInKey: String? = nil
 
+    // The PrusaSlicer system printer preset this profile is based on (e.g.
+    // "Creality Ender-3 S1 (0.4 mm nozzle)"). Every slice applies that preset,
+    // plus its default print preset and a matching filament preset, before
+    // this profile's own settings — see PresetLibrary. nil for printers the
+    // user defined from scratch.
+    var systemPreset: String? = nil
+
     // MARK: Bed / Machine
     var bedX: Double = 220.0               // mm (width)
     var bedY: Double = 220.0               // mm (depth)
@@ -45,7 +52,7 @@ struct PrinterProfile: Codable, Identifiable {
     var extruders: [ExtruderProfile] = [ExtruderProfile()]
 
     enum CodingKeys: String, CodingKey {
-        case id, name, verified, builtInKey
+        case id, name, verified, builtInKey, systemPreset
         case bedX, bedY, bedZ, buildPlateShape, originAtCenter, heatedBed, heatedBuildVolume
         case gcodeFlavor, startGCode, endGCode
         case printheadXMin, printheadYMin, printheadXMax, printheadYMax, gantryHeight
@@ -65,6 +72,7 @@ struct PrinterProfile: Codable, Identifiable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "My Printer"
         verified = try c.decodeIfPresent(Bool.self, forKey: .verified) ?? true
         builtInKey = try c.decodeIfPresent(String.self, forKey: .builtInKey)
+        systemPreset = try c.decodeIfPresent(String.self, forKey: .systemPreset)
 
         bedX = try c.decodeIfPresent(Double.self, forKey: .bedX) ?? 220.0
         bedY = try c.decodeIfPresent(Double.self, forKey: .bedY) ?? 220.0

@@ -6,6 +6,10 @@ struct MaterialProfile: Codable, Identifiable {
 
     // MARK: - Filament
     var filamentDiameter: Double = 1.75      // mm  — filament_diameter (per-extruder array)
+    // PrusaSlicer filament_type (PLA, PETG, ABS, FLEX, …). Picks the vendor
+    // filament preset a slice starts from (see PresetLibrary.base), so
+    // settings this profile doesn't set match the material.
+    var filamentType: String = "PLA"
 
     // MARK: - Temperatures
     var firstLayerTemp: Int = 215            // °C  — first_layer_temperature (per-extruder)
@@ -40,5 +44,42 @@ struct MaterialProfile: Codable, Identifiable {
         let retract = retractionEnabled ? "\(retractionLength) mm retract" : "No retract"
         let fan = coolingEnabled ? "Fan \(minFanSpeed)–\(maxFanSpeed)%" : "Fan off"
         return "\(temp) · \(retract) · \(fan)"
+    }
+}
+
+// Decodes field by field, falling back to each field's default when a key is
+// missing, so materials saved by an older version still load after a field is
+// added. In an extension to keep the memberwise init and synthesized encoding.
+extension MaterialProfile {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = MaterialProfile()
+        func v<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+            try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+        }
+        self.init()
+        id = try v(.id, d.id)
+        name = try v(.name, d.name)
+        filamentDiameter = try v(.filamentDiameter, d.filamentDiameter)
+        filamentType = try v(.filamentType, d.filamentType)
+        firstLayerTemp = try v(.firstLayerTemp, d.firstLayerTemp)
+        otherLayersTemp = try v(.otherLayersTemp, d.otherLayersTemp)
+        firstLayerBedTemp = try v(.firstLayerBedTemp, d.firstLayerBedTemp)
+        otherLayersBedTemp = try v(.otherLayersBedTemp, d.otherLayersBedTemp)
+        extrusionMultiplier = try v(.extrusionMultiplier, d.extrusionMultiplier)
+        retractionEnabled = try v(.retractionEnabled, d.retractionEnabled)
+        retractionLength = try v(.retractionLength, d.retractionLength)
+        retractionSpeed = try v(.retractionSpeed, d.retractionSpeed)
+        retractionRestartExtra = try v(.retractionRestartExtra, d.retractionRestartExtra)
+        zHop = try v(.zHop, d.zHop)
+        minTravelForRetraction = try v(.minTravelForRetraction, d.minTravelForRetraction)
+        coolingEnabled = try v(.coolingEnabled, d.coolingEnabled)
+        minFanSpeed = try v(.minFanSpeed, d.minFanSpeed)
+        maxFanSpeed = try v(.maxFanSpeed, d.maxFanSpeed)
+        bridgeFanSpeed = try v(.bridgeFanSpeed, d.bridgeFanSpeed)
+        disableFanFirstLayers = try v(.disableFanFirstLayers, d.disableFanFirstLayers)
+        fanBelowLayerTime = try v(.fanBelowLayerTime, d.fanBelowLayerTime)
+        slowdownBelowLayerTime = try v(.slowdownBelowLayerTime, d.slowdownBelowLayerTime)
+        minPrintSpeed = try v(.minPrintSpeed, d.minPrintSpeed)
     }
 }

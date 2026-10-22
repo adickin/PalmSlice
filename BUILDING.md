@@ -53,6 +53,9 @@ Device (non-simulator) builds use `build_device.sh`, which mirrors the same step
 | 18 | `10_libslic3r.sh` | Build libslic3r from full PrusaSlicer tree | ~10 min |
 | 19 | `10b_install_stub_headers.sh` | Install stub headers (seq, nlopt, nanosvg, bundled deps) | ~1 min |
 | 20 | `11_xcframework.sh` | Package `libslic3r.a` as XCFramework | seconds |
+| 21 | `12_vendor_profiles.sh` | Copy PrusaSlicer's vendor profile bundles (`resources/profiles/*.ini`, FFF only) into `app/PalmSlice/PrusaSlicerProfiles/vendor` | seconds |
+
+The vendor profiles are committed, so a fresh clone builds without step 21. Every slice starts from them: the printer's PrusaSlicer preset, its default print preset and a matching filament preset are applied first, then the PalmSlice profiles on top (see `PresetLibrary.swift`).
 
 All deps install into `~/ios-sysroot-sim/`. All source repos clone into `~/ios-sources/`.
 
@@ -116,7 +119,8 @@ Two small stub `.cpp` files are compiled instead of their JPEG/Z3-dependent orig
 3. `git apply --reject ~/work/IosSlicer/patches/prusaslicer_ios.patch`, fix any `.rej` hunks by hand, copy the stub `.cpp` files back in (step 02 does this), then regenerate the patch: `git diff HEAD -- CMakeLists.txt src/CMakeLists.txt src/libslic3r/CMakeLists.txt src/sla-time-estimates/CMakeLists.txt > ~/work/IosSlicer/patches/prusaslicer_ios.patch`.
 4. Check `git diff <old> <new> -- src/libslic3r/ArrangeHelper.hpp src/libslic3r/GCode/Thumbnails.hpp` — the stubs must still match those headers.
 5. Look for new libraries linked by `src/libslic3r/CMakeLists.txt`; add each `.a` to the bundled-lib loop in `scripts/10_libslic3r.sh` and to `OTHER_LDFLAGS` in `app/project.yml`.
-6. Delete the `libbgcode_core.a` and `libslic3r.a` sentinels in both sysroots, run steps 17 and 18 for simulator and device (`PLATFORM=OS64`), then step 20, `xcodegen`, and the test suite.
+6. Delete the `libbgcode_core.a` and `libslic3r.a` sentinels in both sysroots, run steps 17 and 18 for simulator and device (`PLATFORM=OS64`), then steps 20 and 21, `xcodegen`, and the test suite.
+7. Vendor presets get renamed upstream now and then. `PrinterProfileSliceTests` fails if a built-in printer's `systemPreset` (`BuiltInProfiles.systemPresetNames`) no longer exists; `PresetDriftTests` fails if a setting PalmSlice doesn't control stops matching the vendor preset.
 
 ## Known Friction Points
 
@@ -131,6 +135,7 @@ Two small stub `.cpp` files are compiled instead of their JPEG/Z3-dependent orig
 | Clang 19+ (Xcode 16.3+) | `error: a template argument list is expected after a name prefixed by the template keyword` in Boost / CGAL headers | Step 18 passes `-Wno-missing-template-arg-list-after-template-kw` |
 | `cmake_minimum_required < 3.5` error | CMake 4.x broke older projects | Add `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` to the cmake invocation |
 | Undefined symbol at link | A new dep was added to libslic3r but not to `OTHER_LDFLAGS` | Add the `.a` path to `app/project.yml` and run `xcodegen` |
+| Boost.Filesystem in the bridge | `directory_iterator` entries come back with empty paths when called from `slicer_bridge.cpp` (header/library config mismatch); libslic3r's own Boost use is fine | Use `std::filesystem` in bridge code |
 
 ## Project Layout
 
@@ -167,7 +172,8 @@ PalmSlice/
 │   ├── 09h_libbgcode.sh
 │   ├── 10_libslic3r.sh
 │   ├── 10b_install_stub_headers.sh   ← seq stub, nlopt.h, nanosvg, bundled deps
-│   └── 11_xcframework.sh
+│   ├── 11_xcframework.sh
+│   └── 12_vendor_profiles.sh         ← PrusaSlicer vendor presets → app bundle
 └── app/
     ├── project.yml                   ← xcodegen spec (links ~40 static libs)
     └── PalmSlice/

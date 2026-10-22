@@ -28,6 +28,7 @@ enum BuiltInMaterialProfiles {
     static let petg = MaterialProfile(
         name: "PETG",
         filamentDiameter: 1.75,
+        filamentType: "PETG",
         firstLayerTemp: 235,
         otherLayersTemp: 230,
         firstLayerBedTemp: 80,
@@ -52,6 +53,7 @@ enum BuiltInMaterialProfiles {
     static let abs = MaterialProfile(
         name: "ABS",
         filamentDiameter: 1.75,
+        filamentType: "ABS",
         firstLayerTemp: 250,
         otherLayersTemp: 245,
         firstLayerBedTemp: 105,
@@ -76,6 +78,7 @@ enum BuiltInMaterialProfiles {
     static let tpu = MaterialProfile(
         name: "TPU",
         filamentDiameter: 1.75,
+        filamentType: "FLEX",
         firstLayerTemp: 230,
         otherLayersTemp: 225,
         firstLayerBedTemp: 30,

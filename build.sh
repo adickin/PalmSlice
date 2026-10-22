@@ -68,6 +68,7 @@ run_step 17 "09h_libbgcode.sh"     "Build LibBGCode (Prusa binary gcode)"
 run_step 18 "10_libslic3r.sh"      "Build libslic3r"
 run_step 19 "10b_install_stub_headers.sh" "Install stub headers (seq, nlopt, nanosvg, bundled deps)"
 run_step 20 "11_xcframework.sh"    "Package as XCFramework"
+run_step 21 "12_vendor_profiles.sh" "Copy PrusaSlicer vendor profiles into the app"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

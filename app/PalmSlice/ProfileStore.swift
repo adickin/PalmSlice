@@ -39,13 +39,27 @@ final class ProfileStore: ObservableObject {
 
         let added = mergeInMissingBuiltIns()
         let migrated = retireCustomEnder3S1()
-        if added || migrated {
+        let linked = linkSystemPresets()
+        if added || migrated || linked {
             save()
         }
 
         if selectedProfileId == nil || !profiles.contains(where: { $0.id == selectedProfileId }) {
             selectedProfileId = (profiles.first { $0.verified } ?? profiles.first)?.id
         }
+    }
+
+    // Saved copies of built-in printers from before profiles were based on
+    // PrusaSlicer presets: link each to its system preset.
+    private func linkSystemPresets() -> Bool {
+        var changed = false
+        for i in profiles.indices where profiles[i].systemPreset == nil {
+            if let key = profiles[i].builtInKey, let name = BuiltInProfiles.systemPresetNames[key] {
+                profiles[i].systemPreset = name
+                changed = true
+            }
+        }
+        return changed
     }
 
     // One-time migration: the original hand-written "Ender 3 S1" built-in was

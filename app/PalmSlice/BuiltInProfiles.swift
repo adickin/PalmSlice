@@ -879,5 +879,28 @@ print_end    ;end script from macro
         voronV2350,
     ]
 
-    static let all: [PrinterProfile] = verified + untested
+    // PrusaSlicer system printer preset each built-in corresponds to (the 0.4 mm
+    // nozzle variant), by builtInKey. Applied as the base layer of every slice;
+    // ProfileStore also fills it into saved copies of these built-ins.
+    static let systemPresetNames: [String: String] = [
+        "prusa-mk3s":               "Original Prusa i3 MK3S & MK3S+",
+        "prusa-mini":               "Original Prusa MINI & MINI+",
+        "creality-ender3v2":        "Creality Ender-3 V2 (0.4 mm nozzle)",
+        "creality-cr10":            "Creality CR-10 (0.4 mm nozzle)",
+        "anycubic-i3mega":          "Anycubic i3 Mega",
+        "artillery-sidewinder-x1":  "Artillery Sidewinder X1",
+        "creality-ender3":          "Creality Ender-3 (0.4 mm nozzle)",
+        "creality-ender3s1-vendor": "Creality Ender-3 S1 (0.4 mm nozzle)",
+        "creality-ender5":          "Creality Ender-5 (0.4 mm nozzle)",
+        "prusa-mk4":                "Original Prusa MK4 0.4 nozzle",
+        "elegoo-neptune3pro":       "Elegoo Neptune-3 Pro",
+        "sovol-sv06":               "SV06",
+        "voron-v2-350":             "Voron_v2_350 0.4 nozzle",
+    ]
+
+    static let all: [PrinterProfile] = (verified + untested).map { profile in
+        var p = profile
+        p.systemPreset = p.builtInKey.flatMap { systemPresetNames[$0] }
+        return p
+    }
 }

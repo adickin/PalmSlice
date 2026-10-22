@@ -104,8 +104,8 @@ struct SliceProfile: Codable, Identifiable {
     // MARK: - Advanced (defaults match PrusaSlicer's own)
     var slicingMode: SlicingMode = .regular     // PrusaSlicer: slicing_mode
     var gapClosingRadius: Double = 0.049        // mm — PrusaSlicer: slice_closing_radius
-    var extrusionWidth: Double = 0.0            // mm — PrusaSlicer: extrusion_width (0 = auto)
-    var firstLayerExtrusionWidth: Double = 0.0  // mm — PrusaSlicer: first_layer_extrusion_width (0 = auto)
+    var extrusionWidth: Double = 0.0            // mm — PrusaSlicer: extrusion_width (0 = keep base)
+    var firstLayerExtrusionWidth: Double = 0.0  // mm — PrusaSlicer: first_layer_extrusion_width (0 = keep base)
 
     // MARK: - Speed (mm/s)
     var printSpeed: Double = 60.0       // PrusaSlicer: perimeter_speed

@@ -2,6 +2,17 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-10-22
+
+- **Slices now start from PrusaSlicer's own presets.** PrusaSlicer's vendor profile bundles ship in the app (3.2 MB, 32 vendors, ~1,000 printers) and load at launch with libslic3r's `PresetBundle`. Each slice applies the printer's PrusaSlicer preset, its default print preset and a matching filament preset first, then the PalmSlice printer / material / slice profiles on top. Settings PalmSlice doesn't expose (about 150) previously fell back to libslic3r's bare defaults; they now match PrusaSlicer. For the Ender-3 S1 that means, among others: no extra perimeters on overhangs, small areas no longer forced solid, thin walls off, 0.1 mm elephant-foot compensation, nearest seam, 0.85 bridge flow, objects labelled in the G-code
+- Built-in printers are linked to their PrusaSlicer printer presets (0.4 mm nozzle variants). Custom printers use the Ender-3 S1's print and filament presets but never its printer settings
+- Materials gain a **Type** (PLA, PETG, ABS, FLEX, …) which picks the matching PrusaSlicer filament preset. Saved PETG/ABS/TPU built-ins are typed automatically
+- Material retraction now also sets PrusaSlicer's filament retraction overrides, so a vendor filament preset can't silently replace it
+- Line Width / First Layer Line Width of 0 now keep PrusaSlicer's value for the printer instead of libslic3r's auto width
+- Vendor-preset features PalmSlice can't support are always off: binary G-code (Prusa MK4/MINI), post-processing scripts, embedded thumbnails
+- New bridge API: `slicer_presets_load`, `slicer_preset_*` (list, settings, compatibility), `slicer_apply_preset`, `slicer_apply_settings` (PrusaSlicer `key = value` text, validated by libslic3r) and `slicer_get_setting`
+- Build step 21 `12_vendor_profiles.sh` copies the vendor bundles for the pinned PrusaSlicer tag. New tests: preset loading, every built-in printer slicing from its preset, and a drift test that fails if any setting PalmSlice doesn't control differs from the vendor preset
+
 ## 2026-10-21
 
 - New built-in slice profile **3DLabPrint RC Plane (LW-PLA 0.3 mm)**, following 3DLabPrint's PrusaSlicer guide: 1 wall, no top/bottom layers, 0% infill, Even/Odd slicing, Classic walls, outer wall first, 0 gap-closing radius, 0.42/0.44 mm line widths, 40 mm/s walls, 20 mm/s first layer. For 3DLabPrint plane parts only

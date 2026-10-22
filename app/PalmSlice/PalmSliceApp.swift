@@ -17,6 +17,9 @@ struct PalmSliceApp: App {
                     .environmentObject(sliceProfileStore)
                     .environmentObject(materialProfileStore)
                     .task {
+                        // Load PrusaSlicer's vendor presets off the main thread
+                        // while the splash shows (~1.5 s); slicing needs them.
+                        Task.detached(priority: .userInitiated) { PresetLibrary.load() }
                         profileStore.load()
                         sliceProfileStore.load()
                         materialProfileStore.load()

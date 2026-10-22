@@ -37,7 +37,8 @@ final class MaterialProfileStore: ObservableObject {
 
         let added = mergeInNewBuiltIns()
         let updated = updateUneditedLWPLA()
-        if added || updated {
+        let typed = assignBuiltInFilamentTypes()
+        if added || updated || typed {
             save()
         }
 
@@ -68,6 +69,23 @@ final class MaterialProfileStore: ObservableObject {
         }
         defaults.set(offered.sorted(), forKey: Self.offeredBuiltInsKey)
         return added
+    }
+
+    // Materials saved before filamentType existed decode as PLA. Once, give the
+    // saved copies of the non-PLA built-ins their real type.
+    private static let typesAssignedKey = "materialFilamentTypesAssigned"
+
+    private func assignBuiltInFilamentTypes() -> Bool {
+        guard !UserDefaults.standard.bool(forKey: Self.typesAssignedKey) else { return false }
+        UserDefaults.standard.set(true, forKey: Self.typesAssignedKey)
+        var changed = false
+        for template in BuiltInMaterialProfiles.all where template.filamentType != "PLA" {
+            for i in profiles.indices where profiles[i].name == template.name && profiles[i].filamentType == "PLA" {
+                profiles[i].filamentType = template.filamentType
+                changed = true
+            }
+        }
+        return changed
     }
 
     // The eSUN PLA-LW built-in was retuned to 3DLabPrint's LW settings after it

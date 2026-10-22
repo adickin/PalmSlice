@@ -11,6 +11,7 @@
 #include <string>
 #include <stdexcept>
 #include <cstring>
+#include <cstdio>
 #include <functional>
 #include <algorithm>
 #include <cmath>
@@ -28,6 +29,13 @@
 #include <libslic3r/Format/OBJ.hpp>
 #include <libslic3r/Semver.hpp>
 #include <libslic3r/TriangleMesh.hpp>
+#include <libslic3r/Preset.hpp>
+#include <libslic3r/PresetBundle.hpp>
+#include <libslic3r/Utils.hpp>
+#include <memory>
+#include <mutex>
+#include <sstream>
+#include <filesystem>
 // GCode export lives inside Print::export_gcode in recent PrusaSlicer builds.
 // If your version has a separate GCode.hpp, add: #include <libslic3r/GCode.hpp>
 
@@ -257,6 +265,13 @@ int slicer_slice_with_progress(SlicerHandle handle,
         }
 
         Slic3r::DynamicPrintConfig cfg_copy = ctx->config;
+        // Vendor presets can enable desktop-only output features: binary
+        // G-code (Prusa MK4/XL/MINI), post-processing scripts (can't run on
+        // iOS) and embedded thumbnails (need the desktop 3D renderer).
+        // PalmSlice always writes plain-text G-code it can parse and preview.
+        cfg_copy.set_key_value("binary_gcode", new Slic3r::ConfigOptionBool(false));
+        cfg_copy.set_key_value("post_process", new Slic3r::ConfigOptionStrings());
+        cfg_copy.set_key_value("thumbnails", new Slic3r::ConfigOptionString(""));
         ctx->print.apply(ctx->model, std::move(cfg_copy));
 
         ctx->print.process();
@@ -424,19 +439,17 @@ int slicer_apply_slice_config(SlicerHandle handle, const SlicerSliceConfig* cfg)
                                        : Slic3r::SlicingMode::Regular));
         ctx->config.set_key_value("slice_closing_radius",
             new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->gap_closing_radius)));
-        // 0 = auto width, which is also PrusaSlicer's own default.
-        ctx->config.set_key_value("extrusion_width",
-            new Slic3r::ConfigOptionFloatOrPercent(
-                static_cast<double>(cfg->extrusion_width), false));
-        // PrusaSlicer's default is 200% (of first layer height), so restore
-        // that rather than "auto" when unset.
+        // Line widths: 0 keeps the base value (the printer's PrusaSlicer print
+        // preset, or libslic3r's auto width when there is no preset).
+        if (cfg->extrusion_width > 0.0f) {
+            ctx->config.set_key_value("extrusion_width",
+                new Slic3r::ConfigOptionFloatOrPercent(
+                    static_cast<double>(cfg->extrusion_width), false));
+        }
         if (cfg->first_layer_extrusion_width > 0.0f) {
             ctx->config.set_key_value("first_layer_extrusion_width",
                 new Slic3r::ConfigOptionFloatOrPercent(
                     static_cast<double>(cfg->first_layer_extrusion_width), false));
-        } else {
-            ctx->config.set_key_value("first_layer_extrusion_width",
-                new Slic3r::ConfigOptionFloatOrPercent(200, true));
         }
 
         // Speed — types verified against PrintConfig.hpp:
@@ -659,6 +672,25 @@ int slicer_apply_material_config(SlicerHandle handle,
             new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->retract_lift)}));
         ctx->config.set_key_value("retract_before_travel",
             new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->retract_before_travel)}));
+        // A filament preset's filament_retract_* values override the printer's
+        // retract_* in PrusaSlicer, and the vendor filament preset applied as
+        // the base may set them. Mirror the material's values into them so the
+        // material profile's retraction is what actually prints.
+        {
+            Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::Disable);
+            const std::pair<const char*, float> overrides[] = {
+                {"filament_retract_length",        cfg->retract_length},
+                {"filament_retract_speed",         cfg->retract_speed},
+                {"filament_retract_restart_extra", cfg->retract_restart_extra},
+                {"filament_retract_lift",          cfg->retract_lift},
+                {"filament_retract_before_travel", cfg->retract_before_travel},
+            };
+            for (const auto& [key, value] : overrides) {
+                char buf[32];
+                std::snprintf(buf, sizeof buf, "%.6g", static_cast<double>(value));
+                ctx->config.set_deserialize(key, buf, subst);
+            }
+        }
 
         // Fan / cooling
         ctx->config.set_key_value("cooling",
@@ -981,6 +1013,253 @@ int slicer_imported_object_offset(SlicerHandle handle, int index,
     if (offset_x_mm) *offset_x_mm = ctx->imported[index].offset_x_mm;
     if (offset_y_mm) *offset_y_mm = ctx->imported[index].offset_y_mm;
     return 0;
+}
+
+// ── PrusaSlicer system presets ───────────────────────────────────────────────
+} // extern "C"
+
+namespace {
+
+// Process-wide: loaded once, then only read. g_presets_mutex guards both the
+// swap in slicer_presets_load and every read.
+//
+// One PresetBundle per vendor file. PrusaSlicer itself merges them into one
+// bundle (PresetBundle::load_system_presets, which is private), but a print or
+// filament preset is only ever compatible with printers of its own vendor, so
+// keeping them separate loses nothing.
+struct PresetRef {
+    std::string           name;
+    Slic3r::PresetBundle* bundle;
+};
+std::mutex                                         g_presets_mutex;
+std::vector<std::unique_ptr<Slic3r::PresetBundle>> g_bundles;
+std::string                                        g_presets_error;
+// System presets per type, sorted by name (index = API index).
+std::vector<PresetRef>                             g_preset_refs[3];
+
+thread_local std::string t_string_result;
+
+Slic3r::PresetCollection* collection(Slic3r::PresetBundle& b, int type) {
+    switch (type) {
+        case SLICER_PRESET_PRINT:    return &b.prints;
+        case SLICER_PRESET_FILAMENT: return &b.filaments;
+        case SLICER_PRESET_PRINTER:  return &b.printers;
+        default:                     return nullptr;
+    }
+}
+
+// Finds a system preset by name; also returns the bundle (vendor) it's in.
+const Slic3r::Preset* find_system_preset(int type, const char* name,
+                                         Slic3r::PresetBundle** bundle_out = nullptr) {
+    if (type < 0 || type > 2 || !name) return nullptr;
+    const auto& refs = g_preset_refs[type];
+    auto it = std::lower_bound(refs.begin(), refs.end(), std::string(name),
+        [](const PresetRef& r, const std::string& n) { return r.name < n; });
+    if (it == refs.end() || it->name != name) return nullptr;
+    const Slic3r::Preset* p = collection(*it->bundle, type)->find_preset(name, false, false);
+    if (p && bundle_out) *bundle_out = it->bundle;
+    return p;
+}
+
+// Settings PrusaSlicer stores in a preset but which aren't print settings:
+// preset bookkeeping (inheritance / compatibility).
+bool is_preset_bookkeeping_key(const std::string& key) {
+    return key == "inherits" || key == "compatible_printers" ||
+           key == "compatible_printers_condition" || key == "compatible_prints" ||
+           key == "compatible_prints_condition" || key == "renamed_from";
+}
+
+std::string serialize_config(const Slic3r::DynamicPrintConfig& cfg) {
+    std::ostringstream out;
+    for (const std::string& key : cfg.keys()) {
+        if (is_preset_bookkeeping_key(key)) continue;
+        out << key << " = " << cfg.opt_serialize(key) << "\n";
+    }
+    return out.str();
+}
+
+} // namespace
+
+extern "C" {
+
+int slicer_presets_load(const char* profiles_dir) {
+    std::lock_guard<std::mutex> lock(g_presets_mutex);
+    g_presets_error.clear();
+    g_bundles.clear();
+    for (auto& refs : g_preset_refs) refs.clear();
+    if (!profiles_dir) { g_presets_error = "null profiles dir"; return -1; }
+    try {
+        // Nothing is written to data_dir: system presets are never saved.
+        Slic3r::set_data_dir(profiles_dir);
+        // std::filesystem, not boost: the bridge's Boost headers don't match
+        // the prebuilt libboost_filesystem ABI (directory entries come back
+        // with empty paths), while libslic3r's own Boost use is consistent.
+        std::vector<std::string> files;
+        const std::filesystem::path vendor_dir = std::filesystem::path(profiles_dir) / "vendor";
+        for (const auto& entry : std::filesystem::directory_iterator(vendor_dir))
+            if (entry.path().extension() == ".ini")
+                files.push_back(entry.path().string());
+        std::sort(files.begin(), files.end());
+
+        for (const std::string& file : files) {
+            auto bundle = std::make_unique<Slic3r::PresetBundle>();
+            try {
+                bundle->load_configbundle(file, Slic3r::PresetBundle::LoadSystem,
+                    Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
+            } catch (const std::exception& e) {
+                // One bad vendor file shouldn't take the others down.
+                g_presets_error += std::filesystem::path(file).filename().string() + ": " + e.what() + "\n";
+                continue;
+            }
+            for (int type = 0; type < 3; ++type) {
+                auto* coll = collection(*bundle, type);
+                for (size_t i = 0; i < coll->size(); ++i) {
+                    const Slic3r::Preset& p = coll->preset(i, false);
+                    if (p.is_system && !p.is_default)
+                        g_preset_refs[type].push_back({p.name, bundle.get()});
+                }
+            }
+            g_bundles.push_back(std::move(bundle));
+        }
+        for (auto& refs : g_preset_refs) {
+            std::stable_sort(refs.begin(), refs.end(),
+                [](const PresetRef& a, const PresetRef& b) { return a.name < b.name; });
+            // A name used by two vendors: keep the first (alphabetical file order).
+            refs.erase(std::unique(refs.begin(), refs.end(),
+                [](const PresetRef& a, const PresetRef& b) { return a.name == b.name; }), refs.end());
+        }
+        int printers = static_cast<int>(g_preset_refs[SLICER_PRESET_PRINTER].size());
+        if (printers == 0) {
+            g_presets_error += std::string("no printer presets found in ") + vendor_dir.string();
+            return -1;
+        }
+        return printers;
+    } catch (const std::exception& e) {
+        g_bundles.clear();
+        for (auto& refs : g_preset_refs) refs.clear();
+        g_presets_error = e.what();
+        return -1;
+    }
+}
+
+const char* slicer_presets_last_error(void) {
+    std::lock_guard<std::mutex> lock(g_presets_mutex);
+    t_string_result = g_presets_error;
+    return t_string_result.c_str();
+}
+
+int slicer_preset_count(int type) {
+    std::lock_guard<std::mutex> lock(g_presets_mutex);
+    if (type < 0 || type > 2) return 0;
+    return static_cast<int>(g_preset_refs[type].size());
+}
+
+const char* slicer_preset_name(int type, int index) {
+    std::lock_guard<std::mutex> lock(g_presets_mutex);
+    if (type < 0 || type > 2 || index < 0 ||
+        index >= static_cast<int>(g_preset_refs[type].size()))
+        return "";
+    return g_preset_refs[type][index].name.c_str();
+}
+
+const char* slicer_preset_config(int type, const char* name) {
+    std::lock_guard<std::mutex> lock(g_presets_mutex);
+    const Slic3r::Preset* p = find_system_preset(type, name);
+    if (!p) return nullptr;
+    t_string_result = serialize_config(p->config);
+    return t_string_result.c_str();
+}
+
+int slicer_preset_is_compatible(int type, const char* name, const char* printer_name) {
+    std::lock_guard<std::mutex> lock(g_presets_mutex);
+    Slic3r::PresetBundle* bundle = nullptr;
+    Slic3r::PresetBundle* printer_bundle = nullptr;
+    const Slic3r::Preset* p       = find_system_preset(type, name, &bundle);
+    const Slic3r::Preset* printer = find_system_preset(SLICER_PRESET_PRINTER, printer_name, &printer_bundle);
+    if (!p || !printer) return -1;
+    if (type == SLICER_PRESET_PRINTER) return 1;
+    if (bundle != printer_bundle) return 0;   // different vendor
+    return Slic3r::is_compatible_with_printer(
+               collection(*bundle, type)->get_preset_with_vendor_profile(*p),
+               printer_bundle->printers.get_preset_with_vendor_profile(*printer)) ? 1 : 0;
+}
+
+int slicer_apply_preset(SlicerHandle handle, int type, const char* name) {
+    auto ctx = CTX(handle);
+    std::lock_guard<std::mutex> lock(g_presets_mutex);
+    const Slic3r::Preset* p = find_system_preset(type, name);
+    if (!p) return set_err(ctx, (std::string("unknown PrusaSlicer preset: ") + (name ? name : "(null)")).c_str());
+    try {
+        for (const std::string& key : p->config.keys()) {
+            if (is_preset_bookkeeping_key(key)) continue;
+            ctx->config.set_key_value(key, p->config.option(key)->clone());
+        }
+        // Recorded in the G-code footer like PrusaSlicer does.
+        switch (type) {
+            case SLICER_PRESET_PRINT:
+                ctx->config.set_key_value("print_settings_id", new Slic3r::ConfigOptionString(p->name));
+                break;
+            case SLICER_PRESET_FILAMENT:
+                ctx->config.set_key_value("filament_settings_id", new Slic3r::ConfigOptionStrings({p->name}));
+                break;
+            case SLICER_PRESET_PRINTER:
+                ctx->config.set_key_value("printer_settings_id", new Slic3r::ConfigOptionString(p->name));
+                break;
+        }
+        return 0;
+    } catch (const std::exception& e) {
+        return set_err(ctx, e);
+    }
+}
+
+int slicer_apply_settings(SlicerHandle handle, const char* ini_text) {
+    auto ctx = CTX(handle);
+    if (!ini_text) return set_err(ctx, "null settings");
+    // Validate into a scratch copy so a bad line leaves the context untouched.
+    Slic3r::DynamicPrintConfig staged = ctx->config;
+    std::istringstream in(ini_text);
+    std::string line;
+    int line_no = 0;
+    while (std::getline(in, line)) {
+        ++line_no;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos || line[start] == '#' || line[start] == ';') continue;
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) {
+            ctx->last_error = "line " + std::to_string(line_no) + ": expected \"key = value\": " + line;
+            return -1;
+        }
+        std::string key = line.substr(start, eq - start);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        std::string value = line.substr(eq + 1);
+        if (!value.empty() && value.front() == ' ') value.erase(0, 1);
+        if (is_preset_bookkeeping_key(key)) continue;
+        try {
+            Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::Disable);
+            staged.set_deserialize(key, value, subst);
+        } catch (const std::exception& e) {
+            ctx->last_error = "setting \"" + key + "\": " + e.what();
+            return -1;
+        }
+    }
+    ctx->config = std::move(staged);
+    return 0;
+}
+
+const char* slicer_get_setting(SlicerHandle handle, const char* key) {
+    auto ctx = CTX(handle);
+    if (!key) return nullptr;
+    const Slic3r::ConfigOption* opt = ctx->config.option(key);
+    if (!opt) {
+        // Not set yet: fall back to libslic3r's default for a known key.
+        const Slic3r::ConfigOptionDef* def = Slic3r::print_config_def.get(key);
+        if (!def || !def->default_value) return nullptr;
+        t_string_result = def->default_value->serialize();
+        return t_string_result.c_str();
+    }
+    t_string_result = opt->serialize();
+    return t_string_result.c_str();
 }
 
 } // extern "C"

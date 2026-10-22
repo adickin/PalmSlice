@@ -1596,7 +1596,22 @@ struct ContentView: View {
             Task { @MainActor in activeHandle = nil }
         }
 
-        // 5. Apply printer profile
+        // 5. PrusaSlicer base: the printer's vendor preset, its default print
+        //    preset and a matching filament preset. Everything below layers
+        //    the PalmSlice profiles on top. If the presets failed to load the
+        //    slice still runs, on the PalmSlice profiles alone.
+        let selectedMaterial = await MainActor.run(body: { materialProfileStore.selectedProfile })
+        if let base = PresetLibrary.base(printerPreset: printerProfile.systemPreset,
+                                         filamentType: selectedMaterial?.filamentType ?? "PLA") {
+            await setPhase("Applying PrusaSlicer presets…")
+            if !PresetLibrary.apply(base, to: handle) {
+                let msg = String(cString: slicer_last_error(handle))
+                await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+                return
+            }
+        }
+
+        // 6. Apply printer profile
         await setPhase("Applying printer profile…")
         if !applyPrinterProfile(printerProfile, to: handle) {
             let msg = String(cString: slicer_last_error(handle))
@@ -1604,8 +1619,8 @@ struct ContentView: View {
             return
         }
 
-        // 6. Apply material profile (optional)
-        if let materialProfile = await MainActor.run(body: { materialProfileStore.selectedProfile }) {
+        // 7. Apply material profile (optional)
+        if let materialProfile = selectedMaterial {
             await setPhase("Applying material profile…")
             if !applyMaterialProfile(materialProfile, to: handle) {
                 let msg = String(cString: slicer_last_error(handle))
@@ -1614,7 +1629,7 @@ struct ContentView: View {
             }
         }
 
-        // 7. Apply slice profile
+        // 8. Apply slice profile
         await setPhase("Applying slice profile…")
         var sliceCfg = sliceProfile.bridgeConfig()
         if slicer_apply_slice_config(handle, &sliceCfg) != 0 {
@@ -1623,7 +1638,7 @@ struct ContentView: View {
             return
         }
 
-        // 8. Load each model
+        // 9. Load each model
         for (i, model) in snapshotModels.enumerated() {
             await setPhase("Loading \(model.name)… (\(i+1)/\(snapshotModels.count))")
             let objIdx = slicer_add_stl(handle, model.url.path)
@@ -1690,7 +1705,7 @@ struct ContentView: View {
             }
         }
 
-        // 9. Slice with progress
+        // 10. Slice with progress
         let lhStr = String(format: "%.2g", sliceProfile.layerHeight)
         await setPhase("Slicing at \(lhStr) mm / \(sliceProfile.infillDensity)% infill…")
 
@@ -1730,7 +1745,7 @@ struct ContentView: View {
             return
         }
 
-        // 10. Write G-code (to temp; the user exports after previewing)
+        // 11. Write G-code (to temp; the user exports after previewing)
         await setPhase("Generating G-code…", progress: 0.95)
         if slicer_export_gcode(handle, gcodeURL.path) != 0 {
             let msg = String(cString: slicer_last_error(handle))
@@ -1738,7 +1753,7 @@ struct ContentView: View {
             return
         }
 
-        // 11. Parse stats and layer preview
+        // 12. Parse stats and layer preview
         await setPhase("Parsing results…", progress: 0.99)
         let (printTime, filamentG) = parseGCodeStats(url: gcodeURL)
         let layers = parseGCode(url: gcodeURL)

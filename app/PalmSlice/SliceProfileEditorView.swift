@@ -230,7 +230,7 @@ struct SliceProfileEditorView: View {
         } header: {
             Text("Advanced")
         } footer: {
-            Text("Line widths of 0 mean automatic. Leave these at their defaults unless a model's instructions say otherwise.")
+            Text("Line widths of 0 use PrusaSlicer's value for your printer. Leave these at their defaults unless a model's instructions say otherwise.")
         }
     }
 
@@ -439,9 +439,9 @@ private let helpSections: [HelpSection] = [
         HelpEntry(name: "Gap Closing Radius",
                   description: "Closes cracks in the model's outline smaller than this radius when slicing, which hides small mesh errors. PrusaSlicer's default is 0.049 mm. Set 0 for models with intentional tiny gaps, such as 3DLabPrint planes."),
         HelpEntry(name: "Line Width",
-                  description: "Width of each extruded line in mm. 0 (Auto) picks a width from the nozzle size, about 0.45 mm for a 0.4 mm nozzle. Only set this when a model's instructions give a specific width."),
+                  description: "Width of each extruded line in mm. 0 (Auto) uses the width PrusaSlicer's own profile for your printer uses, typically about 0.45 mm for a 0.4 mm nozzle. Only set this when a model's instructions give a specific width."),
         HelpEntry(name: "First Layer Line Width",
-                  description: "Line width for the first layer only. 0 (Auto) uses PrusaSlicer's default of twice the first layer height. A slightly wider first layer helps it stick to the bed."),
+                  description: "Line width for the first layer only. 0 (Auto) uses the width PrusaSlicer's own profile for your printer uses. A slightly wider first layer helps it stick to the bed."),
     ]),
     HelpSection(title: "Speed", entries: [
         HelpEntry(name: "Print Speed (Perimeter)",

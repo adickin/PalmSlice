@@ -116,8 +116,8 @@ typedef struct {
     // Advanced
     int   slicing_mode;          // 0=regular, 1=even/odd — slicing_mode
     float gap_closing_radius;    // mm — slice_closing_radius
-    float extrusion_width;       // mm — extrusion_width (0 = auto)
-    float first_layer_extrusion_width; // mm — first_layer_extrusion_width (0 = PrusaSlicer default)
+    float extrusion_width;       // mm — extrusion_width (0 = keep the base value)
+    float first_layer_extrusion_width; // mm — first_layer_extrusion_width (0 = keep the base value)
 
     // Speed (mm/s)
     float print_speed;           // perimeter_speed
@@ -301,6 +301,65 @@ const char* slicer_imported_object_name(SlicerHandle handle, int index);
 // Returns 0 on success, negative on error.
 int slicer_imported_object_offset(SlicerHandle handle, int index,
                                   float* offset_x_mm, float* offset_y_mm);
+
+// ── PrusaSlicer system presets ────────────────────────────────────────────────
+//
+// PrusaSlicer's vendor profile bundles (printer / print / filament presets,
+// shipped in the app by scripts/12_vendor_profiles.sh) loaded once per
+// process with libslic3r's PresetBundle. They are the base layer every slice
+// starts from, so any setting a PalmSlice profile doesn't set takes the value
+// PrusaSlicer itself would use for that printer — not libslic3r's bare
+// built-in defaults.
+
+// Preset types, matching PrusaSlicer's three FFF preset collections.
+enum {
+    SLICER_PRESET_PRINT    = 0,   // print settings   (PalmSlice: slice profile)
+    SLICER_PRESET_FILAMENT = 1,   // filament settings (PalmSlice: material profile)
+    SLICER_PRESET_PRINTER  = 2,   // printer settings  (PalmSlice: printer profile)
+};
+
+// Load every vendor bundle from "<profiles_dir>/vendor/*.ini". Safe to call
+// again (reloads). Returns the number of system printer presets loaded (> 0),
+// or a negative error code; see slicer_presets_last_error.
+int slicer_presets_load(const char* profiles_dir);
+
+// Error (or non-fatal load warnings) from the last slicer_presets_load call.
+const char* slicer_presets_last_error(void);
+
+// Number of system presets of a type (0 before slicer_presets_load).
+int slicer_preset_count(int type);
+
+// Name of the Nth system preset of a type ("" if out of range). The pointer
+// stays valid until the next slicer_presets_load call.
+const char* slicer_preset_name(int type, int index);
+
+// A system preset's full, flattened settings as PrusaSlicer .ini lines
+// ("key = value\n", values serialized as PrusaSlicer writes them). NULL if
+// no such preset. The pointer is valid until the next call on this thread.
+const char* slicer_preset_config(int type, const char* name);
+
+// 1 if the print or filament preset `name` is compatible with the system
+// printer preset `printer_name` (its compatible_printers / condition), 0 if
+// not, negative if either preset is unknown. Printer presets: always 1.
+int slicer_preset_is_compatible(int type, const char* name, const char* printer_name);
+
+// ── Generic settings ──────────────────────────────────────────────────────────
+
+// Apply a system preset's settings to the context, as PrusaSlicer does when
+// that preset is selected (print/filament: also records it in
+// print_settings_id / filament_settings_id for the G-code header).
+// Returns 0 on success, negative if the preset is unknown.
+int slicer_apply_preset(SlicerHandle handle, int type, const char* name);
+
+// Apply settings given as PrusaSlicer .ini text ("key = value" lines; blank
+// lines and lines starting with '#' or ';' are ignored). Every line is
+// validated by libslic3r; on any bad key or value nothing is applied and the
+// error names the offending line. Returns 0 on success, negative on error.
+int slicer_apply_settings(SlicerHandle handle, const char* ini_text);
+
+// Current value of a setting in the context, serialized as PrusaSlicer writes
+// it; NULL if the key is unknown. Valid until the next call on this thread.
+const char* slicer_get_setting(SlicerHandle handle, const char* key);
 
 #ifdef __cplusplus
 }
