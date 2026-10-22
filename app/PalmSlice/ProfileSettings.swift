@@ -334,12 +334,11 @@ extension SliceProfile: PrusaSettingsConvertible {
         if extrusionWidth > 0 { s["extrusion_width"] = V.float(extrusionWidth) }
         if firstLayerExtrusionWidth > 0 { s["first_layer_extrusion_width"] = V.float(firstLayerExtrusionWidth) }
 
-        // PalmSlice's single adhesion choice → PrusaSlicer's separate keys.
-        s["brim_type"] = adhesionType == .brim ? brimType.prusaName : "no_brim"
-        s["brim_width"] = V.float(brimWidth)
-        s["skirts"] = V.int(adhesionType == .skirt ? skirtLoops : 0)
+        s["skirts"] = V.int(skirtLoops)
         s["skirt_distance"] = V.float(skirtDistance)
-        s["raft_layers"] = V.int(adhesionType == .raft ? raftLayers : 0)
+        s["brim_type"] = brimType.prusaName
+        s["brim_width"] = V.float(brimWidth)
+        s["raft_layers"] = V.int(raftLayers)
         return s
     }
 
@@ -419,25 +418,11 @@ extension SliceProfile: PrusaSettingsConvertible {
         }
         if let v = s["support_material_interface_spacing"].flatMap(V.parseFloat) { supportInterfaceSpacing = v }
 
-        if let v = s["brim_width"].flatMap(V.parseFloat) { brimWidth = v }
+        if let v = s["skirts"].flatMap(V.parseInt) { skirtLoops = v }
         if let v = s["skirt_distance"].flatMap(V.parseFloat) { skirtDistance = v }
-        let raft = s["raft_layers"].flatMap(V.parseInt)
-        let brim = s["brim_type"].flatMap(BrimType.init(prusaName:))
-        let skirts = s["skirts"].flatMap(V.parseInt)
-        if let raft, raft > 0 { raftLayers = raft }
-        if let skirts, skirts > 0 { skirtLoops = skirts }
-        if let brim { brimType = brim }
-        // A brim only prints with a width; vendor presets often keep
-        // brim_type = outer_only with brim_width = 0.
-        let hasBrim = brim != nil && brimWidth > 0
-        // PrusaSlicer can combine them; PalmSlice picks one (raft > brim > skirt).
-        if raft != nil || s["brim_type"] != nil || skirts != nil {
-            if let raft, raft > 0 { adhesionType = .raft }
-            else if hasBrim { adhesionType = .brim }
-            else if let skirts, skirts > 0 { adhesionType = .skirt }
-            else { adhesionType = .none }
-        }
-        if let v = s["brim_type"], adhesionType != .brim, v != "no_brim" { verbatim["brim_type"] = v }
+        if let v = s["brim_type"].flatMap(BrimType.init(prusaName:)) { brimType = v }
+        if let v = s["brim_width"].flatMap(V.parseFloat) { brimWidth = v }
+        if let v = s["raft_layers"].flatMap(V.parseInt) { raftLayers = v }
 
         for (key, value) in verbatim { extraSettings[key] = value }
     }
@@ -446,19 +431,15 @@ extension SliceProfile: PrusaSettingsConvertible {
 extension BrimType {
     var prusaName: String {
         switch self {
+        case .none: return "no_brim"
         case .outerOnly: return "outer_only"
         case .innerOnly: return "inner_only"
         case .outerAndInner: return "outer_and_inner"
         }
     }
-    /// nil for "no_brim".
     init?(prusaName: String) {
-        switch prusaName {
-        case "outer_only": self = .outerOnly
-        case "inner_only": self = .innerOnly
-        case "outer_and_inner": self = .outerAndInner
-        default: return nil
-        }
+        guard let b = Self.allCases.first(where: { $0.prusaName == prusaName }) else { return nil }
+        self = b
     }
 }
 

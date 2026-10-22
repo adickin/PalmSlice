@@ -50,6 +50,8 @@ struct ContentView: View {
     @State private var showAbout = false
     /// Part whose settings-from-file sheet is open.
     @State private var fileSettingsModelID: UUID? = nil
+    /// A just-imported file's print settings, offered for use (see offerFileProfiles).
+    @State private var fileProfilesOffer: FileProfilesOffer? = nil
     @State private var showIntersectingAlert = false
     @State private var showUnitScaleAlert = false
     @State private var unitScaleAlertModelID: UUID? = nil
@@ -187,6 +189,18 @@ struct ContentView: View {
         .sheet(isPresented: $showSliceProfilePicker) { SliceProfilePickerView() }
         .sheet(isPresented: $showMaterialProfilePicker) { MaterialProfilePickerView() }
         .sheet(isPresented: $showAbout) { AboutView() }
+        .alert("Use This File's Print Settings?",
+               isPresented: Binding(get: { fileProfilesOffer != nil }, set: { if !$0 { fileProfilesOffer = nil } }),
+               presenting: fileProfilesOffer) { offer in
+            Button("Use File's Settings") {
+                FileProfiles.apply(offer.project, fallback: offer.fileName,
+                                   slices: sliceProfileStore, materials: materialProfileStore)
+            }
+            Button("Keep My Profiles", role: .cancel) {}
+        } message: { offer in
+            let n = FileProfiles.names(offer.project, fallback: offer.fileName)
+            Text("\(offer.fileName) was set up with the slice profile “\(n.print)” and material “\(n.filament)”. Use them? Your printer stays the same, and the part's own settings from the file are used either way.")
+        }
         .sheet(isPresented: Binding(get: { fileSettingsModelID != nil },
                                     set: { if !$0 { fileSettingsModelID = nil } })) {
             if let id = fileSettingsModelID, let binding = modelBinding(id: id) {
@@ -546,6 +560,16 @@ struct ContentView: View {
                 Label("Remove", systemImage: "trash")
             }
         }
+    }
+
+    /// After importing a 3MF that stores PrusaSlicer print settings, offer to
+    /// use its slice profile and material — unless they're already selected.
+    private func offerFileProfiles(_ project: [String: String]?, fileName: String) {
+        guard let project, project["print_settings_id"] != nil || project["filament_settings_id"] != nil,
+              !FileProfiles.alreadySelected(project, fallback: fileName,
+                                            slices: sliceProfileStore, materials: materialProfileStore)
+        else { return }
+        fileProfilesOffer = FileProfilesOffer(fileName: fileName, project: project)
     }
 
     private func modelBinding(id: UUID) -> Binding<PlacedModel>? {
@@ -1504,6 +1528,7 @@ struct ContentView: View {
                         objects[0].offsetMM = .zero
                     }
                     addModels(objects, checkUnits: checkUnits)
+                    offerFileProfiles(objects.first?.projectSettings, fileName: fileName)
                 case .failure(let error):
                     state = .failed(message: "Could not import \(fileName): \(error.localizedDescription)")
                     showErrorAlert = true
@@ -1903,4 +1928,10 @@ struct ShareSheetView: UIViewControllerRepresentable {
         .environmentObject(ProfileStore())
         .environmentObject(SliceProfileStore())
         .environmentObject(MaterialProfileStore())
+}
+
+/// A file's project settings offered after import.
+struct FileProfilesOffer {
+    let fileName: String
+    let project: [String: String]
 }

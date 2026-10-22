@@ -75,44 +75,89 @@ struct ModelFileSettingsView: View {
     }
 
     private func names(_ project: [String: String]) -> String {
-        let print = project["print_settings_id"].map(SettingsText.unquote) ?? "print settings"
-        let filament = project["filament_settings_id"].flatMap { SettingsText.splitStrings($0).first } ?? "filament"
-        return "“\(print)” and “\(filament)”"
+        let n = FileProfiles.names(project, fallback: model.name)
+        return "“\(n.print)” and “\(n.filament)”"
     }
 
-    /// Adds (or re-selects) a slice profile and material holding the file's
-    /// project settings. All of them are kept, so the profiles slice exactly
-    /// as the file's PrusaSlicer project would.
     private func createProfiles(from project: [String: String]) {
-        let printName = project["print_settings_id"].map(SettingsText.unquote).flatMap { $0.isEmpty ? nil : $0 }
-            ?? "\(model.name) print settings"
-        let filamentName = project["filament_settings_id"].flatMap { SettingsText.splitStrings($0).first }
-            .flatMap { $0.isEmpty ? nil : $0 } ?? "\(model.name) filament"
-        var created: [String] = []
+        createdMessage = FileProfiles.apply(project, fallback: model.name,
+                                            slices: sliceProfileStore, materials: materialProfileStore)
+    }
+}
 
-        if let existing = sliceProfileStore.profiles.first(where: { $0.name == printName }) {
-            sliceProfileStore.select(id: existing.id)
-        } else {
-            var p = SliceProfile()
-            p.importPrusaSettings(project)
-            p.name = printName
-            sliceProfileStore.add(p)
-            sliceProfileStore.select(id: p.id)
-            created.append(printName)
+/// Slice profile + material from a 3MF's project settings (shared by the
+/// import prompt and the Settings from File sheet).
+enum FileProfiles {
+    static func names(_ project: [String: String], fallback: String) -> (print: String, filament: String) {
+        let print = project["print_settings_id"].map(SettingsText.unquote).flatMap { $0.isEmpty ? nil : $0 }
+            ?? "\(fallback) print settings"
+        let filament = project["filament_settings_id"].flatMap { SettingsText.splitStrings($0).first }
+            .flatMap { $0.isEmpty ? nil : $0 } ?? "\(fallback) filament"
+        return (print, filament)
+    }
+
+    /// The profiles the file's settings make (not yet added to any store).
+    static func candidates(_ project: [String: String], fallback: String) -> (SliceProfile, MaterialProfile) {
+        let n = names(project, fallback: fallback)
+        var slice = SliceProfile(); slice.importPrusaSettings(project); slice.name = n.print
+        var material = MaterialProfile(); material.importPrusaSettings(project); material.name = n.filament
+        return (slice, material)
+    }
+
+    /// An existing profile with the candidate's name — or a numbered copy
+    /// "name (2)" … — whose settings are the same.
+    static func match<P: PrusaIniProfile>(_ candidate: P, in profiles: [P]) -> P? {
+        profiles.first { p in
+            (p.name == candidate.name || p.name.hasPrefix(candidate.name + " (")) &&
+                p.prusaSettings() == candidate.prusaSettings()
         }
-        if let existing = materialProfileStore.profiles.first(where: { $0.name == filamentName }) {
-            materialProfileStore.select(id: existing.id)
+    }
+
+    /// First free "name", "name (2)", "name (3)"…
+    static func freeName<P: PrusaIniProfile>(_ name: String, in profiles: [P]) -> String {
+        let taken = Set(profiles.map(\.name))
+        guard taken.contains(name) else { return name }
+        var n = 2
+        while taken.contains("\(name) (\(n))") { n += 1 }
+        return "\(name) (\(n))"
+    }
+
+    /// True if the file's slice profile and material are already the selected ones.
+    @MainActor
+    static func alreadySelected(_ project: [String: String], fallback: String,
+                                slices: SliceProfileStore, materials: MaterialProfileStore) -> Bool {
+        let (slice, material) = candidates(project, fallback: fallback)
+        guard let s = slices.selectedProfile, let m = materials.selectedProfile else { return false }
+        return match(slice, in: [s]) != nil && match(material, in: [m]) != nil
+    }
+
+    /// Selects the file's slice profile and material, adding them if needed.
+    /// Returns a sentence describing what happened.
+    @MainActor @discardableResult
+    static func apply(_ project: [String: String], fallback: String,
+                      slices: SliceProfileStore, materials: MaterialProfileStore) -> String {
+        var (slice, material) = candidates(project, fallback: fallback)
+        var added: [String] = []
+        if let existing = match(slice, in: slices.profiles) {
+            slices.select(id: existing.id)
+            slice = existing
         } else {
-            var m = MaterialProfile()
-            m.importPrusaSettings(project)
-            m.name = filamentName
-            materialProfileStore.add(m)
-            materialProfileStore.select(id: m.id)
-            created.append(filamentName)
+            slice.name = freeName(slice.name, in: slices.profiles)
+            slices.add(slice); slices.select(id: slice.id)
+            added.append(slice.name)
         }
-        createdMessage = created.isEmpty
-            ? "Already in your profiles — selected “\(printName)” and “\(filamentName)”."
-            : "Added and selected “\(created.joined(separator: "” and “"))”."
+        if let existing = match(material, in: materials.profiles) {
+            materials.select(id: existing.id)
+            material = existing
+        } else {
+            material.name = freeName(material.name, in: materials.profiles)
+            materials.add(material); materials.select(id: material.id)
+            added.append(material.name)
+        }
+        return added.isEmpty
+            ? "Selected “\(slice.name)” and “\(material.name)”, already in your profiles."
+            : "Added and selected “\(added.joined(separator: "” and “"))”" +
+              (added.count == 2 ? "." : "; selected the existing “\(added.contains(slice.name) ? material.name : slice.name)”.")
     }
 }
 

@@ -16,39 +16,14 @@ enum SupportPlacement: String, CaseIterable, Codable, Identifiable {
     var id: String { rawValue }
 }
 
-// Sub-options when adhesion type is Brim.
-// Maps to PrusaSlicer BrimType: btNoBrim=0, btOuterOnly=1, btInnerOnly=2, btOuterAndInner=3.
-// btNoBrim is encoded by adhesionType == .none rather than here.
+// Brim placement — PrusaSlicer brim_type. Skirt, brim and raft are
+// independent and can be combined, as in PrusaSlicer.
 enum BrimType: String, CaseIterable, Codable, Identifiable {
+    case none          = "None"
     case outerOnly     = "Outer Only"
     case innerOnly     = "Inner Only"
     case outerAndInner = "Outer and Inner"
     var id: String { rawValue }
-    var bridgeInt: Int32 {
-        switch self {
-        case .outerOnly:     return 1
-        case .innerOnly:     return 2
-        case .outerAndInner: return 3
-        }
-    }
-}
-
-// Top-level adhesion type. The bridge maps this to PrusaSlicer's separate
-// brim_type / skirts / raft_layers keys.
-enum AdhesionType: String, CaseIterable, Codable, Identifiable {
-    case none  = "None"
-    case skirt = "Skirt"
-    case brim  = "Brim"
-    case raft  = "Raft"
-    var id: String { rawValue }
-    var bridgeInt: Int32 {
-        switch self {
-        case .none:  return 0
-        case .skirt: return 1
-        case .brim:  return 2
-        case .raft:  return 3
-        }
-    }
 }
 
 // How perimeters are generated — maps to PrusaSlicer perimeter_generator.
@@ -139,16 +114,12 @@ struct SliceProfile: Codable, Identifiable {
     var supportInterfaceLayers: Int = 3 { didSet { extraSettings["support_material_bottom_interface_layers"] = nil } }  // PrusaSlicer: support_material_interface_layers
     var supportInterfaceSpacing: Double = 0.2 // mm — support_material_interface_spacing (0 = solid)
 
-    // MARK: - Build Plate Adhesion
-    var adhesionType: AdhesionType = .none { didSet { extraSettings["brim_type"] = nil } }
-    // Brim sub-options (used when adhesionType == .brim)
-    var brimType: BrimType = .outerOnly { didSet { extraSettings["brim_type"] = nil } }
-    var brimWidth: Double = 8.0          // mm — PrusaSlicer: brim_width
-    // Skirt sub-options (used when adhesionType == .skirt)
-    var skirtLoops: Int = 1             // PrusaSlicer: skirts
+    // MARK: - Build Plate Adhesion (independent; any combination, like PrusaSlicer)
+    var skirtLoops: Int = 0             // PrusaSlicer: skirts (0 = no skirt)
     var skirtDistance: Double = 6.0     // mm — PrusaSlicer: skirt_distance
-    // Raft sub-options (used when adhesionType == .raft)
-    var raftLayers: Int = 3             // PrusaSlicer: raft_layers
+    var brimType: BrimType = .none      // PrusaSlicer: brim_type
+    var brimWidth: Double = 8.0         // mm — PrusaSlicer: brim_width
+    var raftLayers: Int = 0             // PrusaSlicer: raft_layers (0 = no raft)
 
     // MARK: - PrusaSlicer
     // Fields marked `didSet { extraSettings[...] = nil }` can't hold every
@@ -224,7 +195,6 @@ extension SliceProfile {
         supportContactDistance = try v(.supportContactDistance, d.supportContactDistance)
         supportInterfaceLayers = try v(.supportInterfaceLayers, d.supportInterfaceLayers)
         supportInterfaceSpacing = try v(.supportInterfaceSpacing, d.supportInterfaceSpacing)
-        adhesionType = try v(.adhesionType, d.adhesionType)
         brimType = try v(.brimType, d.brimType)
         brimWidth = try v(.brimWidth, d.brimWidth)
         skirtLoops = try v(.skirtLoops, d.skirtLoops)
@@ -232,6 +202,24 @@ extension SliceProfile {
         raftLayers = try v(.raftLayers, d.raftLayers)
         basePreset = try c.decodeIfPresent(String.self, forKey: .basePreset)
         extraSettings = try v(.extraSettings, d.extraSettings)
+        try migrateSingleAdhesionChoice(from: decoder)
+    }
+
+    private enum LegacyKeys: String, CodingKey { case adhesionType }
+
+    /// Profiles saved before skirt / brim / raft were independent stored one
+    /// adhesionType ("None", "Skirt", "Brim", "Raft") and kept the other
+    /// options' values unused. Keep only the chosen one switched on.
+    private mutating func migrateSingleAdhesionChoice(from decoder: Decoder) throws {
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        guard let choice = try legacy.decodeIfPresent(String.self, forKey: .adhesionType) else { return }
+        if choice != "Skirt" { skirtLoops = 0 }
+        if choice != "Brim" { brimType = .none }
+        if choice != "Raft" { raftLayers = 0 }
+        // A brim_type kept verbatim by the old single-choice mapping.
+        if let raw = extraSettings.removeValue(forKey: "brim_type"), let b = BrimType(prusaName: raw), choice == "Brim" {
+            brimType = b
+        }
     }
 }
 
@@ -277,12 +265,6 @@ extension SliceProfile {
         cfg.support_contact_distance = Float(profile.supportContactDistance)
         cfg.support_interface_layers = Int32(profile.supportInterfaceLayers)
         cfg.support_interface_spacing = Float(profile.supportInterfaceSpacing)
-        cfg.adhesion_type        = profile.adhesionType.bridgeInt
-        cfg.brim_type            = profile.brimType.bridgeInt
-        cfg.brim_width           = Float(profile.brimWidth)
-        cfg.skirt_loops          = Int32(profile.skirtLoops)
-        cfg.skirt_distance       = Float(profile.skirtDistance)
-        cfg.raft_layers          = Int32(profile.raftLayers)
         return cfg
     }
 }

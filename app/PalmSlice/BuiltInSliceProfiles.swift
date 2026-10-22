@@ -125,7 +125,7 @@ enum BuiltInSliceProfiles {
         firstLayerSpeed: 20,
         solidInfillSpeed: 30,
         topSolidInfillSpeed: 25,
-        adhesionType: .skirt
+        skirtLoops: 1
     )
 
     static let all: [SliceProfile] = [draft, standard, fine, thickWalls, lightweight, rcPlane]

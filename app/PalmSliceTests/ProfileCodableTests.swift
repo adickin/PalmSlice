@@ -29,7 +29,9 @@ final class ProfileCodableTests: XCTestCase {
             XCTAssertEqual(decoded.layerHeight, original.layerHeight)
             XCTAssertEqual(decoded.infillDensity, original.infillDensity)
             XCTAssertEqual(decoded.infillPattern, original.infillPattern)
-            XCTAssertEqual(decoded.adhesionType, original.adhesionType)
+            XCTAssertEqual(decoded.skirtLoops, original.skirtLoops)
+            XCTAssertEqual(decoded.brimType, original.brimType)
+            XCTAssertEqual(decoded.raftLayers, original.raftLayers)
         }
     }
 
@@ -74,13 +76,8 @@ final class ProfileCodableTests: XCTestCase {
         XCTAssertEqual(values.count, Set(values).count)
     }
 
-    func testAdhesionTypeBridgeIntsAreUnique() {
-        let values = AdhesionType.allCases.map(\.bridgeInt)
-        XCTAssertEqual(values.count, Set(values).count)
-    }
-
-    func testBrimTypeBridgeIntsAreUnique() {
-        let values = BrimType.allCases.map(\.bridgeInt)
+    func testBrimTypePrusaNamesAreUnique() {
+        let values = BrimType.allCases.map(\.prusaName)
         XCTAssertEqual(values.count, Set(values).count)
     }
 
@@ -101,5 +98,23 @@ final class ProfileCodableTests: XCTestCase {
         for profile in BuiltInMaterialProfiles.all {
             XCTAssertFalse(profile.pickerSubtitle.isEmpty)
         }
+    }
+
+    // Profiles saved with the old single adhesion choice keep only that one on.
+    func testLegacyAdhesionChoiceMigrates() throws {
+        func decode(_ choice: String) throws -> SliceProfile {
+            var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(SliceProfile())) as! [String: Any]
+            json["adhesionType"] = choice
+            json["skirtLoops"] = 2; json["raftLayers"] = 3; json["brimType"] = "Outer Only"
+            return try JSONDecoder().decode(SliceProfile.self, from: JSONSerialization.data(withJSONObject: json))
+        }
+        let none = try decode("None")
+        XCTAssertEqual([none.skirtLoops, none.raftLayers], [0, 0]); XCTAssertEqual(none.brimType, .none)
+        let skirt = try decode("Skirt")
+        XCTAssertEqual([skirt.skirtLoops, skirt.raftLayers], [2, 0]); XCTAssertEqual(skirt.brimType, .none)
+        let brim = try decode("Brim")
+        XCTAssertEqual([brim.skirtLoops, brim.raftLayers], [0, 0]); XCTAssertEqual(brim.brimType, .outerOnly)
+        let raft = try decode("Raft")
+        XCTAssertEqual([raft.skirtLoops, raft.raftLayers], [0, 3]); XCTAssertEqual(raft.brimType, .none)
     }
 }

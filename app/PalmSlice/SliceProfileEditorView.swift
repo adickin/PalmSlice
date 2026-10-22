@@ -337,44 +337,37 @@ struct SliceProfileEditorView: View {
         }
     }
 
-    @ViewBuilder
     private var adhesionSection: some View {
-        Section("Build Plate Adhesion") {
-            Picker("Type", selection: $draft.adhesionType) {
-                ForEach(AdhesionType.allCases) { type in
-                    Text(type.rawValue).tag(type)
-                }
+        Section {
+            Stepper(value: $draft.skirtLoops, in: 0...20) {
+                Text(draft.skirtLoops == 0 ? "Skirt: Off" : "Skirt Loops: \(draft.skirtLoops)")
             }
-            .pickerStyle(.segmented)
-            .listRowInsets(.init(top: 8, leading: 16, bottom: 8, trailing: 16))
-
-            switch draft.adhesionType {
-            case .none:
-                EmptyView()
-
-            case .skirt:
-                Stepper("Skirt Loops: \(draft.skirtLoops)", value: $draft.skirtLoops, in: 1...10)
+            if draft.skirtLoops > 0 {
                 LabeledContent("Skirt Distance (mm)") {
                     TextField("6", value: $draft.skirtDistance, format: .number)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
-
-            case .brim:
-                Picker("Brim Placement", selection: $draft.brimType) {
-                    ForEach(BrimType.allCases) { type in
-                        Text(type.rawValue).tag(type)
-                    }
+            }
+            Picker("Brim", selection: $draft.brimType) {
+                ForEach(BrimType.allCases) { type in
+                    Text(type.rawValue).tag(type)
                 }
+            }
+            if draft.brimType != .none {
                 LabeledContent("Brim Width (mm)") {
                     TextField("8", value: $draft.brimWidth, format: .number)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
-
-            case .raft:
-                Stepper("Raft Layers: \(draft.raftLayers)", value: $draft.raftLayers, in: 1...10)
             }
+            Stepper(value: $draft.raftLayers, in: 0...10) {
+                Text(draft.raftLayers == 0 ? "Raft: Off" : "Raft Layers: \(draft.raftLayers)")
+            }
+        } header: {
+            Text("Build Plate Adhesion")
+        } footer: {
+            Text("Skirt, brim and raft can be combined, as in PrusaSlicer.")
         }
     }
 
@@ -522,14 +515,14 @@ private let helpSections: [HelpSection] = [
                   description: "Line spacing within the interface layers. 0 mm prints a fully solid interface (most solid supported surface); larger values leave gaps that are easier to remove but rougher. 0.2 mm is a good balance."),
     ]),
     HelpSection(title: "Build Plate Adhesion", entries: [
-        HelpEntry(name: "None",
-                  description: "No adhesion structure. Use when the model has a large flat bottom that adheres well on its own, or when you're printing on a surface that grips well (e.g. PEI with PLA)."),
+        HelpEntry(name: "Combining",
+                  description: "Skirt, brim and raft are independent, as in PrusaSlicer: use any of them together, or none. Turn all three off when the model has a large flat bottom that adheres well on its own, or the bed surface grips well (e.g. PEI with PLA)."),
         HelpEntry(name: "Skirt",
-                  description: "One or more loops printed around — but not touching — the model before the print starts. Primes the nozzle and lets you confirm the first layer height looks correct before the actual print begins. Does not help with adhesion."),
+                  description: "One or more loops printed around — but not touching — the model before the print starts. Primes the nozzle and lets you confirm the first layer height looks correct before the actual print begins. Does not help with adhesion. 0 loops = off."),
         HelpEntry(name: "Brim",
                   description: "A flat ring of extra material printed directly attached to the first layer of the model, extending outward. Greatly increases the contact area with the bed, reducing warping on materials like ABS or PETG and on models with small footprints."),
         HelpEntry(name: "Raft",
-                  description: "A thick multi-layer platform printed first, with the actual model on top of it. The raft is peeled off after printing. Most useful for models with very small first-layer footprints, or when printing on a bed that has trouble with first-layer adhesion."),
+                  description: "A thick multi-layer platform printed first, with the actual model on top of it. The raft is peeled off after printing. Most useful for models with very small first-layer footprints, or when printing on a bed that has trouble with first-layer adhesion. 0 layers = off."),
         HelpEntry(name: "Brim Width",
                   description: "How far the brim extends outward from the model edge in mm. Wider brim = more adhesion = harder to remove. 5–8 mm is typical; increase for tall narrow models or warpy materials."),
         HelpEntry(name: "Skirt Loops",

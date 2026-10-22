@@ -140,3 +140,35 @@ final class ProjectParityTests: XCTestCase {
         }
     }
 }
+
+final class FileProfilesTests: XCTestCase {
+    private let project = [
+        "print_settings_id": "0.3 mm 3DLabPrint", "filament_settings_id": "\"PolyLight LW-PLA\"",
+        "layer_height": "0.3", "perimeters": "1", "temperature": "245", "skirts": "1", "brim_width": "0",
+    ]
+
+    func testCandidatesSplitPrintAndFilament() {
+        let (slice, material) = FileProfiles.candidates(project, fallback: "part")
+        XCTAssertEqual(slice.name, "0.3 mm 3DLabPrint")
+        XCTAssertEqual(slice.layerHeight, 0.3)
+        XCTAssertEqual(slice.skirtLoops, 1)
+        XCTAssertEqual(material.name, "PolyLight LW-PLA")
+        XCTAssertEqual(material.otherLayersTemp, 245)
+    }
+
+    // Same name + same settings is reused; same name, different settings is not,
+    // and gets the next free "(n)" name.
+    func testMatchAndFreeName() {
+        let (slice, _) = FileProfiles.candidates(project, fallback: "part")
+        var other = slice
+        other.wallCount = 3
+        XCTAssertNotNil(FileProfiles.match(slice, in: [slice]))
+        XCTAssertNil(FileProfiles.match(slice, in: [other]))
+        var copy = slice
+        copy.name = "0.3 mm 3DLabPrint (2)"
+        XCTAssertNotNil(FileProfiles.match(slice, in: [other, copy]))
+        XCTAssertEqual(FileProfiles.freeName(slice.name, in: [other]), "0.3 mm 3DLabPrint (2)")
+        XCTAssertEqual(FileProfiles.freeName(slice.name, in: [other, copy]), "0.3 mm 3DLabPrint (3)")
+        XCTAssertEqual(FileProfiles.freeName("new", in: [other]), "new")
+    }
+}

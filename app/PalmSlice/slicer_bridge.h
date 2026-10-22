@@ -113,15 +113,6 @@ typedef struct {
     float support_contact_distance;  // mm — support_material_contact_distance (Z gap between support top and part)
     int   support_interface_layers;  // support_material_interface_layers (dense layers under the part; also mirrored to bottom)
     float support_interface_spacing; // mm — support_material_interface_spacing (0 = fully solid interface)
-
-    // Build plate adhesion
-    // adhesion_type: 0=none, 1=skirt, 2=brim, 3=raft
-    int   adhesion_type;
-    int   brim_type;             // 1=outer_only, 2=inner_only, 3=outer_and_inner — brim_type
-    float brim_width;            // mm — brim_width
-    int   skirt_loops;           // skirts
-    float skirt_distance;        // mm — skirt_distance
-    int   raft_layers;           // raft_layers
 } SlicerSliceConfig;
 
 // Result of slicer_check_slice_config: flags wall/top/bottom settings that
