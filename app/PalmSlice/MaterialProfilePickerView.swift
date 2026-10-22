@@ -36,8 +36,8 @@ struct MaterialProfilePickerView: View {
                     Button("New Material") {
                         newProfile = .newProfile(for: profileStore.selectedProfile)
                     }
-                    Button("From PrusaSlicer Filament…") { showPresetPicker = true }
-                    Button("Import PrusaSlicer .ini…") { showIniImport = true }
+                    Button("From Default Filaments…") { showPresetPicker = true }
+                    Button("Import .ini…") { showIniImport = true }
                 } label: {
                     Image(systemName: "plus")
                 }

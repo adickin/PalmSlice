@@ -4,6 +4,9 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-10-22
 
+- **Profile screens no longer mention PrusaSlicer.** The section at the bottom of each printer, material and slice editor is now **Defaults** ("Based On", "Choose Different Defaults…", "Use the Printer's Defaults", All Settings, "Export .ini"); a changed setting's reset is **Use Default**; "+" menus read **From Default Slice Settings… / From Default Filaments… / From Printer Library… / Import .ini…**; help text says "the default" instead of "PrusaSlicer's default". The About screen still credits PrusaSlicer/libslic3r
+- Docs: `PROGRESS.md` To Do lists only outstanding work (finished items moved to Completed); `FUTURE_FEATURES.md` drops items that are done (extra speeds, seam position and per-feature widths are in All Settings; vendor `printer_model` placeholders; more built-in printers), merges the reset items, rewrites multi-extruder, and adds **Settings for one part**
+
 - **Importing a 3MF that carries print settings asks whether to use them.** "Use File's Settings" adds (or selects) the file's slice profile and material; "Keep My Profiles" leaves yours. Not asked when they're already selected, so importing more parts of the same project doesn't repeat the question. A same-named profile with different settings is added as "name (2)" instead of reusing the wrong one. The printer profile is never changed; the part's own settings from the file apply either way
 - **Skirt, brim and raft are independent**, as in PrusaSlicer: skirt loops (0 = off), brim type including None, raft layers (0 = off), in any combination. Profiles saved with the old single adhesion choice keep just that one switched on
 

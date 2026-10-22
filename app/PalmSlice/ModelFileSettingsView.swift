@@ -23,7 +23,7 @@ struct ModelFileSettingsView: View {
                                 .foregroundStyle(.orange)
                         }
                     } footer: {
-                        Text("Applied on top of your slice profile and material for this part only, the way PrusaSlicer does.")
+                        Text("Applied on top of your slice profile and material for this part only.")
                     }
 
                     if !fs.objectSettings.isEmpty {

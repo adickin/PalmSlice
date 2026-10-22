@@ -48,24 +48,34 @@ only, or also a viewer/app theme color?
 
 ## Printer Profiles
 
-- **Additional built-in profiles** — the suggested first batch is in; see `Plans/additional_printer_profiles.md`
-  for the remaining catalog and how-to-import steps.
-- **Multi-extruder bridge** — `SlicerPrinterConfig` currently only passes
-  extruder 0; extend to pass per-extruder arrays for nozzle/filament diameter
-  and offsets.
-- **Reset profile to default** — "Reset to built-in defaults" button in the
-  printer profile editor for built-in profiles.
+- **Multi-extruder printing** — printer profiles already carry per-extruder
+  nozzle sizes and offsets, but a slice uses one material for every
+  extruder and parts can't be assigned to an extruder, so nothing prints
+  with a second extruder. Needs a material per extruder, a per-part extruder
+  choice, and checking tool changes / wipe tower output. Unlocks
+  dual-extruder printers such as the Ultimaker S5/S7.
+
+## Profiles (printer, slice, material)
+
+- **Reset to default** — a "Reset to Default" button for built-in printer,
+  slice and material profiles. Saved copies of built-ins keep the values they
+  were created with, so they don't pick up improvements in later app
+  versions (`mergeInMissingBuiltIns` only adds missing profiles).
 
 ## Slicing Profiles
 
-- **Additional speed settings** — outer perimeter speed, small perimeter
-  speed, bridge speed, top solid infill speed (currently only the 4 main
-  speeds are exposed; all others use PrusaSlicer defaults).
-- **Reset profile to default** — "Reset to built-in defaults" button for
-  built-in slice profiles (Draft / Standard / Fine).
-- **Seam position** — aligned / nearest / random (`seam_position` key).
-- **Extrusion width overrides** — per-feature extrusion width (perimeter,
-  infill, top solid) for fine-tuning on non-standard nozzle sizes.
+- **Settings for one part** — give a single part on the bed its own values
+  (e.g. 40% infill on a wing tip while the rest of the plate uses 15%),
+  optionally only within a height range ("3 walls from 0–5 mm"), like
+  PrusaSlicer's per-object and layer-range settings. Today these only come
+  from a 3MF (shown read-only in the part's Settings from File sheet, on/off
+  only). Plan: a "Settings for This Part" item in the part's context menu
+  that reuses `AllSettingsView` (print keys only) to add, edit and remove
+  overrides; store them on `PlacedModel` alongside `fileSettings`; slicing
+  already applies per-object overrides through
+  `slicer_set_object_file_settings`, so the bridge needs no change. Make the
+  3MF settings editable through the same screen. Not covered: modifier
+  meshes, support blockers/enforcers (see Apple Pencil painting above).
 
 ## Model Manipulation
 
@@ -100,16 +110,5 @@ Full plan: `Plans/model_manipulation.md`. Remaining phases:
 
 ## Release / Testing
 
-- **Verify untested printer profiles on real hardware** — 13 of 14 built-ins
+- **Verify untested printer profiles on real hardware** — 12 of 13 built-ins
   are unverified; promote each to Verified only after a real print.
-- **Printer-model placeholders** — `printer_model` / `printer_settings_id`
-  aren't set by the bridge, so vendor start G-code that references them
-  renders empty (worked around for Prusa by hardcoding). Consider exposing
-  them in `SlicerPrinterConfig`.
-- **Ultimaker S5/S7 (dual extruder)** — deliberately not included yet. Needs
-  the multi-extruder bridge plus its Griffin-header start G-code (importing
-  extruder 0 only logs a non-fatal "invalid toolchange (T1)"). Re-import from
-  `Ultimaker.ini` once multi-extruder is supported.
-- **Refresh seeded built-ins on update** — `mergeInMissingBuiltIns` only adds
-  new profiles; saved copies of existing built-ins (e.g. MK3S+/MINI+) keep
-  stale G-code. A per-profile "reset to built-in" would fix this too.

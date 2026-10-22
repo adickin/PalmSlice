@@ -25,7 +25,7 @@ struct MaterialProfileEditorView: View {
                 filamentSection
                 retractionSection
                 coolingSection
-                PrusaSlicerSection(
+                DefaultsSection(
                     profile: $draft, basePresetName: baseFilament, baseSettings: baseSettings,
                     onChooseBase: { showBasePicker = true },
                     onResetBase: draft.basePreset == nil ? nil : { draft.basePreset = nil })
@@ -162,7 +162,7 @@ struct MaterialProfileEditorView: View {
         } footer: {
             Text(draft.setsRetraction
                  ? "These values replace the printer's retraction while this material is used."
-                 : "Uses the printer's own retraction settings, as PrusaSlicer does for most filaments.")
+                 : "Uses the printer's own retraction settings, like most filaments.")
         }
     }
 

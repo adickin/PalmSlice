@@ -15,9 +15,9 @@ struct PresetPickerView: View {
 
     private var title: String {
         switch type {
-        case .print: return "PrusaSlicer Print Presets"
-        case .filament: return "PrusaSlicer Filaments"
-        case .printer: return "PrusaSlicer Printers"
+        case .print: return "Default Slice Settings"
+        case .filament: return "Default Filaments"
+        case .printer: return "Printer Library"
         }
     }
 
@@ -35,9 +35,9 @@ struct PresetPickerView: View {
         NavigationStack {
             Group {
                 if names == nil {
-                    ProgressView("Loading presets…")
+                    ProgressView("Loading…")
                 } else if filtered.isEmpty {
-                    Text(search.isEmpty ? "No compatible presets." : "No presets match “\(search)”.")
+                    Text(search.isEmpty ? "Nothing compatible." : "Nothing matches “\(search)”.")
                         .foregroundStyle(.secondary)
                 } else {
                     List(filtered, id: \.self) { name in

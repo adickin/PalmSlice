@@ -53,7 +53,7 @@ struct ProfilePickerView: View {
                 } header: {
                     Text("Untested")
                 } footer: {
-                    Text("From PrusaSlicer's printer library but not yet verified on real hardware in this app. Once one prints well on your printer, swipe right on it (or touch and hold) and choose Mark Verified.")
+                    Text("From the printer library but not yet verified on real hardware in this app. Once one prints well on your printer, swipe right on it (or touch and hold) and choose Mark Verified.")
                 }
             }
             .iniImporter(PrinterProfile.self, isPresented: $showIniImport) { imported in
@@ -65,9 +65,9 @@ struct ProfilePickerView: View {
             .navigationBarItems(
                 leading: Button("Done") { dismiss() },
                 trailing: Menu {
-                    Button("From PrusaSlicer Library…") { showPresetPicker = true }
+                    Button("From Printer Library…") { showPresetPicker = true }
                     Button("Custom Printer") { showAddEditor = true }
-                    Button("Import PrusaSlicer .ini…") { showIniImport = true }
+                    Button("Import .ini…") { showIniImport = true }
                 } label: {
                     Image(systemName: "plus")
                 }

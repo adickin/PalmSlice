@@ -156,7 +156,7 @@ struct IniImportModifier<P: PrusaIniProfile>: ViewModifier {
                     }
                     let profiles = ProfileIni.profiles(P.self, from: text, fileName: url.lastPathComponent)
                     if profiles.isEmpty {
-                        message = "\(url.lastPathComponent) has no PrusaSlicer \(P.iniSection) settings."
+                        message = "\(url.lastPathComponent) has no \(P.iniSection) settings."
                     } else {
                         add(profiles)
                         message = profiles.count == 1
@@ -167,7 +167,7 @@ struct IniImportModifier<P: PrusaIniProfile>: ViewModifier {
                     message = error.localizedDescription
                 }
             }
-            .alert("Import PrusaSlicer Settings",
+            .alert("Import Settings",
                    isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: {

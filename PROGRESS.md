@@ -2,53 +2,12 @@
 
 ## To Do
 
-### App Store Release Checklist
-- [x] **TestFlight build** — build 1.0 (1) archived, signed (Apple Distribution cert, auto-managed), and uploaded to App Store Connect via `xcodebuild -exportArchive` with `destination: upload` (2026-09-01); real team ID is `S2S63V4EZ9` (`project.local.yml` previously had a stale `5QZ67PK66C`, now fixed)
-- [x] **App Store Connect app record** — created (bundle ID `com.adickin.PalmSlice`); screenshots/description/category/age rating/support URL still needed before public release, not required for TestFlight
-- [x] **Privacy policy URL** — `PRIVACY.md` added (app collects no data at all); linked from App > About & Licenses and to be pasted into App Store Connect at submission time: `https://github.com/adickin/ISlicer/blob/main/PRIVACY.md`
-- [x] **In-app About/Credits screen** — `AboutView.swift`; reachable via a floating (i) button in the bottom-right corner (visible when the slice panel is collapsed, covered by the panel when expanded); links to source repo, AGPL-3.0 license, privacy policy, and the full third-party license table from `LICENSE.md`
-- [x] **First-launch safety notice** — `EULAView.swift`; full-screen, non-dismissible cover shown once (gated on `hasAcceptedEULA` in `UserDefaults`) after the splash screen; "Before You Print": sliced output can contain errors, use is at your own risk, supervise the printer (no "beta" wording — App Review guideline 2.2 rejects apps that call themselves beta); "I Understand & Accept" continues, "Decline" keeps the cover up with a must-accept note (no `exit(0)`)
-- [x] **Fix `UIDeviceFamily` Info.plist warning** — removed from `project.yml` Info.plist properties; `TARGETED_DEVICE_FAMILY: "1,2"` build setting added instead
-- [x] **`ITSAppUsesNonExemptEncryption`** — added to Info.plist via `project.yml` (`false`)
-- [x] **Privacy manifest `UserDefaults` declaration** — `NSPrivacyAccessedAPICategoryUserDefaults` / `CA92.1` added to `PrivacyInfo.xcprivacy` (2026-10-04)
-- [x] **Build number bumped to 2** — `CFBundleVersion: "2"` in `project.yml` (1.0 (1) already uploaded)
-- [x] **App Store listing copy drafted** — `APP_STORE_LISTING.md` (name, subtitle, description, keywords, category, age rating, review notes). Screenshots still need to be captured manually
+Outstanding work only. Feature ideas and longer-term plans are in
+`FUTURE_FEATURES.md`; finished items move to Completed below.
+
+### App Store Release
 - [ ] **App Store screenshots** — required size 6.9"; suggested shot list in `APP_STORE_LISTING.md`
-- [x] **Upload build 1.0 (2)** — archived and uploaded via `xcodebuild -exportArchive` (`method: app-store-connect`, `destination: upload`) on 2026-10-14; includes the export sheet and OctoPrint upload. `CFBundleVersion` bumped to `"3"` for the next upload (iPad UI + Apple Pencil)
 - [ ] **Broaden real-device test coverage** — currently validated on iPhone 14 Pro → Ender 3 S1 with real prints; try more STL geometries/sizes to rule out crashes/memory pressure on larger meshes
-- [x] **basic automated tests** — new `PalmSliceTests` XCTest target (hosted by `PalmSlice`, auto-attached by xcodegen); 15 tests covering profile Codable round-trips, built-in profile sanity, bridge-int enum uniqueness, and `GCodeParser` layer/extrusion-type parsing — all passing on `iphonesimulator`
-
-### High Priority (v1 polish)
-_(none outstanding — device build confirmed working on both simulator and device SDKs, see Completed)_
-
-### Viewer
-_(all items complete — see Plans/viewer_features.md)_
-
-### Printer Profiles
-_(planned additions moved to `FUTURE_FEATURES.md`)_
-
-### Slicing Profiles
-_(planned additions moved to `FUTURE_FEATURES.md`)_
-
-### Model Manipulation
-Plan: `Plans/model_manipulation.md`
-- [x] **Transform controls** — `ModelTransform` state (positionMM / rotationDeg / scale); `pivotNode` in `STLSceneView` applies transform live; `TransformPanelView` sheet with Move / Rotate / Scale sections (2026-04-17)
-- [x] **Snap-to-face** — "Lay Flat" button in rotate section; picks largest downward-facing face via `STLMeshInfo` normals + area weighting; converts to SceneKit Euler angles via quaternion (2026-04-17)
-- [x] **Fit to bed / Center / Drop to bed** — helper buttons in Move and Scale sections; "Fit to Bed" scales to 90% of bed footprint (2026-04-17)
-- [x] **Interactive 3D translate gizmo** — world-aligned X/Y/Z arrows follow model; tap "Move" overlay button to enter transform mode (disables orbit); drag an arrow to translate along that axis; gizmo scales with model; "Orbit" button returns to camera control (2026-04-18)
-- [x] **Multi-model** — `PlacedModel` list, per-model transforms/selection, `ModelListView`, multi-object slicing (2026-04-22); precise BVH mesh-collision (`TriangleBVH`, `PreciseIntersectionChecker`) with debounced red-highlight feedback and bed-footprint checks (2026-05-10)
-- [x] **Type-in scale sizing + unit-mismatch detection** — mm-per-axis entry back-solves scale; sub-2 mm imports offered a one-tap ×1000 fix (2026-08-23)
-- [ ] Remaining phases (Auto-orient, Cut tool) — see `FUTURE_FEATURES.md`
-
-### Infrastructure
-- [x] **Proper bundleId** — `com.adickin.PalmSlice` via `bundleIdPrefix` in `project.yml` + `project.local.yml` (team ID set)
-- [x] **App icon + launch screen**
-- [x] **iPad layout** — see Completed (2026-10-16)
-- [ ] Remaining infrastructure items (haptics, iCloud sync, broader TestFlight distribution) — see `FUTURE_FEATURES.md`
-
-## Far future
-
-_(moved to `FUTURE_FEATURES.md`)_
 
 ## Completed
 
@@ -60,6 +19,8 @@ _(moved to `FUTURE_FEATURES.md`)_
 - [x] **All Settings screen** (every PrusaSlicer setting, categories, help text, validated edits), base preset shown/changeable
 - [x] **3MF per-part settings** (object overrides, height ranges, variable layer heights) with badge + Settings from File sheet; **Create Profiles from This File**. Parity with slicing the 3MF project directly verified on Piper J-3 Cub parts
 - [x] **PrusaSlicer .ini import** (flat configs and config bundles with inheritance) **and export**
+- [x] **Additional speed settings, seam position, per-feature extrusion widths** — all reachable through All Settings (from `FUTURE_FEATURES.md`)
+- [x] **`printer_model` / `printer_settings_id` in start G-code** — set from the printer's PrusaSlicer preset, so vendor start G-code that checks them works without hardcoding
 
 ### 3MF / OBJ / AMF import (2026-10-17)
 - [x] **3MF, OBJ and AMF import** via picker and drag-and-drop — `slicer_import_model_file` loads the file with libslic3r's format loaders and writes one STL per object instance (rotation/scale/mirroring baked in); each becomes its own model, named from the file, keeping the file's relative layout. (Embedded 3MF/AMF settings were ignored until 2026-10-22, see above.) STEP is not supported (needs OpenCASCADE)
@@ -187,3 +148,29 @@ Plan: `Plans/slicing_profiles.md`
 - [x] Slicing cancellation — `slicer_cancel()` calls `Print::cancel()`; returns to idle cleanly
 - [x] Error UI — all failures shown via SwiftUI `.alert` modal
 - [x] **SceneKit 3D viewer** — `STLParser.swift` (binary + ASCII STL → `SCNGeometry`, flat normals, unit-box normalisation); `STLSceneView.swift` (`SCNView` with orbit-turntable camera control, print-bed grid, XYZ axis gizmo); mesh rotated −90° around X to convert STL Z-up to SceneKit Y-up (Cura convention: X=right/red, Y=forward/green, Z=up/blue); sample STLs copied to app Documents on first launch
+
+### App Store preparation
+- [x] **TestFlight build** — build 1.0 (1) archived, signed (Apple Distribution cert, auto-managed), and uploaded to App Store Connect via `xcodebuild -exportArchive` with `destination: upload` (2026-09-01); real team ID is `S2S63V4EZ9` (`project.local.yml` previously had a stale `5QZ67PK66C`, now fixed)
+- [x] **App Store Connect app record** — created (bundle ID `com.adickin.PalmSlice`); screenshots/description/category/age rating/support URL still needed before public release, not required for TestFlight
+- [x] **Privacy policy URL** — `PRIVACY.md` added (app collects no data at all); linked from App > About & Licenses and to be pasted into App Store Connect at submission time: `https://github.com/adickin/ISlicer/blob/main/PRIVACY.md`
+- [x] **In-app About/Credits screen** — `AboutView.swift`; reachable via a floating (i) button in the bottom-right corner (visible when the slice panel is collapsed, covered by the panel when expanded); links to source repo, AGPL-3.0 license, privacy policy, and the full third-party license table from `LICENSE.md`
+- [x] **First-launch safety notice** — `EULAView.swift`; full-screen, non-dismissible cover shown once (gated on `hasAcceptedEULA` in `UserDefaults`) after the splash screen; "Before You Print": sliced output can contain errors, use is at your own risk, supervise the printer (no "beta" wording — App Review guideline 2.2 rejects apps that call themselves beta); "I Understand & Accept" continues, "Decline" keeps the cover up with a must-accept note (no `exit(0)`)
+- [x] **Fix `UIDeviceFamily` Info.plist warning** — removed from `project.yml` Info.plist properties; `TARGETED_DEVICE_FAMILY: "1,2"` build setting added instead
+- [x] **`ITSAppUsesNonExemptEncryption`** — added to Info.plist via `project.yml` (`false`)
+- [x] **Privacy manifest `UserDefaults` declaration** — `NSPrivacyAccessedAPICategoryUserDefaults` / `CA92.1` added to `PrivacyInfo.xcprivacy` (2026-10-04)
+- [x] **Build number bumped to 2** — `CFBundleVersion: "2"` in `project.yml` (1.0 (1) already uploaded)
+- [x] **App Store listing copy drafted** — `APP_STORE_LISTING.md` (name, subtitle, description, keywords, category, age rating, review notes). Screenshots still need to be captured manually
+- [x] **Upload build 1.0 (2)** — archived and uploaded via `xcodebuild -exportArchive` (`method: app-store-connect`, `destination: upload`) on 2026-10-14; includes the export sheet and OctoPrint upload. `CFBundleVersion` bumped to `"3"` for the next upload (iPad UI + Apple Pencil)
+- [x] **basic automated tests** — new `PalmSliceTests` XCTest target (hosted by `PalmSlice`, auto-attached by xcodegen); 15 tests covering profile Codable round-trips, built-in profile sanity, bridge-int enum uniqueness, and `GCodeParser` layer/extrusion-type parsing — all passing on `iphonesimulator`
+
+### Model Manipulation (Plan: `Plans/model_manipulation.md`)
+- [x] **Transform controls** — `ModelTransform` state (positionMM / rotationDeg / scale); `pivotNode` in `STLSceneView` applies transform live; `TransformPanelView` sheet with Move / Rotate / Scale sections (2026-04-17)
+- [x] **Snap-to-face** — "Lay Flat" button in rotate section; picks largest downward-facing face via `STLMeshInfo` normals + area weighting; converts to SceneKit Euler angles via quaternion (2026-04-17)
+- [x] **Fit to bed / Center / Drop to bed** — helper buttons in Move and Scale sections; "Fit to Bed" scales to 90% of bed footprint (2026-04-17)
+- [x] **Interactive 3D translate gizmo** — world-aligned X/Y/Z arrows follow model; tap "Move" overlay button to enter transform mode (disables orbit); drag an arrow to translate along that axis; gizmo scales with model; "Orbit" button returns to camera control (2026-04-18)
+- [x] **Multi-model** — `PlacedModel` list, per-model transforms/selection, `ModelListView`, multi-object slicing (2026-04-22); precise BVH mesh-collision (`TriangleBVH`, `PreciseIntersectionChecker`) with debounced red-highlight feedback and bed-footprint checks (2026-05-10)
+- [x] **Type-in scale sizing + unit-mismatch detection** — mm-per-axis entry back-solves scale; sub-2 mm imports offered a one-tap ×1000 fix (2026-08-23)
+
+### Infrastructure
+- [x] **Proper bundleId** — `com.adickin.PalmSlice` via `bundleIdPrefix` in `project.yml` + `project.local.yml` (team ID set)
+- [x] **App icon + launch screen**

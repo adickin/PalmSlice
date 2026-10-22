@@ -32,7 +32,7 @@ struct PrinterProfileEditorView: View {
                 gcodeSection
                 printheadSection
                 extrudersSection
-                PrusaSlicerSection(
+                DefaultsSection(
                     profile: $draft,
                     basePresetName: draft.systemPreset ?? "None (custom printer)",
                     baseSettings: draft.systemPreset.flatMap { PresetLibrary.settings(.printer, $0) } ?? [:])

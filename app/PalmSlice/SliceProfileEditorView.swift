@@ -33,7 +33,7 @@ struct SliceProfileEditorView: View {
                 supportSection
                 adhesionSection
                 advancedSection
-                PrusaSlicerSection(
+                DefaultsSection(
                     profile: $draft, basePresetName: basePrint, baseSettings: baseSettings,
                     onChooseBase: { showBasePicker = true },
                     onResetBase: draft.basePreset == nil ? nil : { draft.basePreset = nil })
@@ -262,7 +262,7 @@ struct SliceProfileEditorView: View {
         } header: {
             Text("Advanced")
         } footer: {
-            Text("Line widths of 0 use PrusaSlicer's value for your printer. Leave these at their defaults unless a model's instructions say otherwise.")
+            Text("Line widths of 0 use the default for your printer. Leave these at their defaults unless a model's instructions say otherwise.")
         }
     }
 
@@ -367,7 +367,7 @@ struct SliceProfileEditorView: View {
         } header: {
             Text("Build Plate Adhesion")
         } footer: {
-            Text("Skirt, brim and raft can be combined, as in PrusaSlicer.")
+            Text("Skirt, brim and raft can be combined.")
         }
     }
 
@@ -438,7 +438,7 @@ private let helpSections: [HelpSection] = [
         HelpEntry(name: "Wall Generator",
                   description: "Arachne (the default) varies line width so thin features and gaps between walls fill cleanly. Classic prints every wall at the same width. Use Classic when a model was designed for it, such as 3DLabPrint planes."),
         HelpEntry(name: "Outer Wall First",
-                  description: "Prints the outermost wall before the inner ones on each layer. Gives more accurate outside dimensions and a cleaner skin, but overhangs can sag more because the outer wall has nothing to lean on. Off is PrusaSlicer's default."),
+                  description: "Prints the outermost wall before the inner ones on each layer. Gives more accurate outside dimensions and a cleaner skin, but overhangs can sag more because the outer wall has nothing to lean on. Off is the default."),
     ]),
     HelpSection(title: "Top / Bottom", entries: [
         HelpEntry(name: "Top Layers",
@@ -462,11 +462,11 @@ private let helpSections: [HelpSection] = [
         HelpEntry(name: "Slicing Mode",
                   description: "Regular treats everything inside the model's outer surface as solid. Even/Odd treats areas inside two overlapping shells as empty, so overlaps cancel out. 3DLabPrint planes need Even/Odd to form their internal ribs; other models should use Regular."),
         HelpEntry(name: "Gap Closing Radius",
-                  description: "Closes cracks in the model's outline smaller than this radius when slicing, which hides small mesh errors. PrusaSlicer's default is 0.049 mm. Set 0 for models with intentional tiny gaps, such as 3DLabPrint planes."),
+                  description: "Closes cracks in the model's outline smaller than this radius when slicing, which hides small mesh errors. The default is 0.049 mm. Set 0 for models with intentional tiny gaps, such as 3DLabPrint planes."),
         HelpEntry(name: "Line Width",
-                  description: "Width of each extruded line in mm. 0 (Auto) uses the width PrusaSlicer's own profile for your printer uses, typically about 0.45 mm for a 0.4 mm nozzle. Only set this when a model's instructions give a specific width."),
+                  description: "Width of each extruded line in mm. 0 (Auto) uses your printer's default width, typically about 0.45 mm for a 0.4 mm nozzle. Only set this when a model's instructions give a specific width."),
         HelpEntry(name: "First Layer Line Width",
-                  description: "Line width for the first layer only. 0 (Auto) uses the width PrusaSlicer's own profile for your printer uses. A slightly wider first layer helps it stick to the bed."),
+                  description: "Line width for the first layer only. 0 (Auto) uses your printer's default width. A slightly wider first layer helps it stick to the bed."),
     ]),
     HelpSection(title: "Speed", entries: [
         HelpEntry(name: "Print Speed (Perimeter)",
@@ -516,7 +516,7 @@ private let helpSections: [HelpSection] = [
     ]),
     HelpSection(title: "Build Plate Adhesion", entries: [
         HelpEntry(name: "Combining",
-                  description: "Skirt, brim and raft are independent, as in PrusaSlicer: use any of them together, or none. Turn all three off when the model has a large flat bottom that adheres well on its own, or the bed surface grips well (e.g. PEI with PLA)."),
+                  description: "Skirt, brim and raft are independent: use any of them together, or none. Turn all three off when the model has a large flat bottom that adheres well on its own, or the bed surface grips well (e.g. PEI with PLA)."),
         HelpEntry(name: "Skirt",
                   description: "One or more loops printed around — but not touching — the model before the print starts. Primes the nozzle and lets you confirm the first layer height looks correct before the actual print begins. Does not help with adhesion. 0 loops = off."),
         HelpEntry(name: "Brim",

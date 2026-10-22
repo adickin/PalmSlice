@@ -36,8 +36,8 @@ struct SliceProfilePickerView: View {
                     Button("New Profile") {
                         newProfile = .newProfile(for: profileStore.selectedProfile)
                     }
-                    Button("From PrusaSlicer Preset…") { showPresetPicker = true }
-                    Button("Import PrusaSlicer .ini…") { showIniImport = true }
+                    Button("From Default Slice Settings…") { showPresetPicker = true }
+                    Button("Import .ini…") { showIniImport = true }
                 } label: {
                     Image(systemName: "plus")
                 }

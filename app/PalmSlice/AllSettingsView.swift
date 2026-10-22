@@ -69,9 +69,9 @@ struct SettingInfo {
     }
 }
 
-/// "PrusaSlicer" section shown at the bottom of each profile editor: which
+/// "Defaults" section shown at the bottom of each profile editor: which
 /// PrusaSlicer preset the profile builds on, and every PrusaSlicer setting.
-struct PrusaSlicerSection<P: PrusaIniProfile>: View {
+struct DefaultsSection<P: PrusaIniProfile>: View {
     @Binding var profile: P
     /// Name of the PrusaSlicer preset this profile is layered on.
     let basePresetName: String?
@@ -84,15 +84,15 @@ struct PrusaSlicerSection<P: PrusaIniProfile>: View {
     var body: some View {
         Section {
             if let basePresetName {
-                LabeledContent("Based on") {
+                LabeledContent("Based On") {
                     Text(basePresetName).multilineTextAlignment(.trailing)
                 }
             }
             if let onChooseBase {
-                Button("Change Base Preset…", action: onChooseBase)
+                Button("Choose Different Defaults…", action: onChooseBase)
             }
             if let onResetBase {
-                Button("Use the Printer's Default Preset", action: onResetBase)
+                Button("Use the Printer's Defaults", action: onResetBase)
             }
             NavigationLink {
                 AllSettingsView(profile: $profile, baseSettings: baseSettings)
@@ -105,12 +105,12 @@ struct PrusaSlicerSection<P: PrusaIniProfile>: View {
             ShareLink(item: PrusaIniFile(fileName: profile.name,
                                          text: ProfileIni.text(profile, baseSettings: baseSettings)),
                       preview: SharePreview("\(profile.name).ini")) {
-                Label("Export PrusaSlicer .ini", systemImage: "square.and.arrow.up")
+                Label("Export .ini", systemImage: "square.and.arrow.up")
             }
         } header: {
-            Text("PrusaSlicer")
+            Text("Defaults")
         } footer: {
-            Text("Settings not shown above come from the PrusaSlicer preset. All Settings lists every one of them; change any to override the preset.")
+            Text("Every setting not shown above comes from these defaults. All Settings lists them all; change any to override its default.")
         }
     }
 }
@@ -220,14 +220,14 @@ struct SettingEditView<P: PrusaSettingsConvertible>: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     if !info.tooltip.isEmpty { Text(info.tooltip) }
-                    Text("PrusaSlicer key: \(info.key)").font(.caption.monospaced())
+                    Text("Key: \(info.key)").font(.caption.monospaced())
                 }
             }
             if let baseValue {
-                Section("PrusaSlicer Preset Value") {
+                Section("Default Value") {
                     Text(info.summary(of: baseValue)).foregroundStyle(.secondary)
                     if profile.extraSettings[info.key] != nil || currentValue != baseValue {
-                        Button("Use Preset Value") { apply(baseValue, isReset: true) }
+                        Button("Use Default") { apply(baseValue, isReset: true) }
                     }
                 }
             }
