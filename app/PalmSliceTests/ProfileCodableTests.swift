@@ -68,7 +68,7 @@ final class ProfileCodableTests: XCTestCase {
     // collision would silently apply the wrong slicer setting)
 
     func testGCodeFlavorBridgeIntsAreUnique() {
-        let values = GCodeFlavor.allCases.map(\.bridgeInt)
+        let values = GCodeFlavor.allCases.map(\.prusaName)
         XCTAssertEqual(values.count, Set(values).count)
     }
 

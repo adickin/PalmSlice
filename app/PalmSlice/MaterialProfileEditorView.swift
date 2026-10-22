@@ -93,10 +93,13 @@ struct MaterialProfileEditorView: View {
 
     @ViewBuilder
     private var retractionSection: some View {
-        Section("Retraction") {
-            Toggle("Enable Retraction", isOn: $draft.retractionEnabled)
+        Section {
+            Toggle("Set Retraction Here", isOn: $draft.setsRetraction)
+            if draft.setsRetraction {
+                Toggle("Enable Retraction", isOn: $draft.retractionEnabled)
+            }
 
-            if draft.retractionEnabled {
+            if draft.setsRetraction && draft.retractionEnabled {
                 LabeledContent("Length (mm)") {
                     TextField("5.0", value: $draft.retractionLength, format: .number)
                         .keyboardType(.decimalPad)
@@ -123,6 +126,12 @@ struct MaterialProfileEditorView: View {
                         .multilineTextAlignment(.trailing)
                 }
             }
+        } header: {
+            Text("Retraction")
+        } footer: {
+            Text(draft.setsRetraction
+                 ? "These values replace the printer's retraction while this material is used."
+                 : "Uses the printer's own retraction settings, as PrusaSlicer does for most filaments.")
         }
     }
 

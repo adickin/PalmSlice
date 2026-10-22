@@ -1596,47 +1596,19 @@ struct ContentView: View {
             Task { @MainActor in activeHandle = nil }
         }
 
-        // 5. PrusaSlicer base: the printer's vendor preset, its default print
-        //    preset and a matching filament preset. Everything below layers
-        //    the PalmSlice profiles on top. If the presets failed to load the
-        //    slice still runs, on the PalmSlice profiles alone.
+        // 5. Settings: PrusaSlicer presets, then the printer, material and
+        //    slice profiles on top (SliceSetup).
+        await setPhase("Applying profiles…")
         let selectedMaterial = await MainActor.run(body: { materialProfileStore.selectedProfile })
-        if let base = PresetLibrary.base(printerPreset: printerProfile.systemPreset,
-                                         filamentType: selectedMaterial?.filamentType ?? "PLA") {
-            await setPhase("Applying PrusaSlicer presets…")
-            if !PresetLibrary.apply(base, to: handle) {
-                let msg = String(cString: slicer_last_error(handle))
-                await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
-                return
-            }
-        }
-
-        // 6. Apply printer profile
-        await setPhase("Applying printer profile…")
-        if !applyPrinterProfile(printerProfile, to: handle) {
-            let msg = String(cString: slicer_last_error(handle))
-            await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+        do {
+            try SliceSetup.configure(handle, printer: printerProfile,
+                                     material: selectedMaterial, slice: sliceProfile)
+        } catch {
+            await MainActor.run { state = .failed(message: "\(error)") ; showErrorAlert = true }
             return
         }
-
-        // 7. Apply material profile (optional)
-        if let materialProfile = selectedMaterial {
-            await setPhase("Applying material profile…")
-            if !applyMaterialProfile(materialProfile, to: handle) {
-                let msg = String(cString: slicer_last_error(handle))
-                await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
-                return
-            }
-        }
-
-        // 8. Apply slice profile
-        await setPhase("Applying slice profile…")
+        // Struct form of the slice profile for the wall/top/bottom geometry check.
         var sliceCfg = sliceProfile.bridgeConfig()
-        if slicer_apply_slice_config(handle, &sliceCfg) != 0 {
-            let msg = String(cString: slicer_last_error(handle))
-            await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
-            return
-        }
 
         // 9. Load each model
         for (i, model) in snapshotModels.enumerated() {
@@ -1695,9 +1667,14 @@ struct ContentView: View {
                 sliceCfg.wall_count = configCheck.suggested_wall_count
                 sliceCfg.top_layers = configCheck.suggested_top_layers
                 sliceCfg.bottom_layers = configCheck.suggested_bottom_layers
-                if slicer_apply_slice_config(handle, &sliceCfg) != 0 {
-                    let msg = String(cString: slicer_last_error(handle))
-                    await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+                do {
+                    try SliceSetup.applySettings([
+                        "perimeters": String(configCheck.suggested_wall_count),
+                        "top_solid_layers": String(configCheck.suggested_top_layers),
+                        "bottom_solid_layers": String(configCheck.suggested_bottom_layers),
+                    ], label: "Adjusted settings", to: handle)
+                } catch {
+                    await MainActor.run { state = .failed(message: "\(error)") ; showErrorAlert = true }
                     return
                 }
             case .sliceAnyway:
@@ -1783,61 +1760,6 @@ struct ContentView: View {
             if printTime != nil && filamentG != nil { break }
         }
         return (printTime, filamentG)
-    }
-
-    // MARK: Profiles → C bridge
-
-    private func applyMaterialProfile(_ profile: MaterialProfile, to handle: SlicerHandle) -> Bool {
-        var cfg = SlicerMaterialConfig()
-        cfg.filament_diameter            = Float(profile.filamentDiameter)
-        cfg.first_layer_temperature      = Int32(profile.firstLayerTemp)
-        cfg.temperature                  = Int32(profile.otherLayersTemp)
-        cfg.first_layer_bed_temperature  = Int32(profile.firstLayerBedTemp)
-        cfg.bed_temperature              = Int32(profile.otherLayersBedTemp)
-        cfg.extrusion_multiplier         = Float(profile.extrusionMultiplier)
-        cfg.retract_length               = profile.retractionEnabled ? Float(profile.retractionLength) : 0
-        cfg.retract_speed                = Float(profile.retractionSpeed)
-        cfg.retract_restart_extra        = Float(profile.retractionRestartExtra)
-        cfg.retract_lift                 = Float(profile.zHop)
-        cfg.retract_before_travel        = Float(profile.minTravelForRetraction)
-        cfg.cooling                      = profile.coolingEnabled ? 1 : 0
-        cfg.min_fan_speed                = Int32(profile.minFanSpeed)
-        cfg.max_fan_speed                = Int32(profile.maxFanSpeed)
-        cfg.bridge_fan_speed             = Int32(profile.bridgeFanSpeed)
-        cfg.disable_fan_first_layers     = Int32(profile.disableFanFirstLayers)
-        cfg.fan_below_layer_time         = Int32(profile.fanBelowLayerTime)
-        cfg.slowdown_below_layer_time    = Int32(profile.slowdownBelowLayerTime)
-        cfg.min_print_speed              = Float(profile.minPrintSpeed)
-        return slicer_apply_material_config(handle, &cfg) == 0
-    }
-
-    private func applyPrinterProfile(_ profile: PrinterProfile, to handle: SlicerHandle) -> Bool {
-        let nozzle   = Float(profile.extruders.first?.nozzleDiameter ?? 0.4)
-        let filament = Float(profile.extruders.first?.compatibleMaterialDiameters.first ?? 1.75)
-
-        return profile.startGCode.withCString { startPtr in
-            profile.endGCode.withCString { endPtr in
-                var cfg = SlicerPrinterConfig()
-                cfg.bed_x = Float(profile.bedX)
-                cfg.bed_y = Float(profile.bedY)
-                cfg.bed_z = Float(profile.bedZ)
-                cfg.origin_at_center = profile.originAtCenter ? 1 : 0
-                cfg.heated_bed = profile.heatedBed ? 1 : 0
-                cfg.gcode_flavor = profile.gcodeFlavor.bridgeInt
-                cfg.start_gcode = startPtr
-                cfg.end_gcode = endPtr
-                cfg.printhead_x_min = Float(profile.printheadXMin)
-                cfg.printhead_y_min = Float(profile.printheadYMin)
-                cfg.printhead_x_max = Float(profile.printheadXMax)
-                cfg.printhead_y_max = Float(profile.printheadYMax)
-                cfg.gantry_height = Float(profile.gantryHeight)
-                cfg.extruder_count = Int32(profile.numberOfExtruders)
-                cfg.apply_extruder_offsets = profile.applyExtruderOffsetsToGCode ? 1 : 0
-                cfg.nozzle_diameter = nozzle
-                cfg.filament_diameter = filament
-                return slicer_apply_printer_config(handle, &cfg) == 0
-            }
-        }
     }
 }
 

@@ -47,47 +47,11 @@ void slicer_cancel(SlicerHandle handle);
 // Valid until the next call on the same handle.
 const char* slicer_last_error(SlicerHandle handle);
 
-// ── Printer profile ───────────────────────────────────────────────────────────
-
-// Printer configuration passed from Swift into the slicer context.
-// gcode_flavor int values must match flavor_map[] in slicer_bridge.cpp.
-typedef struct {
-    // Bed
-    float bed_x;                // mm (width)
-    float bed_y;                // mm (depth)
-    float bed_z;                // mm (max height)
-    int   origin_at_center;     // 1 = bed origin is at centre, 0 = front-left
-    int   heated_bed;           // 1 = true (informational; affects default temps)
-    int   gcode_flavor;         // 0=Marlin,1=Marlin2,2=Klipper,3=RepRapSprinter,
-                                // 4=RepRapFirmware,5=Teacup,6=MakerWare,7=Sailfish,
-                                // 8=Mach3,9=MachineKit,10=Smoothie,11=NoExtrusion
-    const char* start_gcode;    // null-terminated; may be NULL (keeps existing value)
-    const char* end_gcode;      // null-terminated; may be NULL (keeps existing value)
-
-    // Printhead extents (all in mm, relative to nozzle)
-    float printhead_x_min;      // negative = toward left
-    float printhead_y_min;      // negative = toward back
-    float printhead_x_max;
-    float printhead_y_max;
-    float gantry_height;        // mm; used as extruder_clearance_height
-    int   extruder_count;
-    int   apply_extruder_offsets; // 1 = true
-
-    // Extruder 0 shortcut (multi-extruder deferred)
-    float nozzle_diameter;      // mm, e.g. 0.4
-    float filament_diameter;    // mm, e.g. 1.75
-} SlicerPrinterConfig;
-
-// Apply a printer profile to the slicer context.
-// Must be called before slicer_slice / slicer_slice_with_progress.
-// Returns 0 on success, negative on error.
-int slicer_apply_printer_config(SlicerHandle handle,
-                                const SlicerPrinterConfig* cfg);
-
 // ── Slice profile ─────────────────────────────────────────────────────────────
 
-// Slicing settings passed from Swift into the slicer context.
-// Call before slicer_slice / slicer_slice_with_progress.
+// The slice profile's wall / shell / infill values, as checked by
+// slicer_check_slice_config. (Settings themselves are applied as PrusaSlicer
+// key/value text with slicer_apply_settings.)
 typedef struct {
     // Layers
     float layer_height;          // mm — layer_height
@@ -160,12 +124,6 @@ typedef struct {
     int   raft_layers;           // raft_layers
 } SlicerSliceConfig;
 
-// Apply slice settings to the slicer context.
-// Must be called before slicer_slice / slicer_slice_with_progress.
-// Returns 0 on success, negative on error.
-int slicer_apply_slice_config(SlicerHandle handle,
-                              const SlicerSliceConfig* cfg);
-
 // Result of slicer_check_slice_config: flags wall/top/bottom settings that
 // are too aggressive for the loaded model's geometry — e.g. more wall loops
 // than fit across the model's thinnest horizontal span, or more top/bottom
@@ -190,54 +148,11 @@ typedef struct {
 // (e.g. live as the user edits a slice profile).
 //
 // Must be called after slicer_load_stl/slicer_add_stl (model geometry known)
-// and slicer_apply_printer_config (nozzle_diameter known).
+// and settings with the nozzle_diameter applied.
 // Returns 0 on success, negative on error (out is left zeroed on error).
 int slicer_check_slice_config(SlicerHandle handle,
                               const SlicerSliceConfig* cfg,
                               SlicerSliceConfigCheck* out);
-
-// ── Material profile ──────────────────────────────────────────────────────────
-
-// Material (filament) settings passed from Swift into the slicer context.
-// Call before slicer_slice / slicer_slice_with_progress.
-// All temperature/retraction/fan keys are per-extruder arrays in libslic3r;
-// the bridge wraps each scalar in a single-element vector.
-typedef struct {
-    // Filament
-    float filament_diameter;            // mm — filament_diameter[0]
-
-    // Temperatures (°C)
-    int   first_layer_temperature;      // first_layer_temperature[0]
-    int   temperature;                  // temperature[0]
-    int   first_layer_bed_temperature;  // first_layer_bed_temperature[0]
-    int   bed_temperature;              // bed_temperature[0]
-
-    // Flow
-    float extrusion_multiplier;         // extrusion_multiplier[0]
-
-    // Retraction — set retract_length to 0 to disable retraction natively
-    float retract_length;               // mm   — retract_length[0]
-    float retract_speed;                // mm/s — retract_speed[0]
-    float retract_restart_extra;        // mm   — retract_restart_extra[0]: extra pushed after deretraction
-    float retract_lift;                 // mm   — retract_lift[0] (Z-hop)
-    float retract_before_travel;        // mm   — retract_before_travel[0]
-
-    // Cooling / fan
-    int   cooling;                      // bool — cooling[0]
-    int   min_fan_speed;                // %    — min_fan_speed[0]
-    int   max_fan_speed;                // %    — max_fan_speed[0]
-    int   bridge_fan_speed;             // %    — bridge_fan_speed[0]
-    int   disable_fan_first_layers;     // N    — disable_fan_first_layers[0]
-    int   fan_below_layer_time;         // sec  — fan_below_layer_time[0]: enable fan if layer finishes under N sec
-    int   slowdown_below_layer_time;    // sec  — slowdown_below_layer_time[0]: slow down if layer finishes under N sec
-    float min_print_speed;              // mm/s — min_print_speed[0]: floor when cooling slowdown is active
-} SlicerMaterialConfig;
-
-// Apply material settings to the slicer context.
-// Must be called before slicer_slice / slicer_slice_with_progress.
-// Returns 0 on success, negative on error.
-int slicer_apply_material_config(SlicerHandle handle,
-                                 const SlicerMaterialConfig* cfg);
 
 // ── Model transform ───────────────────────────────────────────────────────────
 
@@ -273,7 +188,7 @@ int slicer_set_model_transform(SlicerHandle handle,
 
 // Append a new STL object to the slicer model (does not reset existing objects).
 // Returns the object index (≥ 0) on success, or a negative error code.
-// Must be called after slicer_apply_printer_config so bed dimensions are known.
+// Must be called after the printer settings (bed_shape) are applied so the bed is known.
 int slicer_add_stl(SlicerHandle handle, const char* path);
 
 // Apply a viewer transform to the Nth object added via slicer_add_stl.

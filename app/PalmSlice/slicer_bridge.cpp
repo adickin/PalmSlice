@@ -46,13 +46,13 @@ struct SlicerContext {
     Slic3r::DynamicPrintConfig config;
     std::string                last_error;
 
-    // Printer dimensions — updated by slicer_apply_printer_config,
-    // used by slicer_load_stl to centre the model on the correct bed.
+    // Printer dimensions — derived from bed_shape whenever settings are
+    // applied (sync_bed_from_config), used to centre models on the bed.
     double bed_x = 220.0;
     double bed_y = 220.0;
     bool   origin_at_center = false;
 
-    // Set to true once slicer_apply_slice_config has been called so that
+    // Set to true once slicer_apply_settings has been called so that
     // slicer_slice_with_progress doesn't clobber the slice settings with its
     // legacy layer_height / infill_percent parameters.
     bool   slice_config_applied = false;
@@ -160,23 +160,22 @@ static int set_err(SlicerContext* ctx, const char* msg) {
     return -1;
 }
 
-// ── GCodeFlavor mapping ───────────────────────────────────────────────────────
-// Must stay in sync with GCodeFlavor.bridgeInt in GCodeFlavor.swift.
-static const Slic3r::GCodeFlavor kFlavorMap[] = {
-    Slic3r::gcfMarlinLegacy,    // 0  = .marlin
-    Slic3r::gcfMarlinFirmware,  // 1  = .marlin2
-    Slic3r::gcfKlipper,         // 2  = .klipper
-    Slic3r::gcfRepRapSprinter,  // 3  = .repRap
-    Slic3r::gcfRepRapFirmware,  // 4  = .repRapFirmware
-    Slic3r::gcfTeacup,          // 5  = .teacup
-    Slic3r::gcfMakerWare,       // 6  = .makerWare
-    Slic3r::gcfSailfish,        // 7  = .sailfish
-    Slic3r::gcfMach3,           // 8  = .mach3
-    Slic3r::gcfMachinekit,      // 9  = .machineKit
-    Slic3r::gcfSmoothie,        // 10 = .smoothie
-    Slic3r::gcfNoExtrusion,     // 11 = .noGCode
-};
-static constexpr int kFlavorMapSize = static_cast<int>(sizeof(kFlavorMap) / sizeof(kFlavorMap[0]));
+// Bed size / origin used to centre models (slicer_load_stl, slicer_add_stl),
+// derived from the config's bed_shape bounding box. Called whenever settings
+// that may include bed_shape are applied.
+static void sync_bed_from_config(SlicerContext* ctx) {
+    auto* shape = ctx->config.opt<Slic3r::ConfigOptionPoints>("bed_shape");
+    if (!shape || shape->values.size() < 3) return;
+    double min_x = shape->values[0].x(), max_x = min_x;
+    double min_y = shape->values[0].y(), max_y = min_y;
+    for (const auto& p : shape->values) {
+        min_x = std::min(min_x, p.x()); max_x = std::max(max_x, p.x());
+        min_y = std::min(min_y, p.y()); max_y = std::max(max_y, p.y());
+    }
+    ctx->bed_x = max_x - min_x;
+    ctx->bed_y = max_y - min_y;
+    ctx->origin_at_center = min_x < 0 && min_y < 0;
+}
 
 // ── Public C API ─────────────────────────────────────────────────────────────
 extern "C" {
@@ -244,13 +243,16 @@ int slicer_slice_with_progress(SlicerHandle handle,
     auto ctx = CTX(handle);
     try {
         // layer_height and infill_percent are kept in the signature for compatibility
-        // but the values are now owned by slicer_apply_slice_config. If no slice
+        // but the values are now owned by slicer_apply_settings. If no slice
         // config has been applied (legacy call path), fall back to the parameters.
         if (!ctx->slice_config_applied) {
-            ctx->config.set_key_value("layer_height",
-                new Slic3r::ConfigOptionFloat(static_cast<double>(layer_height)));
-            ctx->config.set_key_value("fill_density",
-                new Slic3r::ConfigOptionPercent(infill_percent));
+            // A zero layer height would never finish slicing.
+            if (layer_height > 0.0f)
+                ctx->config.set_key_value("layer_height",
+                    new Slic3r::ConfigOptionFloat(static_cast<double>(layer_height)));
+            if (infill_percent >= 0)
+                ctx->config.set_key_value("fill_density",
+                    new Slic3r::ConfigOptionPercent(infill_percent));
         }
 
         ctx->print.clear();
@@ -312,277 +314,6 @@ const char* slicer_last_error(SlicerHandle handle) {
     return CTX(handle)->last_error.c_str();
 }
 
-int slicer_apply_printer_config(SlicerHandle handle, const SlicerPrinterConfig* cfg) {
-    auto ctx = CTX(handle);
-    if (!cfg) return set_err(ctx, "null printer config");
-    try {
-        // Store bed dimensions for use in slicer_load_stl.
-        ctx->bed_x = static_cast<double>(cfg->bed_x);
-        ctx->bed_y = static_cast<double>(cfg->bed_y);
-        ctx->origin_at_center = (cfg->origin_at_center != 0);
-
-        // bed_shape: rectangular polygon in mm.
-        // When origin is at front-left, polygon starts at (0,0).
-        // When origin is at centre, polygon starts at (-x/2, -y/2).
-        double ox = ctx->origin_at_center ? -ctx->bed_x / 2.0 : 0.0;
-        double oy = ctx->origin_at_center ? -ctx->bed_y / 2.0 : 0.0;
-        Slic3r::ConfigOptionPoints bed_shape;
-        bed_shape.values = {
-            Slic3r::Vec2d(ox,              oy),
-            Slic3r::Vec2d(ox + ctx->bed_x, oy),
-            Slic3r::Vec2d(ox + ctx->bed_x, oy + ctx->bed_y),
-            Slic3r::Vec2d(ox,              oy + ctx->bed_y),
-        };
-        ctx->config.set_key_value("bed_shape",
-            new Slic3r::ConfigOptionPoints(bed_shape));
-
-        // Max print height
-        ctx->config.set_key_value("max_print_height",
-            new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->bed_z)));
-
-        // G-Code flavor
-        int fi = cfg->gcode_flavor;
-        Slic3r::GCodeFlavor flavor = (fi >= 0 && fi < kFlavorMapSize)
-            ? kFlavorMap[fi]
-            : Slic3r::gcfMarlinLegacy;
-        ctx->config.set_key_value("gcode_flavor",
-            new Slic3r::ConfigOptionEnum<Slic3r::GCodeFlavor>(flavor));
-
-        // Start / end gcode
-        if (cfg->start_gcode) {
-            ctx->config.set_key_value("start_gcode",
-                new Slic3r::ConfigOptionString(std::string(cfg->start_gcode)));
-        }
-        if (cfg->end_gcode) {
-            ctx->config.set_key_value("end_gcode",
-                new Slic3r::ConfigOptionString(std::string(cfg->end_gcode)));
-        }
-
-        // Nozzle / filament diameters (per-extruder arrays)
-        ctx->config.set_key_value("nozzle_diameter",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->nozzle_diameter)}));
-        ctx->config.set_key_value("filament_diameter",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->filament_diameter)}));
-
-        // Printhead clearance: use the largest half-extent as the radius.
-        float radius = std::max({std::abs(cfg->printhead_x_min),
-                                  std::abs(cfg->printhead_x_max),
-                                  std::abs(cfg->printhead_y_min),
-                                  std::abs(cfg->printhead_y_max)});
-        ctx->config.set_key_value("extruder_clearance_radius",
-            new Slic3r::ConfigOptionFloat(static_cast<double>(radius)));
-        if (cfg->gantry_height > 0.0f) {
-            ctx->config.set_key_value("extruder_clearance_height",
-                new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->gantry_height)));
-        }
-
-        return 0;
-    } catch (const std::exception& e) {
-        return set_err(ctx, e);
-    }
-}
-
-int slicer_apply_slice_config(SlicerHandle handle, const SlicerSliceConfig* cfg) {
-    auto ctx = CTX(handle);
-    if (!cfg) return set_err(ctx, "null slice config");
-    try {
-        // Layers
-        ctx->config.set_key_value("layer_height",
-            new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->layer_height)));
-        ctx->config.set_key_value("first_layer_height",
-            new Slic3r::ConfigOptionFloatOrPercent(
-                static_cast<double>(cfg->first_layer_height), false));
-
-        // Walls
-        ctx->config.set_key_value("perimeters",
-            new Slic3r::ConfigOptionInt(cfg->wall_count));
-        ctx->config.set_key_value("xy_size_compensation",
-            new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->horizontal_expansion)));
-        ctx->config.set_key_value("perimeter_generator",
-            new Slic3r::ConfigOptionEnum<Slic3r::PerimeterGeneratorType>(
-                cfg->wall_generator == 0 ? Slic3r::PerimeterGeneratorType::Classic
-                                         : Slic3r::PerimeterGeneratorType::Arachne));
-        ctx->config.set_key_value("external_perimeters_first",
-            new Slic3r::ConfigOptionBool(cfg->external_perimeters_first != 0));
-
-        // Top / Bottom
-        ctx->config.set_key_value("top_solid_layers",
-            new Slic3r::ConfigOptionInt(cfg->top_layers));
-        ctx->config.set_key_value("bottom_solid_layers",
-            new Slic3r::ConfigOptionInt(cfg->bottom_layers));
-        if (cfg->top_thickness > 0.0f) {
-            ctx->config.set_key_value("top_solid_min_thickness",
-                new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->top_thickness)));
-        }
-        if (cfg->bottom_thickness > 0.0f) {
-            ctx->config.set_key_value("bottom_solid_min_thickness",
-                new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->bottom_thickness)));
-        }
-
-        // Infill
-        ctx->config.set_key_value("fill_density",
-            new Slic3r::ConfigOptionPercent(cfg->infill_density));
-        ctx->config.set_key_value("fill_pattern",
-            new Slic3r::ConfigOptionEnum<Slic3r::InfillPattern>(
-                static_cast<Slic3r::InfillPattern>(cfg->infill_pattern)));
-        // infill_overlap is a % of extrusion width (percent=true). Lower than
-        // the stock 25% reduces squish-out on dense/solid parts.
-        ctx->config.set_key_value("infill_overlap",
-            new Slic3r::ConfigOptionFloatOrPercent(
-                static_cast<double>(cfg->infill_overlap), true));
-
-        // Advanced. Even/Odd slicing cancels overlapping shells (models such
-        // as 3DLabPrint planes form internal ribs this way).
-        ctx->config.set_key_value("slicing_mode",
-            new Slic3r::ConfigOptionEnum<Slic3r::SlicingMode>(
-                cfg->slicing_mode == 1 ? Slic3r::SlicingMode::EvenOdd
-                                       : Slic3r::SlicingMode::Regular));
-        ctx->config.set_key_value("slice_closing_radius",
-            new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->gap_closing_radius)));
-        // Line widths: 0 keeps the base value (the printer's PrusaSlicer print
-        // preset, or libslic3r's auto width when there is no preset).
-        if (cfg->extrusion_width > 0.0f) {
-            ctx->config.set_key_value("extrusion_width",
-                new Slic3r::ConfigOptionFloatOrPercent(
-                    static_cast<double>(cfg->extrusion_width), false));
-        }
-        if (cfg->first_layer_extrusion_width > 0.0f) {
-            ctx->config.set_key_value("first_layer_extrusion_width",
-                new Slic3r::ConfigOptionFloatOrPercent(
-                    static_cast<double>(cfg->first_layer_extrusion_width), false));
-        }
-
-        // Speed — types verified against PrintConfig.hpp:
-        // perimeter_speed: ConfigOptionFloat
-        // infill_speed:    ConfigOptionFloat
-        // travel_speed:    ConfigOptionFloat
-        // first_layer_speed: ConfigOptionFloatOrPercent
-        ctx->config.set_key_value("perimeter_speed",
-            new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->print_speed)));
-        ctx->config.set_key_value("infill_speed",
-            new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->infill_speed)));
-        ctx->config.set_key_value("travel_speed",
-            new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->travel_speed)));
-        ctx->config.set_key_value("first_layer_speed",
-            new Slic3r::ConfigOptionFloatOrPercent(
-                static_cast<double>(cfg->first_layer_speed), false));
-        ctx->config.set_key_value("solid_infill_speed",
-            new Slic3r::ConfigOptionFloatOrPercent(
-                static_cast<double>(cfg->solid_infill_speed), false));
-        ctx->config.set_key_value("top_solid_infill_speed",
-            new Slic3r::ConfigOptionFloatOrPercent(
-                static_cast<double>(cfg->top_solid_infill_speed), false));
-
-        // Ironing
-        bool ironing_on = (cfg->ironing != 0);
-        ctx->config.set_key_value("ironing",
-            new Slic3r::ConfigOptionBool(ironing_on));
-        if (ironing_on) {
-            Slic3r::IroningType itype = (cfg->ironing_type == 1) ? Slic3r::IroningType::TopmostOnly
-                                       : (cfg->ironing_type == 2) ? Slic3r::IroningType::AllSolid
-                                                                   : Slic3r::IroningType::TopSurfaces;
-            ctx->config.set_key_value("ironing_type",
-                new Slic3r::ConfigOptionEnum<Slic3r::IroningType>(itype));
-            ctx->config.set_key_value("ironing_flowrate",
-                new Slic3r::ConfigOptionPercent(static_cast<double>(cfg->ironing_flowrate)));
-            ctx->config.set_key_value("ironing_speed",
-                new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->ironing_speed)));
-            ctx->config.set_key_value("ironing_spacing",
-                new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->ironing_spacing)));
-        }
-
-        // Support
-        bool gen_support = (cfg->generate_support != 0);
-        ctx->config.set_key_value("support_material",
-            new Slic3r::ConfigOptionBool(gen_support));
-        if (gen_support) {
-            // smsGrid=0, smsSnug=1, smsTree=2, smsOrganic=3
-            Slic3r::SupportMaterialStyle sms = (cfg->support_style == 0)
-                ? Slic3r::smsSnug : Slic3r::smsOrganic;
-            ctx->config.set_key_value("support_material_style",
-                new Slic3r::ConfigOptionEnum<Slic3r::SupportMaterialStyle>(sms));
-            ctx->config.set_key_value("support_material_buildplate_only",
-                new Slic3r::ConfigOptionBool(cfg->support_buildplate_only != 0));
-            ctx->config.set_key_value("support_material_threshold",
-                new Slic3r::ConfigOptionInt(cfg->support_overhang_angle));
-            // xy_spacing is stored as absolute mm (percent=false)
-            ctx->config.set_key_value("support_material_xy_spacing",
-                new Slic3r::ConfigOptionFloatOrPercent(
-                    static_cast<double>(cfg->support_xy_spacing), false));
-            ctx->config.set_key_value("support_material_with_sheath",
-                new Slic3r::ConfigOptionBool(cfg->support_use_towers != 0));
-            // Support-to-part interface — controls how solid the supported
-            // bottom surface prints. The stock 0.2mm contact distance leaves a
-            // full layer-height gap (rough/airy bottom); a tighter gap plus a
-            // few solid interface layers gives a much more solid seat.
-            ctx->config.set_key_value("support_material_contact_distance",
-                new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->support_contact_distance)));
-            ctx->config.set_key_value("support_material_interface_layers",
-                new Slic3r::ConfigOptionInt(cfg->support_interface_layers));
-            // Mirror the same interface density onto the bottom of supports so
-            // the part sits on a dense seat rather than sparse support pattern.
-            ctx->config.set_key_value("support_material_bottom_interface_layers",
-                new Slic3r::ConfigOptionInt(cfg->support_interface_layers));
-            ctx->config.set_key_value("support_material_interface_spacing",
-                new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->support_interface_spacing)));
-        }
-
-        // Build plate adhesion
-        // adhesion_type: 0=none, 1=skirt, 2=brim, 3=raft
-        switch (cfg->adhesion_type) {
-            case 0: // none
-                ctx->config.set_key_value("brim_type",
-                    new Slic3r::ConfigOptionEnum<Slic3r::BrimType>(Slic3r::btNoBrim));
-                ctx->config.set_key_value("skirts",
-                    new Slic3r::ConfigOptionInt(0));
-                ctx->config.set_key_value("raft_layers",
-                    new Slic3r::ConfigOptionInt(0));
-                break;
-            case 1: // skirt
-                ctx->config.set_key_value("brim_type",
-                    new Slic3r::ConfigOptionEnum<Slic3r::BrimType>(Slic3r::btNoBrim));
-                ctx->config.set_key_value("skirts",
-                    new Slic3r::ConfigOptionInt(cfg->skirt_loops));
-                ctx->config.set_key_value("skirt_distance",
-                    new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->skirt_distance)));
-                ctx->config.set_key_value("raft_layers",
-                    new Slic3r::ConfigOptionInt(0));
-                break;
-            case 2: { // brim
-                // brim_type: 1=outer_only, 2=inner_only, 3=outer_and_inner
-                int bt = cfg->brim_type;
-                Slic3r::BrimType brim = (bt == 2) ? Slic3r::btInnerOnly
-                                      : (bt == 3) ? Slic3r::btOuterAndInner
-                                                  : Slic3r::btOuterOnly;
-                ctx->config.set_key_value("brim_type",
-                    new Slic3r::ConfigOptionEnum<Slic3r::BrimType>(brim));
-                ctx->config.set_key_value("brim_width",
-                    new Slic3r::ConfigOptionFloat(static_cast<double>(cfg->brim_width)));
-                ctx->config.set_key_value("skirts",
-                    new Slic3r::ConfigOptionInt(0));
-                ctx->config.set_key_value("raft_layers",
-                    new Slic3r::ConfigOptionInt(0));
-                break;
-            }
-            case 3: // raft
-                ctx->config.set_key_value("brim_type",
-                    new Slic3r::ConfigOptionEnum<Slic3r::BrimType>(Slic3r::btNoBrim));
-                ctx->config.set_key_value("skirts",
-                    new Slic3r::ConfigOptionInt(0));
-                ctx->config.set_key_value("raft_layers",
-                    new Slic3r::ConfigOptionInt(cfg->raft_layers));
-                break;
-            default:
-                break;
-        }
-
-        ctx->slice_config_applied = true;
-        return 0;
-    } catch (const std::exception& e) {
-        return set_err(ctx, e);
-    }
-}
-
 int slicer_check_slice_config(SlicerHandle handle, const SlicerSliceConfig* cfg,
                               SlicerSliceConfigCheck* out) {
     auto ctx = CTX(handle);
@@ -631,84 +362,6 @@ int slicer_check_slice_config(SlicerHandle handle, const SlicerSliceConfig* cfg,
             (out->suggested_wall_count    != cfg->wall_count) ||
             (out->suggested_top_layers    != cfg->top_layers) ||
             (out->suggested_bottom_layers != cfg->bottom_layers);
-
-        return 0;
-    } catch (const std::exception& e) {
-        return set_err(ctx, e);
-    }
-}
-
-int slicer_apply_material_config(SlicerHandle handle,
-                                 const SlicerMaterialConfig* cfg) {
-    auto ctx = CTX(handle);
-    if (!cfg) return set_err(ctx, "null material config");
-    try {
-        // Filament diameter — overrides the value set by slicer_apply_printer_config
-        ctx->config.set_key_value("filament_diameter",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->filament_diameter)}));
-
-        // Temperatures
-        ctx->config.set_key_value("first_layer_temperature",
-            new Slic3r::ConfigOptionInts({cfg->first_layer_temperature}));
-        ctx->config.set_key_value("temperature",
-            new Slic3r::ConfigOptionInts({cfg->temperature}));
-        ctx->config.set_key_value("first_layer_bed_temperature",
-            new Slic3r::ConfigOptionInts({cfg->first_layer_bed_temperature}));
-        ctx->config.set_key_value("bed_temperature",
-            new Slic3r::ConfigOptionInts({cfg->bed_temperature}));
-
-        // Flow
-        ctx->config.set_key_value("extrusion_multiplier",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->extrusion_multiplier)}));
-
-        // Retraction — retract_length == 0 disables retraction natively
-        ctx->config.set_key_value("retract_length",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->retract_length)}));
-        ctx->config.set_key_value("retract_speed",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->retract_speed)}));
-        ctx->config.set_key_value("retract_restart_extra",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->retract_restart_extra)}));
-        ctx->config.set_key_value("retract_lift",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->retract_lift)}));
-        ctx->config.set_key_value("retract_before_travel",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->retract_before_travel)}));
-        // A filament preset's filament_retract_* values override the printer's
-        // retract_* in PrusaSlicer, and the vendor filament preset applied as
-        // the base may set them. Mirror the material's values into them so the
-        // material profile's retraction is what actually prints.
-        {
-            Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::Disable);
-            const std::pair<const char*, float> overrides[] = {
-                {"filament_retract_length",        cfg->retract_length},
-                {"filament_retract_speed",         cfg->retract_speed},
-                {"filament_retract_restart_extra", cfg->retract_restart_extra},
-                {"filament_retract_lift",          cfg->retract_lift},
-                {"filament_retract_before_travel", cfg->retract_before_travel},
-            };
-            for (const auto& [key, value] : overrides) {
-                char buf[32];
-                std::snprintf(buf, sizeof buf, "%.6g", static_cast<double>(value));
-                ctx->config.set_deserialize(key, buf, subst);
-            }
-        }
-
-        // Fan / cooling
-        ctx->config.set_key_value("cooling",
-            new Slic3r::ConfigOptionBools({cfg->cooling != 0}));
-        ctx->config.set_key_value("min_fan_speed",
-            new Slic3r::ConfigOptionInts({cfg->min_fan_speed}));
-        ctx->config.set_key_value("max_fan_speed",
-            new Slic3r::ConfigOptionInts({cfg->max_fan_speed}));
-        ctx->config.set_key_value("bridge_fan_speed",
-            new Slic3r::ConfigOptionInts({cfg->bridge_fan_speed}));
-        ctx->config.set_key_value("disable_fan_first_layers",
-            new Slic3r::ConfigOptionInts({cfg->disable_fan_first_layers}));
-        ctx->config.set_key_value("fan_below_layer_time",
-            new Slic3r::ConfigOptionInts({cfg->fan_below_layer_time}));
-        ctx->config.set_key_value("slowdown_below_layer_time",
-            new Slic3r::ConfigOptionInts({cfg->slowdown_below_layer_time}));
-        ctx->config.set_key_value("min_print_speed",
-            new Slic3r::ConfigOptionFloats({static_cast<double>(cfg->min_print_speed)}));
 
         return 0;
     } catch (const std::exception& e) {
@@ -1198,12 +851,14 @@ int slicer_apply_preset(SlicerHandle handle, int type, const char* name) {
         switch (type) {
             case SLICER_PRESET_PRINT:
                 ctx->config.set_key_value("print_settings_id", new Slic3r::ConfigOptionString(p->name));
+                ctx->slice_config_applied = true;
                 break;
             case SLICER_PRESET_FILAMENT:
                 ctx->config.set_key_value("filament_settings_id", new Slic3r::ConfigOptionStrings({p->name}));
                 break;
             case SLICER_PRESET_PRINTER:
                 ctx->config.set_key_value("printer_settings_id", new Slic3r::ConfigOptionString(p->name));
+                sync_bed_from_config(ctx);
                 break;
         }
         return 0;
@@ -1244,6 +899,9 @@ int slicer_apply_settings(SlicerHandle handle, const char* ini_text) {
         }
     }
     ctx->config = std::move(staged);
+    sync_bed_from_config(ctx);
+    // Layer height / infill now come from settings, not slicer_slice's legacy parameters.
+    ctx->slice_config_applied = true;
     return 0;
 }
 

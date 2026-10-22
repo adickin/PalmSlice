@@ -21,12 +21,18 @@ struct MaterialProfile: Codable, Identifiable {
     var extrusionMultiplier: Double = 1.0    // 0.5–2.0 — extrusion_multiplier (per-extruder)
 
     // MARK: - Retraction
-    var retractionEnabled: Bool = true
-    var retractionLength: Double = 5.0       // mm  — retract_length (per-extruder; 0 = no retract)
-    var retractionSpeed: Double = 45.0       // mm/s — retract_speed (per-extruder)
-    var retractionRestartExtra: Double = 0.0 // mm  — retract_restart_extra: extra pushed after deretraction to compensate ooze
-    var zHop: Double = 0.0                   // mm  — retract_lift (per-extruder)
-    var minTravelForRetraction: Double = 1.0 // mm  — retract_before_travel (per-extruder)
+    // PrusaSlicer keeps retraction on the printer (retract_*); a filament can
+    // override it (filament_retract_*). setsRetraction = false uses the
+    // printer's; true overrides it with the values below. An imported filament
+    // that overrides only some values keeps "nil" for the rest in extraSettings
+    // until the field is edited.
+    var setsRetraction: Bool = true
+    var retractionEnabled: Bool = true { didSet { extraSettings["filament_retract_length"] = nil } }
+    var retractionLength: Double = 5.0 { didSet { extraSettings["filament_retract_length"] = nil } }  // mm — filament_retract_length (0 = no retract)
+    var retractionSpeed: Double = 45.0 { didSet { extraSettings["filament_retract_speed"] = nil } }  // mm/s — filament_retract_speed
+    var retractionRestartExtra: Double = 0.0 { didSet { extraSettings["filament_retract_restart_extra"] = nil } }  // mm — filament_retract_restart_extra: extra pushed after deretraction
+    var zHop: Double = 0.0 { didSet { extraSettings["filament_retract_lift"] = nil } }  // mm — filament_retract_lift
+    var minTravelForRetraction: Double = 1.0 { didSet { extraSettings["filament_retract_before_travel"] = nil } }  // mm — filament_retract_before_travel
 
     // MARK: - Cooling / Fan
     var coolingEnabled: Bool = true          // bool — cooling (per-extruder)
@@ -38,10 +44,18 @@ struct MaterialProfile: Codable, Identifiable {
     var slowdownBelowLayerTime: Int = 5      // sec — slowdown_below_layer_time: slow down if layer prints in under N sec
     var minPrintSpeed: Double = 10.0         // mm/s — min_print_speed: floor speed when cooling slowdown is active
 
+    // MARK: - PrusaSlicer
+    // The PrusaSlicer filament preset this profile starts from. nil = a
+    // preset matching filamentType for the printer (see PresetLibrary.base).
+    var basePreset: String? = nil
+    // Any other PrusaSlicer filament setting, in .ini value format (see ProfileSettings.swift).
+    var extraSettings: [String: String] = [:]
+
     // MARK: - Summary (shown in picker row subtitle)
     var pickerSubtitle: String {
         let temp = "\(firstLayerTemp)/\(otherLayersTemp)°C"
-        let retract = retractionEnabled ? "\(retractionLength) mm retract" : "No retract"
+        let retract = !setsRetraction ? "Printer retraction"
+            : retractionEnabled ? "\(retractionLength) mm retract" : "No retract"
         let fan = coolingEnabled ? "Fan \(minFanSpeed)–\(maxFanSpeed)%" : "Fan off"
         return "\(temp) · \(retract) · \(fan)"
     }
@@ -67,6 +81,7 @@ extension MaterialProfile {
         firstLayerBedTemp = try v(.firstLayerBedTemp, d.firstLayerBedTemp)
         otherLayersBedTemp = try v(.otherLayersBedTemp, d.otherLayersBedTemp)
         extrusionMultiplier = try v(.extrusionMultiplier, d.extrusionMultiplier)
+        setsRetraction = try v(.setsRetraction, d.setsRetraction)
         retractionEnabled = try v(.retractionEnabled, d.retractionEnabled)
         retractionLength = try v(.retractionLength, d.retractionLength)
         retractionSpeed = try v(.retractionSpeed, d.retractionSpeed)
@@ -81,5 +96,7 @@ extension MaterialProfile {
         fanBelowLayerTime = try v(.fanBelowLayerTime, d.fanBelowLayerTime)
         slowdownBelowLayerTime = try v(.slowdownBelowLayerTime, d.slowdownBelowLayerTime)
         minPrintSpeed = try v(.minPrintSpeed, d.minPrintSpeed)
+        basePreset = try c.decodeIfPresent(String.self, forKey: .basePreset)
+        extraSettings = try v(.extraSettings, d.extraSettings)
     }
 }

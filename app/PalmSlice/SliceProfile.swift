@@ -79,7 +79,7 @@ struct SliceProfile: Codable, Identifiable {
 
     // MARK: - Layers
     var layerHeight: Double = 0.2        // mm  — PrusaSlicer: layer_height
-    var firstLayerHeight: Double = 0.2   // mm  — PrusaSlicer: first_layer_height
+    var firstLayerHeight: Double = 0.2 { didSet { extraSettings["first_layer_height"] = nil } }  // mm  — PrusaSlicer: first_layer_height
 
     // MARK: - Walls
     var wallCount: Int = 3               // PrusaSlicer: perimeters
@@ -96,24 +96,24 @@ struct SliceProfile: Codable, Identifiable {
 
     // MARK: - Infill
     var infillDensity: Int = 20         // %  — PrusaSlicer: fill_density
-    var infillPattern: InfillPattern = .gyroid // PrusaSlicer: fill_pattern
+    var infillPattern: InfillPattern = .gyroid { didSet { extraSettings["fill_pattern"] = nil } }  // PrusaSlicer: fill_pattern
     // Overlap of infill into perimeters (% of extrusion width). Stock is 25%;
     // 15% reduces material squished out through the walls on dense/solid parts.
-    var infillOverlap: Double = 15.0    // %  — PrusaSlicer: infill_overlap
+    var infillOverlap: Double = 15.0 { didSet { extraSettings["infill_overlap"] = nil } }  // %  — PrusaSlicer: infill_overlap
 
     // MARK: - Advanced (defaults match PrusaSlicer's own)
     var slicingMode: SlicingMode = .regular     // PrusaSlicer: slicing_mode
     var gapClosingRadius: Double = 0.049        // mm — PrusaSlicer: slice_closing_radius
-    var extrusionWidth: Double = 0.0            // mm — PrusaSlicer: extrusion_width (0 = keep base)
-    var firstLayerExtrusionWidth: Double = 0.0  // mm — PrusaSlicer: first_layer_extrusion_width (0 = keep base)
+    var extrusionWidth: Double = 0.0 { didSet { extraSettings["extrusion_width"] = nil } }  // mm — PrusaSlicer: extrusion_width (0 = keep base)
+    var firstLayerExtrusionWidth: Double = 0.0 { didSet { extraSettings["first_layer_extrusion_width"] = nil } }  // mm — PrusaSlicer: first_layer_extrusion_width (0 = keep base)
 
     // MARK: - Speed (mm/s)
     var printSpeed: Double = 60.0       // PrusaSlicer: perimeter_speed
     var infillSpeed: Double = 80.0      // PrusaSlicer: infill_speed
     var travelSpeed: Double = 120.0     // PrusaSlicer: travel_speed
-    var firstLayerSpeed: Double = 30.0  // PrusaSlicer: first_layer_speed
-    var solidInfillSpeed: Double = 20.0     // PrusaSlicer: solid_infill_speed
-    var topSolidInfillSpeed: Double = 15.0  // PrusaSlicer: top_solid_infill_speed
+    var firstLayerSpeed: Double = 30.0 { didSet { extraSettings["first_layer_speed"] = nil } }  // PrusaSlicer: first_layer_speed
+    var solidInfillSpeed: Double = 20.0 { didSet { extraSettings["solid_infill_speed"] = nil } }  // PrusaSlicer: solid_infill_speed
+    var topSolidInfillSpeed: Double = 15.0 { didSet { extraSettings["top_solid_infill_speed"] = nil } }  // PrusaSlicer: top_solid_infill_speed
 
     // MARK: - Ironing
     // A slow, low-flow finishing pass over solid top surfaces after solid
@@ -128,27 +128,39 @@ struct SliceProfile: Codable, Identifiable {
 
     // MARK: - Support
     var generateSupport: Bool = false
-    var supportStyle: SupportStyle = .normal
+    var supportStyle: SupportStyle = .normal { didSet { extraSettings["support_material_style"] = nil } }
     var supportPlacement: SupportPlacement = .everywhere
     var supportOverhangAngle: Int = 50   // degrees — PrusaSlicer: support_material_threshold
-    var supportHorizontalExpansion: Double = 0.7 // mm — PrusaSlicer: support_material_xy_spacing
+    var supportHorizontalExpansion: Double = 0.7 { didSet { extraSettings["support_material_xy_spacing"] = nil } }  // mm — PrusaSlicer: support_material_xy_spacing
     var supportUseTowers: Bool = true    // PrusaSlicer: support_material_with_sheath
     // Support-to-part interface — how solid the supported bottom surface prints.
     // Smaller contact gap + dense interface = more solid bottom, harder removal.
     var supportContactDistance: Double = 0.15 // mm — support_material_contact_distance
-    var supportInterfaceLayers: Int = 3       // PrusaSlicer: support_material_interface_layers
+    var supportInterfaceLayers: Int = 3 { didSet { extraSettings["support_material_bottom_interface_layers"] = nil } }  // PrusaSlicer: support_material_interface_layers
     var supportInterfaceSpacing: Double = 0.2 // mm — support_material_interface_spacing (0 = solid)
 
     // MARK: - Build Plate Adhesion
-    var adhesionType: AdhesionType = .none
+    var adhesionType: AdhesionType = .none { didSet { extraSettings["brim_type"] = nil } }
     // Brim sub-options (used when adhesionType == .brim)
-    var brimType: BrimType = .outerOnly
+    var brimType: BrimType = .outerOnly { didSet { extraSettings["brim_type"] = nil } }
     var brimWidth: Double = 8.0          // mm — PrusaSlicer: brim_width
     // Skirt sub-options (used when adhesionType == .skirt)
     var skirtLoops: Int = 1             // PrusaSlicer: skirts
     var skirtDistance: Double = 6.0     // mm — PrusaSlicer: skirt_distance
     // Raft sub-options (used when adhesionType == .raft)
     var raftLayers: Int = 3             // PrusaSlicer: raft_layers
+
+    // MARK: - PrusaSlicer
+    // Fields marked `didSet { extraSettings[...] = nil }` can't hold every
+    // PrusaSlicer value (e.g. a speed given as a percentage); an imported value
+    // they can't represent is kept verbatim in extraSettings and wins, until
+    // the field is edited in PalmSlice.
+    //
+    // The PrusaSlicer print preset this profile starts from. nil = the
+    // printer's default print preset (see PresetLibrary.base).
+    var basePreset: String? = nil
+    // Any other PrusaSlicer print setting, in .ini value format (see ProfileSettings.swift).
+    var extraSettings: [String: String] = [:]
 
     // MARK: - Summary (shown in picker row subtitle)
     var pickerSubtitle: String {
@@ -218,6 +230,8 @@ extension SliceProfile {
         skirtLoops = try v(.skirtLoops, d.skirtLoops)
         skirtDistance = try v(.skirtDistance, d.skirtDistance)
         raftLayers = try v(.raftLayers, d.raftLayers)
+        basePreset = try c.decodeIfPresent(String.self, forKey: .basePreset)
+        extraSettings = try v(.extraSettings, d.extraSettings)
     }
 }
 

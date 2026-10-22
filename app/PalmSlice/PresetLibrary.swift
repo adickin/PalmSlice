@@ -97,20 +97,36 @@ enum PresetLibrary {
     ///
     /// - printerPreset: the PrusaSlicer printer preset the PalmSlice printer
     ///   profile is based on, if any.
+    /// - printPreset / filamentPreset: explicit base presets chosen by the
+    ///   slice / material profile; nil picks the printer's default print preset
+    ///   and a filament preset of `filamentType`.
     /// - filamentType: PrusaSlicer filament_type of the material (PLA, PETG…).
-    static func base(printerPreset: String?, filamentType: String) -> PresetBase? {
+    static func base(printerPreset: String?, printPreset: String? = nil,
+                     filamentPreset: String? = nil, filamentType: String) -> PresetBase? {
         guard isLoaded else { return nil }
         let printer = printerPreset.flatMap { exists(.printer, $0) ? $0 : nil }
         let reference = printer ?? fallbackPrinter
         let defaults = defaults(forPrinter: reference)
 
-        let prints = names(.print).filter { isCompatible(.print, $0, printer: reference) }
-        guard let print = defaults.print.flatMap({ prints.contains($0) ? $0 : nil }) ?? prints.first
-        else { return nil }
+        let print: String
+        if let explicit = printPreset, exists(.print, explicit) {
+            print = explicit
+        } else {
+            let prints = names(.print).filter { isCompatible(.print, $0, printer: reference) }
+            guard let p = defaults.print.flatMap({ prints.contains($0) ? $0 : nil }) ?? prints.first
+            else { return nil }
+            print = p
+        }
 
-        let filaments = names(.filament).filter { isCompatible(.filament, $0, printer: reference) }
-        guard let filament = bestFilament(type: filamentType, among: filaments,
-                                          defaults: defaults.filaments) else { return nil }
+        let filament: String
+        if let explicit = filamentPreset, exists(.filament, explicit) {
+            filament = explicit
+        } else {
+            let filaments = names(.filament).filter { isCompatible(.filament, $0, printer: reference) }
+            guard let f = bestFilament(type: filamentType, among: filaments,
+                                       defaults: defaults.filaments) else { return nil }
+            filament = f
+        }
         return PresetBase(printer: printer, print: print, filament: filament)
     }
 
@@ -166,13 +182,19 @@ enum SettingsText {
 
     /// `"a";"b c"` → ["a", "b c"]; also accepts an unquoted single value.
     static func splitStrings(_ value: String) -> [String] {
-        guard value.contains("\"") else { return value.isEmpty ? [] : [value] }
+        guard value.contains("\"") else {
+            return value.isEmpty ? [] : value.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
+        }
         var items: [String] = []
         var current = ""
         var inQuotes = false
         var escaped = false
         for ch in value {
-            if escaped { current.append(ch); escaped = false; continue }
+            if escaped {
+                current.append(ch == "n" ? "\n" : ch == "r" ? "\r" : ch)
+                escaped = false
+                continue
+            }
             switch ch {
             case "\\" where inQuotes: escaped = true
             case "\"": inQuotes.toggle()

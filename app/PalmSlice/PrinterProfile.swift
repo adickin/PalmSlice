@@ -25,16 +25,16 @@ struct PrinterProfile: Codable, Identifiable {
     var systemPreset: String? = nil
 
     // MARK: Bed / Machine
-    var bedX: Double = 220.0               // mm (width)
-    var bedY: Double = 220.0               // mm (depth)
+    var bedX: Double = 220.0 { didSet { extraSettings["bed_shape"] = nil } }  // mm (width)
+    var bedY: Double = 220.0 { didSet { extraSettings["bed_shape"] = nil } }  // mm (depth)
     var bedZ: Double = 250.0               // mm (height)
-    var buildPlateShape: BuildPlateShape = .rectangular
-    var originAtCenter: Bool = false
+    var buildPlateShape: BuildPlateShape = .rectangular { didSet { extraSettings["bed_shape"] = nil } }
+    var originAtCenter: Bool = false { didSet { extraSettings["bed_shape"] = nil } }
     var heatedBed: Bool = true
     var heatedBuildVolume: Bool = false
 
     // MARK: G-Code
-    var gcodeFlavor: GCodeFlavor = .marlin
+    var gcodeFlavor: GCodeFlavor = .marlin { didSet { extraSettings["gcode_flavor"] = nil } }
     var startGCode: String = ""
     var endGCode: String = ""
 
@@ -51,6 +51,9 @@ struct PrinterProfile: Codable, Identifiable {
     // MARK: Per-extruder
     var extruders: [ExtruderProfile] = [ExtruderProfile()]
 
+    // Any other PrusaSlicer printer setting, in .ini value format (see ProfileSettings.swift).
+    var extraSettings: [String: String] = [:]
+
     enum CodingKeys: String, CodingKey {
         case id, name, verified, builtInKey, systemPreset
         case bedX, bedY, bedZ, buildPlateShape, originAtCenter, heatedBed, heatedBuildVolume
@@ -58,6 +61,7 @@ struct PrinterProfile: Codable, Identifiable {
         case printheadXMin, printheadYMin, printheadXMax, printheadYMax, gantryHeight
         case numberOfExtruders, applyExtruderOffsetsToGCode, startGCodeMustBeFirst
         case extruders
+        case extraSettings
     }
 
     init() {}
@@ -96,5 +100,6 @@ struct PrinterProfile: Codable, Identifiable {
         startGCodeMustBeFirst = try c.decodeIfPresent(Bool.self, forKey: .startGCodeMustBeFirst) ?? false
 
         extruders = try c.decodeIfPresent([ExtruderProfile].self, forKey: .extruders) ?? [ExtruderProfile()]
+        extraSettings = try c.decodeIfPresent([String: String].self, forKey: .extraSettings) ?? [:]
     }
 }

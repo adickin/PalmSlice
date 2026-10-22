@@ -55,8 +55,7 @@ final class SliceProfileTests: XCTestCase {
     private func slice(_ stl: URL, with profile: SliceProfile) throws -> String {
         guard let h = slicer_create() else { throw XCTSkip("slicer_create failed") }
         defer { slicer_destroy(h) }
-        var cfg = profile.bridgeConfig()
-        XCTAssertEqual(slicer_apply_slice_config(h, &cfg), 0, String(cString: slicer_last_error(h)))
+        try SliceSetup.apply(profile, label: "Slice profile", to: h)
         XCTAssertEqual(slicer_load_stl(h, stl.path), 0, String(cString: slicer_last_error(h)))
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
         let out = FileManager.default.temporaryDirectory
@@ -94,5 +93,125 @@ final class SliceProfileTests: XCTestCase {
             }
         }
         return s
+    }
+}
+
+/// PalmSlice profiles ↔ PrusaSlicer settings.
+final class ProfileSettingsTests: XCTestCase {
+
+    private let ender = "Creality Ender-3 S1 (0.4 mm nozzle)"
+
+    // Every built-in profile's settings must be accepted by libslic3r, and
+    // read back into an identical profile.
+    func testBuiltInProfilesRoundTripThroughLibslic3r() throws {
+        func roundTrip<P: PrusaSettingsConvertible>(_ profile: P, empty: P) throws -> P {
+            guard let h = slicer_create() else { throw XCTSkip("slicer_create") }
+            defer { slicer_destroy(h) }
+            try SliceSetup.apply(profile, label: "profile", to: h)
+            var readBack: [String: String] = [:]
+            for key in profile.prusaSettings().keys {
+                readBack[key] = slicer_get_setting(h, key).map { String(cString: $0) }
+            }
+            var copy = empty
+            copy.update(fromPrusa: readBack)
+            return copy
+        }
+        for p in BuiltInSliceProfiles.all {
+            let copy = try roundTrip(p, empty: SliceProfile())
+            XCTAssertEqual(copy.typedPrusaSettings(), p.typedPrusaSettings(), p.name)
+        }
+        for p in BuiltInMaterialProfiles.all {
+            let copy = try roundTrip(p, empty: MaterialProfile())
+            XCTAssertEqual(copy.typedPrusaSettings(), p.typedPrusaSettings(), p.name)
+        }
+        for p in BuiltInProfiles.all {
+            let copy = try roundTrip(p, empty: PrinterProfile())
+            XCTAssertEqual(copy.typedPrusaSettings(), p.typedPrusaSettings(), p.name)
+        }
+    }
+
+    // Importing a PrusaSlicer preset into a PalmSlice profile is lossless:
+    // slicing with the imported profile on top of a *different* preset of the
+    // same type gives the same G-code as slicing with the original preset.
+    func testImportedPrintPresetSlicesIdentically() throws {
+        let base = try XCTUnwrap(PresetLibrary.base(printerPreset: ender, filamentType: "PLA"))
+        let other = try XCTUnwrap(PresetLibrary.names(.print).first {
+            $0 != base.print && PresetLibrary.isCompatible(.print, $0, printer: ender)
+        })
+        var imported = SliceProfile()
+        imported.importPrusaSettings(try XCTUnwrap(PresetLibrary.settings(.print, base.print)))
+        var otherBase = base
+        otherBase.print = other
+        try assertSameGCode(base: base, otherBase: otherBase, imported: imported, what: base.print)
+    }
+
+    func testImportedFilamentPresetSlicesIdentically() throws {
+        let base = try XCTUnwrap(PresetLibrary.base(printerPreset: ender, filamentType: "PLA"))
+        let other = try XCTUnwrap(PresetLibrary.base(printerPreset: ender, filamentType: "PETG")).filament
+        XCTAssertNotEqual(other, base.filament)
+        var imported = MaterialProfile()
+        imported.importPrusaSettings(try XCTUnwrap(PresetLibrary.settings(.filament, base.filament)))
+        var otherBase = base
+        otherBase.filament = other
+        try assertSameGCode(base: base, otherBase: otherBase, imported: imported, what: base.filament)
+    }
+
+    func testImportedPrinterPresetSlicesIdentically() throws {
+        let base = try XCTUnwrap(PresetLibrary.base(printerPreset: ender, filamentType: "PLA"))
+        var imported = PrinterProfile()
+        imported.importPrusaSettings(try XCTUnwrap(PresetLibrary.settings(.printer, ender)))
+        var otherBase = base
+        otherBase.printer = "Creality Ender-3 V2 (0.4 mm nozzle)"
+        try assertSameGCode(base: base, otherBase: otherBase, imported: imported, what: ender)
+    }
+
+    private func assertSameGCode<P: PrusaSettingsConvertible>(base: PresetBase, otherBase: PresetBase,
+                                                               imported: P, what: String) throws {
+        let a = strip(try sliceSphere(base: base, apply: { _ in }))
+        let b = strip(try sliceSphere(base: otherBase, apply: {
+            try SliceSetup.apply(imported, label: "imported", to: $0)
+        }))
+        var diffs: [String] = []
+        for i in 0..<max(a.count, b.count) where diffs.count < 20 {
+            let x = i < a.count ? a[i] : "<none>", y = i < b.count ? b[i] : "<none>"
+            if x != y { diffs.append("line \(i): direct=\(x) | imported=\(y)") }
+        }
+        XCTAssertTrue(diffs.isEmpty, "imported \(what) slices differently "
+                      + "(\(a.count) vs \(b.count) lines):\n" + diffs.joined(separator: "\n"))
+    }
+
+    private func sliceSphere(base: PresetBase, apply: (SlicerHandle) throws -> Void) throws -> String {
+        let stl = "/Users/adickin/ios-sources/PrusaSlicer/resources/shapes/sphere.stl"
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: stl))
+        guard let h = slicer_create() else { throw XCTSkip("slicer_create") }
+        defer { slicer_destroy(h) }
+        XCTAssertTrue(PresetLibrary.apply(base, to: h), String(cString: slicer_last_error(h)))
+        try apply(h)
+        XCTAssertEqual(slicer_load_stl(h, stl), 0, String(cString: slicer_last_error(h)))
+        XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("import-\(UUID()).gcode")
+        defer { try? FileManager.default.removeItem(at: out) }
+        XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
+        return try String(contentsOf: out, encoding: .utf8)
+    }
+
+    /// Drops lines that legitimately differ: the timestamp and preset names.
+    private func strip(_ gcode: String) -> [String] {
+        gcode.split(separator: "\n").map(String.init).filter {
+            !$0.hasPrefix("; generated by") && !$0.hasPrefix("; print_settings_id")
+                && !$0.hasPrefix("; filament_settings_id") && !$0.hasPrefix("; printer_settings_id")
+        }
+    }
+
+    func testValueEncoding() {
+        XCTAssertEqual(PrusaValue.float(0.2), "0.2")
+        XCTAssertEqual(PrusaValue.float(45), "45")
+        XCTAssertEqual(PrusaValue.percent(15), "15%")
+        XCTAssertEqual(PrusaValue.string("G28\nG1 X0\\"), "G28\\nG1 X0\\\\")
+        XCTAssertEqual(PrusaValue.parseString("G28\\nG1 X0\\\\"), "G28\nG1 X0\\")
+        XCTAssertEqual(PrusaValue.strings(["PLA"]), "PLA")
+        XCTAssertEqual(PrusaValue.strings(["Generic PLA"]), "\"Generic PLA\"")
+        XCTAssertEqual(SettingsText.splitStrings("\"a b\";\"c\""), ["a b", "c"])
+        XCTAssertEqual(SettingsText.splitStrings("PLA;PETG"), ["PLA", "PETG"])
     }
 }
