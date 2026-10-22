@@ -48,6 +48,8 @@ struct ContentView: View {
     @State private var debugScreen: DebugScreen? = nil
     #endif
     @State private var showAbout = false
+    /// Part whose settings-from-file sheet is open.
+    @State private var fileSettingsModelID: UUID? = nil
     @State private var showIntersectingAlert = false
     @State private var showUnitScaleAlert = false
     @State private var unitScaleAlertModelID: UUID? = nil
@@ -170,7 +172,12 @@ struct ContentView: View {
         .sheet(item: $debugScreen) { $0.view }
         .task {
             try? await Task.sleep(for: .seconds(3))   // after the splash and store loads
-            debugScreen = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_SCREEN"].flatMap(DebugScreen.init)
+            let screen = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_SCREEN"]
+            if screen == "fileSettings" {
+                fileSettingsModelID = models.first?.id   // with PALMSLICE_DEBUG_STL set to a 3MF
+            } else {
+                debugScreen = screen.flatMap(DebugScreen.init)
+            }
         }
         #endif
         .sheet(item: $exportRequest) { req in
@@ -180,6 +187,12 @@ struct ContentView: View {
         .sheet(isPresented: $showSliceProfilePicker) { SliceProfilePickerView() }
         .sheet(isPresented: $showMaterialProfilePicker) { MaterialProfilePickerView() }
         .sheet(isPresented: $showAbout) { AboutView() }
+        .sheet(isPresented: Binding(get: { fileSettingsModelID != nil },
+                                    set: { if !$0 { fileSettingsModelID = nil } })) {
+            if let id = fileSettingsModelID, let binding = modelBinding(id: id) {
+                ModelFileSettingsView(model: binding)
+            }
+        }
         .sheet(isPresented: $showTransformPanel) {
             if let info = selectedModel?.meshInfo {
                 TransformPanelView(
@@ -507,6 +520,10 @@ struct ContentView: View {
                     }
                 }
                 Spacer()
+                if model.fileSettings != nil || model.projectSettings != nil {
+                    Button { fileSettingsModelID = model.id } label: { FileSettingsBadge(model: model) }
+                        .buttonStyle(.borderless)
+                }
                 if isSelected {
                     Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
                 }
@@ -520,10 +537,25 @@ struct ContentView: View {
             }
         }
         .contextMenu {
+            if model.fileSettings != nil || model.projectSettings != nil {
+                Button { fileSettingsModelID = model.id } label: {
+                    Label("Settings from File…", systemImage: "slider.horizontal.3")
+                }
+            }
             Button(role: .destructive) { removeModel(id: model.id) } label: {
                 Label("Remove", systemImage: "trash")
             }
         }
+    }
+
+    private func modelBinding(id: UUID) -> Binding<PlacedModel>? {
+        guard models.contains(where: { $0.id == id }) else { return nil }
+        return Binding(
+            get: { models.first { $0.id == id } ?? PlacedModel(id: id, url: URL(fileURLWithPath: "/"), name: "",
+                                                                geometry: nil, transform: ModelTransform()) },
+            set: { new in
+                if let i = models.firstIndex(where: { $0.id == id }) { models[i] = new }
+            })
     }
 
     private var iPadInspector: some View {
@@ -694,7 +726,8 @@ struct ContentView: View {
                         selectedModelID: $selectedModelID,
                         onAdd: { showFilePicker = true },
                         disabled: isBusy,
-                        onModelsChanged: { updateIntersections() }
+                        onModelsChanged: { updateIntersections() },
+                        onShowFileSettings: { fileSettingsModelID = $0 }
                     )
                 }
                 if !showLayerPreview && selectedModelID != nil && selectedModel != nil {
@@ -1467,8 +1500,8 @@ struct ContentView: View {
                 case .success(var objects):
                     // A single-object file keeps the file's name, like an STL import.
                     if objects.count == 1 {
-                        objects[0] = ConvertedModelObject(url: objects[0].url, name: fileName,
-                                                          offsetMM: .zero)
+                        objects[0].name = fileName
+                        objects[0].offsetMM = .zero
                     }
                     addModels(objects, checkUnits: checkUnits)
                 case .failure(let error):
@@ -1499,7 +1532,9 @@ struct ContentView: View {
                 url: object.url,
                 name: object.name,
                 geometry: nil,
-                transform: initialTransform
+                transform: initialTransform,
+                fileSettings: object.fileSettings,
+                projectSettings: object.projectSettings
             ))
             added.append((id, object.url, object.name))
         }
@@ -1648,6 +1683,18 @@ struct ContentView: View {
                 let msg = String(cString: slicer_last_error(handle))
                 await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
                 return
+            }
+            // Settings the model's 3MF stores on it, over the profiles. Heights
+            // follow the part's Z scale; a tilted part keeps only the
+            // height-independent settings.
+            if model.useFileSettings, let fileSettings = model.fileSettings {
+                let text = fileSettings.text(heightScale: Double(model.transform.scale.z),
+                                             includeHeights: model.transform.keepsFileHeights)
+                if slicer_set_object_file_settings(handle, objIdx, text) != 0 {
+                    let msg = "\(model.name): \(String(cString: slicer_last_error(handle)))"
+                    await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+                    return
+                }
             }
         }
 

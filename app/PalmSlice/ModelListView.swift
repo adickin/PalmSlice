@@ -6,6 +6,7 @@ struct ModelListView: View {
     let onAdd: () -> Void
     let disabled: Bool
     var onModelsChanged: (() -> Void)? = nil
+    var onShowFileSettings: ((UUID) -> Void)? = nil
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -15,7 +16,8 @@ struct ModelListView: View {
                         model: model,
                         isSelected: model.id == selectedModelID,
                         onSelect: { selectedModelID = model.id },
-                        onDelete: { removeModel(id: model.id) }
+                        onDelete: { removeModel(id: model.id) },
+                        onShowFileSettings: { onShowFileSettings?(model.id) }
                     )
                     .disabled(disabled)
                 }
@@ -52,6 +54,7 @@ private struct ModelCell: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onDelete: () -> Void
+    let onShowFileSettings: () -> Void
 
     var body: some View {
         Button(action: onSelect) {
@@ -92,7 +95,25 @@ private struct ModelCell: View {
                 .buttonStyle(.plain)
                 .offset(x: 6, y: -6)
             }
+            .overlay(alignment: .topLeading) {
+                if model.fileSettings != nil || model.projectSettings != nil {
+                    Button(action: onShowFileSettings) {
+                        FileSettingsBadge(model: model)
+                            .padding(4)
+                            .background(Color(.systemBackground).opacity(0.7), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: -4, y: -4)
+                }
+            }
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if model.fileSettings != nil || model.projectSettings != nil {
+                Button(action: onShowFileSettings) {
+                    Label("Settings from File…", systemImage: "slider.horizontal.3")
+                }
+            }
+        }
     }
 }

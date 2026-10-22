@@ -62,8 +62,12 @@ struct SlicerContext {
         std::string name;
         float offset_x_mm = 0.f;
         float offset_y_mm = 0.f;
+        // Settings stored on the object in the file (see slicer_imported_object_settings).
+        std::string settings;
     };
     std::vector<ImportedObject> imported;
+    // Project-wide settings stored in the last imported file (3MF / AMF).
+    std::string imported_project;
 
     SlicerContext() {
         // Start from factory defaults so we have a valid config baseline.
@@ -577,10 +581,44 @@ int slicer_set_object_transform(SlicerHandle handle, int object_index,
     }
 }
 
+} // extern "C"
+
+// Object settings text (slicer_imported_object_settings format).
+static std::string format_number(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.10g", v);
+    return buf;
+}
+
+static void append_config(std::string& out, const Slic3r::DynamicPrintConfig& cfg) {
+    for (const std::string& key : cfg.keys())
+        out += key + " = " + cfg.opt_serialize(key) + "\n";
+}
+
+static std::string object_file_settings(const Slic3r::ModelObject& obj) {
+    std::string out;
+    append_config(out, obj.config.get());
+    for (const auto& [range, config] : obj.layer_config_ranges) {
+        out += "[range " + format_number(range.first) + " " + format_number(range.second) + "]\n";
+        append_config(out, config.get());
+    }
+    const std::vector<coordf_t>& heights = obj.layer_height_profile.get();
+    if (!heights.empty()) {
+        out += "[layer_heights]\n";
+        for (size_t i = 0; i < heights.size(); ++i)
+            out += (i ? ";" : "") + format_number(heights[i]);
+        out += "\n";
+    }
+    return out;
+}
+
+extern "C" {
+
 int slicer_import_model_file(SlicerHandle handle, const char* path, const char* out_dir) {
     auto ctx = CTX(handle);
     try {
         ctx->imported.clear();
+        ctx->imported_project.clear();
         // Dispatch on extension ourselves rather than via FileReader::load_model,
         // which also links the STEP loader (needs OpenCASCADE, not built for iOS).
         std::string p(path);
@@ -588,7 +626,7 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
         Slic3r::Model model;
-        Slic3r::DynamicPrintConfig file_config;  // embedded print settings, ignored
+        Slic3r::DynamicPrintConfig file_config;  // the file's project settings
         Slic3r::ConfigSubstitutionContext substitutions(
             Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
         bool ok = false;
@@ -612,7 +650,7 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
         // One output mesh per object instance, with the instance's rotation /
         // scale / mirroring baked in. Translation is kept separately as an offset
         // from the file's overall centre so arranged plates keep their layout.
-        struct Baked { Slic3r::TriangleMesh mesh; std::string name; Slic3r::Vec3d centre; };
+        struct Baked { Slic3r::TriangleMesh mesh; std::string name; Slic3r::Vec3d centre; std::string settings; };
         std::vector<Baked> baked;
         Slic3r::BoundingBoxf3 all_bb;
         for (const auto* obj : model.objects) {
@@ -631,6 +669,7 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
                 b.name = obj->name.empty() ? "Object " + std::to_string(baked.size() + 1)
                                            : obj->name;
                 if (n_inst > 1) b.name += " (" + std::to_string(i + 1) + ")";
+                b.settings = object_file_settings(*obj);
                 baked.push_back(std::move(b));
             }
         }
@@ -644,8 +683,12 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
             io.name        = baked[i].name;
             io.offset_x_mm = static_cast<float>(baked[i].centre.x() - centre.x());
             io.offset_y_mm = static_cast<float>(baked[i].centre.y() - centre.y());
+            io.settings    = std::move(baked[i].settings);
             ctx->imported.push_back(std::move(io));
         }
+        std::string project;
+        append_config(project, file_config);
+        ctx->imported_project = std::move(project);
         return static_cast<int>(baked.size());
     } catch (const std::exception& e) {
         return set_err(ctx, e);
@@ -665,6 +708,70 @@ int slicer_imported_object_offset(SlicerHandle handle, int index,
         return set_err(ctx, "imported object index out of range");
     if (offset_x_mm) *offset_x_mm = ctx->imported[index].offset_x_mm;
     if (offset_y_mm) *offset_y_mm = ctx->imported[index].offset_y_mm;
+    return 0;
+}
+
+const char* slicer_imported_object_settings(SlicerHandle handle, int index) {
+    auto ctx = CTX(handle);
+    if (index < 0 || index >= static_cast<int>(ctx->imported.size())) return "";
+    return ctx->imported[index].settings.c_str();
+}
+
+const char* slicer_imported_project_settings(SlicerHandle handle) {
+    return CTX(handle)->imported_project.c_str();
+}
+
+int slicer_set_object_file_settings(SlicerHandle handle, int object_index, const char* text) {
+    auto ctx = CTX(handle);
+    if (!text) return set_err(ctx, "null settings");
+    if (object_index < 0 || object_index >= static_cast<int>(ctx->model.objects.size()))
+        return set_err(ctx, "object index out of range");
+    Slic3r::ModelObject* obj = ctx->model.objects[object_index];
+    // Parse fully before touching the object, so a bad line changes nothing.
+    Slic3r::DynamicPrintConfig object_config;
+    std::vector<std::pair<Slic3r::t_layer_height_range, Slic3r::DynamicPrintConfig>> ranges;
+    std::vector<coordf_t> heights;
+    enum { kObject, kRange, kHeights } section = kObject;
+    std::istringstream in(text);
+    std::string line;
+    int line_no = 0;
+    try {
+        while (std::getline(in, line)) {
+            ++line_no;
+            if (line.empty()) continue;
+            if (line.rfind("[range ", 0) == 0) {
+                double lo = 0, hi = 0;
+                if (std::sscanf(line.c_str(), "[range %lf %lf]", &lo, &hi) != 2 || hi <= lo)
+                    throw std::runtime_error("bad height range");
+                ranges.push_back({{lo, hi}, Slic3r::DynamicPrintConfig()});
+                section = kRange;
+                continue;
+            }
+            if (line == "[layer_heights]") { section = kHeights; continue; }
+            if (section == kHeights) {
+                std::istringstream values(line);
+                std::string v;
+                while (std::getline(values, v, ';')) heights.push_back(std::stod(v));
+                continue;
+            }
+            size_t eq = line.find(" = ");
+            if (eq == std::string::npos) throw std::runtime_error("expected \"key = value\"");
+            std::string key = line.substr(0, eq), value = line.substr(eq + 3);
+            Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
+            (section == kObject ? object_config : ranges.back().second).set_deserialize(key, value, subst);
+        }
+    } catch (const std::exception& e) {
+        ctx->last_error = "object settings line " + std::to_string(line_no) + ": " + e.what();
+        return -1;
+    }
+    for (const std::string& key : object_config.keys())
+        obj->config.set_key_value(key, object_config.option(key)->clone());
+    for (auto& [range, config] : ranges) {
+        Slic3r::ModelConfig mc;
+        mc.assign_config(std::move(config));
+        obj->layer_config_ranges[range] = std::move(mc);
+    }
+    if (!heights.empty()) obj->layer_height_profile.set(std::move(heights));
     return 0;
 }
 
@@ -959,4 +1066,33 @@ const char* slicer_setting_info(const char* key) {
     return t_string_result.c_str();
 }
 
+// Test reference: slice a PrusaSlicer 3MF project the way PrusaSlicer's
+// command line does (the model with all its stored settings, the file's
+// project settings over libslic3r defaults), without going through PalmSlice's
+// import / profile path.
+int slicer_reference_slice_3mf(const char* path, const char* out_gcode, char* error, int error_len) {
+    try {
+        Slic3r::Model model;
+        Slic3r::DynamicPrintConfig config;
+        config.apply(Slic3r::FullPrintConfig::defaults());
+        Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
+        boost::optional<Slic3r::Semver> version;
+        if (!Slic3r::load_3mf(path, config, subst, &model, false, version))
+            throw std::runtime_error("load_3mf failed");
+        model.add_default_instances();
+        config.set_key_value("binary_gcode", new Slic3r::ConfigOptionBool(false));
+        config.set_key_value("thumbnails", new Slic3r::ConfigOptionString(""));
+        Slic3r::Print print;
+        print.set_status_silent();
+        print.apply(model, config);
+        print.process();
+        print.export_gcode(out_gcode, nullptr, nullptr);
+        return 0;
+    } catch (const std::exception& e) {
+        if (error && error_len > 0) std::snprintf(error, error_len, "%s", e.what());
+        return -1;
+    }
+}
+
 } // extern "C"
+

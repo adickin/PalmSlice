@@ -202,7 +202,8 @@ int slicer_set_object_transform(SlicerHandle handle, int object_index,
 
 // Loads a 3MF, OBJ, AMF or STL file and writes each object instance as a binary
 // STL to "<out_dir>/<i>.stl" (i = 0..count-1), with the instance's rotation,
-// scale and mirroring baked in. Embedded print settings are ignored.
+// scale and mirroring baked in. Settings stored in the file are available via
+// slicer_imported_object_settings / slicer_imported_project_settings.
 // Returns the number of objects written (> 0), or a negative error code.
 // Does not touch the handle's model; only the import results below.
 int slicer_import_model_file(SlicerHandle handle, const char* path, const char* out_dir);
@@ -216,6 +217,27 @@ const char* slicer_imported_object_name(SlicerHandle handle, int index);
 // Returns 0 on success, negative on error.
 int slicer_imported_object_offset(SlicerHandle handle, int index,
                                   float* offset_x_mm, float* offset_y_mm);
+
+// Settings the file stores on the Nth imported object (PrusaSlicer 3MF/AMF:
+// per-object overrides, height-range overrides, variable layer heights), as
+// text in this format ("" if none):
+//   key = value              object settings
+//   [range <min> <max>]      settings for that height range (mm above the bed)
+//   key = value
+//   [layer_heights]          variable layer height profile:
+//   z;h;z;h;…                height h at z
+// Valid until the next import call or slicer_destroy.
+const char* slicer_imported_object_settings(SlicerHandle handle, int index);
+
+// The project-wide PrusaSlicer settings stored in the last imported 3MF/AMF
+// (print, filament and printer settings as "key = value" lines; "" if none).
+const char* slicer_imported_project_settings(SlicerHandle handle);
+
+// Applies object settings in the slicer_imported_object_settings format to an
+// object added with slicer_add_stl. Height ranges and layer heights are in mm
+// above the bed, so they only fit the object in its imported orientation.
+// Returns 0 on success, negative on error (nothing applied).
+int slicer_set_object_file_settings(SlicerHandle handle, int object_index, const char* text);
 
 // ── PrusaSlicer system presets ────────────────────────────────────────────────
 //
@@ -288,6 +310,12 @@ const char* slicer_get_setting(SlicerHandle handle, const char* key);
 //   enum_values, enum_labels   ";"-joined, for enums
 // NULL for an unknown key. Valid until the next call on this thread.
 const char* slicer_setting_info(const char* key);
+
+// Tests only: slices a PrusaSlicer 3MF project the way PrusaSlicer's command
+// line would (model + every setting stored in the file), as a reference for
+// PalmSlice's own import path. Returns 0 on success; on error writes a message
+// into `error`.
+int slicer_reference_slice_3mf(const char* path, const char* out_gcode, char* error, int error_len);
 
 #ifdef __cplusplus
 }

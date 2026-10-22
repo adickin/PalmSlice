@@ -21,9 +21,13 @@ func modelFormatLacksUnits(_ ext: String) -> Bool {
 
 struct ConvertedModelObject {
     let url: URL
-    let name: String
+    var name: String
     /// Bounding-box centre relative to the centre of all objects in the file, print X/Y (mm).
-    let offsetMM: SIMD2<Float>
+    var offsetMM: SIMD2<Float>
+    /// PrusaSlicer settings the file stores on this object, if any.
+    var fileSettings: ModelFileSettings? = nil
+    /// The file's project-wide PrusaSlicer settings (3MF/AMF), if any.
+    var projectSettings: [String: String]? = nil
 }
 
 struct ModelImportError: LocalizedError {
@@ -32,7 +36,7 @@ struct ModelImportError: LocalizedError {
 }
 
 /// Loads a 3MF / OBJ / AMF file through libslic3r and writes each object as a binary
-/// STL into `outputDir`. Embedded print settings in 3MF/AMF files are ignored.
+/// STL into `outputDir`, with any PrusaSlicer settings the file stores.
 func convertModelFile(at url: URL, outputDir: URL) throws -> [ConvertedModelObject] {
     try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
     guard let handle = slicer_create() else {
@@ -45,6 +49,7 @@ func convertModelFile(at url: URL, outputDir: URL) throws -> [ConvertedModelObje
         throw ModelImportError(message: String(cString: slicer_last_error(handle)))
     }
 
+    let project = SettingsText.parse(String(cString: slicer_imported_project_settings(handle)))
     var objects: [ConvertedModelObject] = []
     for i in 0..<Int(count) {
         var ox: Float = 0, oy: Float = 0
@@ -54,7 +59,9 @@ func convertModelFile(at url: URL, outputDir: URL) throws -> [ConvertedModelObje
         objects.append(ConvertedModelObject(
             url: outputDir.appendingPathComponent("\(i).stl"),
             name: String(cString: slicer_imported_object_name(handle, Int32(i))),
-            offsetMM: SIMD2(ox, oy)
+            offsetMM: SIMD2(ox, oy),
+            fileSettings: ModelFileSettings(text: String(cString: slicer_imported_object_settings(handle, Int32(i)))),
+            projectSettings: project.isEmpty ? nil : project
         ))
     }
     return objects
