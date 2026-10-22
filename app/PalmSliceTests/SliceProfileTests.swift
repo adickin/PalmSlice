@@ -215,3 +215,34 @@ final class ProfileSettingsTests: XCTestCase {
         XCTAssertEqual(SettingsText.splitStrings("PLA;PETG"), ["PLA", "PETG"])
     }
 }
+
+final class AllSettingsTests: XCTestCase {
+    // Every key in the vendor presets has a description for the All Settings list.
+    func testEveryPresetKeyHasSettingInfo() {
+        for type in [PresetType.print, .filament, .printer] {
+            let keys = PrusaKeys.keys(for: type)
+            XCTAssertGreaterThan(keys.count, 30, "\(type)")
+            let missing = keys.filter { SettingInfo.cached($0) == nil }
+            XCTAssertTrue(missing.isEmpty, "no info for \(missing.sorted())")
+        }
+        let info = SettingInfo.cached("fill_pattern")!
+        XCTAssertEqual(info.kind, .enum_)
+        XCTAssertTrue(info.enumValues.contains("gyroid"))
+        XCTAssertTrue(SettingInfo.cached("start_gcode")!.isMultiline)
+    }
+
+    // Typed keys go to their field; others to extraSettings; editing the field
+    // clears a verbatim override.
+    func testSetPrusaSettingRouting() {
+        var p = SliceProfile()
+        p.setPrusaSetting("perimeters", "5")
+        XCTAssertEqual(p.wallCount, 5)
+        XCTAssertNil(p.extraSettings["perimeters"])
+        p.setPrusaSetting("seam_position", "rear")
+        XCTAssertEqual(p.extraSettings["seam_position"], "rear")
+        p.setPrusaSetting("first_layer_speed", "50%")
+        XCTAssertEqual(p.prusaSettings()["first_layer_speed"], "50%")
+        p.firstLayerSpeed = 25
+        XCTAssertEqual(p.prusaSettings()["first_layer_speed"], "25")
+    }
+}

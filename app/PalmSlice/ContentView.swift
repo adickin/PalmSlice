@@ -44,6 +44,9 @@ struct ContentView: View {
     @State private var showMaterialProfilePicker = false
     @State private var showNoProfileAlert = false
     @State private var showNoSliceProfileAlert = false
+    #if DEBUG
+    @State private var debugScreen: DebugScreen? = nil
+    #endif
     @State private var showAbout = false
     @State private var showIntersectingAlert = false
     @State private var showUnitScaleAlert = false
@@ -161,6 +164,13 @@ struct ContentView: View {
             if let path = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_STL"], models.isEmpty {
                 importModel(from: URL(fileURLWithPath: path))
             }
+        }
+        // `SIMCTL_CHILD_PALMSLICE_DEBUG_SCREEN=<name>` opens a screen at launch
+        // for screenshots (see DebugScreen).
+        .sheet(item: $debugScreen) { $0.view }
+        .task {
+            try? await Task.sleep(for: .seconds(3))   // after the splash and store loads
+            debugScreen = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_SCREEN"].flatMap(DebugScreen.init)
         }
         #endif
         .sheet(item: $exportRequest) { req in

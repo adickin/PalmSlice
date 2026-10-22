@@ -2,9 +2,11 @@ import SwiftUI
 
 struct MaterialProfilePickerView: View {
     @EnvironmentObject var materialProfileStore: MaterialProfileStore
+    @EnvironmentObject var profileStore: ProfileStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showAddEditor = false
+    @State private var newProfile: MaterialProfile? = nil
+    @State private var showPresetPicker = false
     @State private var profileToEdit: MaterialProfile? = nil
 
     var body: some View {
@@ -25,12 +27,25 @@ struct MaterialProfilePickerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(
                 leading: Button("Done") { dismiss() },
-                trailing: Button(action: { showAddEditor = true }) {
+                trailing: Menu {
+                    Button("New Material") {
+                        newProfile = .newProfile(for: profileStore.selectedProfile)
+                    }
+                    Button("From PrusaSlicer Filament…") { showPresetPicker = true }
+                } label: {
                     Image(systemName: "plus")
                 }
             )
-            .sheet(isPresented: $showAddEditor) {
-                MaterialProfileEditorView(mode: .add)
+            .sheet(item: $newProfile) { draft in
+                MaterialProfileEditorView(mode: .add, profile: draft)
+            }
+            .sheet(isPresented: $showPresetPicker) {
+                PresetPickerView(type: .filament, printerPreset: profileStore.selectedProfile?.systemPreset) { name in
+                    // Let this sheet finish dismissing before presenting the editor.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        newProfile = .from(filamentPreset: name)
+                    }
+                }
             }
             .sheet(item: $profileToEdit) { profile in
                 MaterialProfileEditorView(mode: .edit, profile: profile)

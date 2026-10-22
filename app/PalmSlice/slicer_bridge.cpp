@@ -920,4 +920,43 @@ const char* slicer_get_setting(SlicerHandle handle, const char* key) {
     return t_string_result.c_str();
 }
 
+const char* slicer_setting_info(const char* key) {
+    if (!key) return nullptr;
+    const Slic3r::ConfigOptionDef* def = Slic3r::print_config_def.get(key);
+    if (!def) return nullptr;
+    const char* kind = "string";
+    switch (def->type) {
+        case Slic3r::coFloat:  case Slic3r::coFloats:  kind = "float"; break;
+        case Slic3r::coInt:    case Slic3r::coInts:    kind = "int"; break;
+        case Slic3r::coPercent: case Slic3r::coPercents: kind = "percent"; break;
+        case Slic3r::coFloatOrPercent: case Slic3r::coFloatsOrPercents: kind = "float_or_percent"; break;
+        case Slic3r::coBool:   case Slic3r::coBools:   kind = "bool"; break;
+        case Slic3r::coEnum:   case Slic3r::coEnums:   kind = "enum"; break;
+        case Slic3r::coPoint:  kind = "point"; break;
+        case Slic3r::coPoints: kind = "points"; break;
+        default: break;
+    }
+    auto join = [](const std::vector<std::string>& items) {
+        std::string out;
+        for (size_t i = 0; i < items.size(); ++i) { if (i) out += ";"; out += items[i]; }
+        return out;
+    };
+    std::ostringstream out;
+    out << "kind = " << kind << "\n"
+        << "vector = " << (def->is_scalar() || def->type == Slic3r::coPoints ? 0 : 1) << "\n"
+        << "nullable = " << (def->nullable ? 1 : 0) << "\n"
+        << "multiline = " << (def->multiline ? 1 : 0) << "\n"
+        << "mode = " << static_cast<int>(def->mode) << "\n"
+        << "label = " << Slic3r::escape_string_cstyle(def->label) << "\n"
+        << "full_label = " << Slic3r::escape_string_cstyle(def->full_label) << "\n"
+        << "category = " << Slic3r::escape_string_cstyle(def->category) << "\n"
+        << "sidetext = " << Slic3r::escape_string_cstyle(def->sidetext) << "\n"
+        << "tooltip = " << Slic3r::escape_string_cstyle(def->tooltip) << "\n";
+    if (def->enum_def && def->enum_def->has_values())
+        out << "enum_values = " << Slic3r::escape_string_cstyle(join(def->enum_def->values())) << "\n"
+            << "enum_labels = " << Slic3r::escape_string_cstyle(join(def->enum_def->labels())) << "\n";
+    t_string_result = out.str();
+    return t_string_result.c_str();
+}
+
 } // extern "C"

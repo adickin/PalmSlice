@@ -5,10 +5,15 @@ struct SliceProfileEditorView: View {
 
     let mode: Mode
     @EnvironmentObject var sliceProfileStore: SliceProfileStore
+    @EnvironmentObject var profileStore: ProfileStore
+    @EnvironmentObject var materialProfileStore: MaterialProfileStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var draft: SliceProfile
     @State private var showHelp = false
+    @State private var basePrint: String? = nil
+    @State private var baseSettings: [String: String] = [:]
+    @State private var showBasePicker = false
 
     init(mode: Mode, profile: SliceProfile = SliceProfile()) {
         self.mode = mode
@@ -28,7 +33,20 @@ struct SliceProfileEditorView: View {
                 supportSection
                 adhesionSection
                 advancedSection
+                PrusaSlicerSection(
+                    profile: $draft, basePresetName: basePrint, baseSettings: baseSettings,
+                    onChooseBase: { showBasePicker = true },
+                    onResetBase: draft.basePreset == nil ? nil : { draft.basePreset = nil })
                 helpButtonSection
+            }
+            .task(id: draft.basePreset) { await loadBase() }
+            .sheet(isPresented: $showBasePicker) {
+                PresetPickerView(type: .print, printerPreset: profileStore.selectedProfile?.systemPreset) { name in
+                    // Start over from the chosen preset, keeping identity and name.
+                    var p = SliceProfile.from(printPreset: name, name: draft.name)
+                    p.id = draft.id
+                    draft = p
+                }
             }
             .navigationTitle(mode == .add ? "New Slice Profile" : "Edit Slice Profile")
             .navigationBarTitleDisplayMode(.inline)
@@ -52,6 +70,20 @@ struct SliceProfileEditorView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
             }
         }
+    }
+
+    /// The PrusaSlicer print preset this profile is layered on for the
+    /// selected printer, and its settings.
+    private func loadBase() async {
+        let printer = profileStore.selectedProfile ?? PrinterProfile()
+        let material = materialProfileStore.selectedProfile
+        let slice = draft
+        let result = await Task.detached(priority: .userInitiated) { () -> (String, [String: String])? in
+            guard let base = SliceSetup.base(printer: printer, material: material, slice: slice) else { return nil }
+            return (base.print, PresetLibrary.settings(.print, base.print) ?? [:])
+        }.value
+        basePrint = result?.0
+        baseSettings = result?.1 ?? [:]
     }
 
     // MARK: - Sections

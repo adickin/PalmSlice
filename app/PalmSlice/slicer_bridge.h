@@ -276,6 +276,19 @@ int slicer_apply_settings(SlicerHandle handle, const char* ini_text);
 // it; NULL if the key is unknown. Valid until the next call on this thread.
 const char* slicer_get_setting(SlicerHandle handle, const char* key);
 
+// Describes a PrusaSlicer setting for display, as "field = value" lines
+// (values C-escaped like .ini values):
+//   kind       float | int | percent | float_or_percent | bool | enum |
+//              string | point | points
+//   vector     1 if per-extruder (value is a comma-separated list)
+//   nullable   1 if "nil" (= inherit) is allowed
+//   multiline  1 for G-code and other multi-line text
+//   mode       0 simple, 1 advanced, 2 expert (PrusaSlicer's UI levels)
+//   label, full_label, category, sidetext (units), tooltip
+//   enum_values, enum_labels   ";"-joined, for enums
+// NULL for an unknown key. Valid until the next call on this thread.
+const char* slicer_setting_info(const char* key);
+
 #ifdef __cplusplus
 }
 #endif

@@ -5,9 +5,13 @@ struct MaterialProfileEditorView: View {
 
     let mode: Mode
     @EnvironmentObject var materialProfileStore: MaterialProfileStore
+    @EnvironmentObject var profileStore: ProfileStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var draft: MaterialProfile
+    @State private var baseFilament: String? = nil
+    @State private var baseSettings: [String: String] = [:]
+    @State private var showBasePicker = false
 
     init(mode: Mode, profile: MaterialProfile = MaterialProfile()) {
         self.mode = mode
@@ -21,6 +25,18 @@ struct MaterialProfileEditorView: View {
                 filamentSection
                 retractionSection
                 coolingSection
+                PrusaSlicerSection(
+                    profile: $draft, basePresetName: baseFilament, baseSettings: baseSettings,
+                    onChooseBase: { showBasePicker = true },
+                    onResetBase: draft.basePreset == nil ? nil : { draft.basePreset = nil })
+            }
+            .task(id: "\(draft.basePreset ?? "")|\(draft.filamentType)") { await loadBase() }
+            .sheet(isPresented: $showBasePicker) {
+                PresetPickerView(type: .filament, printerPreset: profileStore.selectedProfile?.systemPreset) { name in
+                    var m = MaterialProfile.from(filamentPreset: name, name: draft.name)
+                    m.id = draft.id
+                    draft = m
+                }
             }
             .navigationTitle(mode == .add ? "New Material Profile" : "Edit Material Profile")
             .navigationBarTitleDisplayMode(.inline)
@@ -30,6 +46,21 @@ struct MaterialProfileEditorView: View {
                 trailing: Button("Save", action: save)
             )
         }
+    }
+
+    /// The PrusaSlicer filament preset this material is layered on for the
+    /// selected printer, and its settings.
+    private func loadBase() async {
+        let printer = profileStore.selectedProfile
+        let material = draft
+        let result = await Task.detached(priority: .userInitiated) { () -> (String, [String: String])? in
+            guard let base = PresetLibrary.base(printerPreset: printer?.systemPreset,
+                                                filamentPreset: material.basePreset,
+                                                filamentType: material.filamentType) else { return nil }
+            return (base.filament, PresetLibrary.settings(.filament, base.filament) ?? [:])
+        }.value
+        baseFilament = result?.0
+        baseSettings = result?.1 ?? [:]
     }
 
     // MARK: - Sections

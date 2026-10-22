@@ -2,9 +2,11 @@ import SwiftUI
 
 struct SliceProfilePickerView: View {
     @EnvironmentObject var sliceProfileStore: SliceProfileStore
+    @EnvironmentObject var profileStore: ProfileStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showAddEditor = false
+    @State private var newProfile: SliceProfile? = nil
+    @State private var showPresetPicker = false
     @State private var profileToEdit: SliceProfile? = nil
 
     var body: some View {
@@ -25,12 +27,25 @@ struct SliceProfilePickerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(
                 leading: Button("Done") { dismiss() },
-                trailing: Button(action: { showAddEditor = true }) {
+                trailing: Menu {
+                    Button("New Profile") {
+                        newProfile = .newProfile(for: profileStore.selectedProfile)
+                    }
+                    Button("From PrusaSlicer Preset…") { showPresetPicker = true }
+                } label: {
                     Image(systemName: "plus")
                 }
             )
-            .sheet(isPresented: $showAddEditor) {
-                SliceProfileEditorView(mode: .add)
+            .sheet(item: $newProfile) { draft in
+                SliceProfileEditorView(mode: .add, profile: draft)
+            }
+            .sheet(isPresented: $showPresetPicker) {
+                PresetPickerView(type: .print, printerPreset: profileStore.selectedProfile?.systemPreset) { name in
+                    // Let this sheet finish dismissing before presenting the editor.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        newProfile = .from(printPreset: name)
+                    }
+                }
             }
             .sheet(item: $profileToEdit) { profile in
                 SliceProfileEditorView(mode: .edit, profile: profile)

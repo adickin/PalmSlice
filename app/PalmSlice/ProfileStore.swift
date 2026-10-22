@@ -32,15 +32,19 @@ final class ProfileStore: ObservableObject {
            !decoded.isEmpty {
             profiles = decoded
         } else {
+            // Built-ins are generated from PrusaSlicer presets; if those failed
+            // to load, don't save an empty list — retry on the next launch.
             profiles = BuiltInProfiles.all
-            UserDefaults.standard.set(Self.seedVersion, forKey: Self.seedVersionKey)
-            save()
+            if !profiles.isEmpty {
+                UserDefaults.standard.set(Self.seedVersion, forKey: Self.seedVersionKey)
+                save()
+            }
         }
 
         let added = mergeInMissingBuiltIns()
         let migrated = retireCustomEnder3S1()
         let linked = linkSystemPresets()
-        if added || migrated || linked {
+        if (added || migrated || linked) && !profiles.isEmpty {
             save()
         }
 
@@ -73,11 +77,11 @@ final class ProfileStore: ObservableObject {
         guard !UserDefaults.standard.bool(forKey: Self.retiredEnderKey) else { return false }
         UserDefaults.standard.set(true, forKey: Self.retiredEnderKey)
 
-        let replacement = BuiltInProfiles.crealityEnder3S1
+        let replacement = BuiltInProfiles.entries[0]
         profiles.removeAll { p in
             p.builtInKey == "ender3s1" || (p.builtInKey == nil && p.name == "Ender 3 S1")
         }
-        if let idx = profiles.firstIndex(where: { $0.builtInKey == replacement.builtInKey }) {
+        if let idx = profiles.firstIndex(where: { $0.builtInKey == replacement.key }) {
             profiles[idx].verified = true
             if profiles[idx].name == "Creality Ender-3 S1 (PrusaSlicer)" {
                 profiles[idx].name = replacement.name

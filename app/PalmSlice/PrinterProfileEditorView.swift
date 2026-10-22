@@ -32,6 +32,10 @@ struct PrinterProfileEditorView: View {
                 gcodeSection
                 printheadSection
                 extrudersSection
+                PrusaSlicerSection(
+                    profile: $draft,
+                    basePresetName: draft.systemPreset ?? "None (custom printer)",
+                    baseSettings: draft.systemPreset.flatMap { PresetLibrary.settings(.printer, $0) } ?? [:])
             }
             .navigationTitle(mode == .add ? "New Printer" : "Edit Printer")
             .navigationBarTitleDisplayMode(.inline)

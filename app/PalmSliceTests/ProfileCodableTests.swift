@@ -6,7 +6,7 @@ final class ProfileCodableTests: XCTestCase {
     // MARK: - Round-trip encode/decode
 
     func testPrinterProfileRoundTrip() throws {
-        let original = BuiltInProfiles.crealityEnder3S1
+        let original = try XCTUnwrap(BuiltInProfiles.all.first)
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(PrinterProfile.self, from: data)
 
@@ -58,9 +58,11 @@ final class ProfileCodableTests: XCTestCase {
         XCTAssertEqual(materialNames.count, Set(materialNames).count, "duplicate built-in material profile name")
     }
 
-    func testEnder3S1HasAtLeastOneExtruder() {
-        XCTAssertFalse(BuiltInProfiles.crealityEnder3S1.extruders.isEmpty)
-        XCTAssertEqual(BuiltInProfiles.crealityEnder3S1.numberOfExtruders, BuiltInProfiles.crealityEnder3S1.extruders.count)
+    func testEnder3S1HasAtLeastOneExtruder() throws {
+        let ender = try XCTUnwrap(BuiltInProfiles.all.first { $0.verified })
+        XCTAssertFalse(ender.extruders.isEmpty)
+        XCTAssertEqual(ender.numberOfExtruders, ender.extruders.count)
+        XCTAssertEqual(BuiltInProfiles.all.count, BuiltInProfiles.entries.count, "a built-in printer preset failed to load")
     }
 
     // MARK: - Bridge-int mappings must stay unique per enum

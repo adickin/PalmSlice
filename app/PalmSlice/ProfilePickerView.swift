@@ -5,6 +5,7 @@ struct ProfilePickerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showAddEditor = false
+    @State private var showPresetPicker = false
     @State private var profileToEdit: PrinterProfile? = nil
     @State private var pendingUntestedSelection: PrinterProfile? = nil
 
@@ -51,19 +52,30 @@ struct ProfilePickerView: View {
                 } header: {
                     Text("Untested")
                 } footer: {
-                    Text("Imported from an open-source printer configuration library but not yet verified on real hardware in this app. Once one prints well on your printer, swipe right on it (or touch and hold) and choose Mark Verified.")
+                    Text("From PrusaSlicer's printer library but not yet verified on real hardware in this app. Once one prints well on your printer, swipe right on it (or touch and hold) and choose Mark Verified.")
                 }
             }
             .navigationTitle("Printer Profile")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(
                 leading: Button("Done") { dismiss() },
-                trailing: Button(action: { showAddEditor = true }) {
+                trailing: Menu {
+                    Button("From PrusaSlicer Library…") { showPresetPicker = true }
+                    Button("Custom Printer") { showAddEditor = true }
+                } label: {
                     Image(systemName: "plus")
                 }
             )
             .sheet(isPresented: $showAddEditor) {
                 PrinterProfileEditorView(mode: .add)
+            }
+            .sheet(isPresented: $showPresetPicker) {
+                PresetPickerView(type: .printer, printerPreset: nil) { name in
+                    // Untested until the user marks it verified, like the built-ins.
+                    guard let printer = PrinterProfile(systemPreset: name) else { return }
+                    profileStore.add(printer)
+                    profileStore.select(id: printer.id)
+                }
             }
             .sheet(item: $profileToEdit) { profile in
                 PrinterProfileEditorView(mode: .edit, profile: profile)
