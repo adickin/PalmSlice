@@ -44,4 +44,4 @@ version notes.
 ## Contact
 
 Questions about this policy: open an issue at
-https://github.com/adickin/ISlicer/issues
+https://github.com/adickin/PalmSlice/issues

@@ -58,16 +58,16 @@ struct AboutView: View {
                     Text("PalmSlice embeds libslic3r (the PrusaSlicer slicing engine) and is distributed, as a derivative work, under the GNU Affero General Public License v3.0. The complete source code is publicly available.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    Link(destination: URL(string: "https://github.com/adickin/ISlicer")!) {
+                    Link(destination: URL(string: "https://github.com/adickin/PalmSlice")!) {
                         Label("Source Code on GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
                     }
-                    Link(destination: URL(string: "https://github.com/adickin/ISlicer/blob/main/LICENSE.md")!) {
+                    Link(destination: URL(string: "https://github.com/adickin/PalmSlice/blob/main/LICENSE.md")!) {
                         Label("AGPL-3.0 License", systemImage: "doc.text")
                     }
                 }
 
                 Section("Privacy") {
-                    Link(destination: URL(string: "https://github.com/adickin/ISlicer/blob/main/PRIVACY.md")!) {
+                    Link(destination: URL(string: "https://github.com/adickin/PalmSlice/blob/main/PRIVACY.md")!) {
                         Label("Privacy Policy", systemImage: "hand.raised")
                     }
                 }

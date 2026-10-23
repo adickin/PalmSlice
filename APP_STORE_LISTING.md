@@ -10,9 +10,9 @@ can't be drafted here — see the bottom of this file.
 - **Primary category:** Utilities (alternative: Graphics & Design)
 - **Secondary category:** Productivity
 - **Bundle ID:** `com.adickin.PalmSlice`
-- **Support URL:** https://github.com/adickin/ISlicer/issues
-- **Marketing URL (optional):** https://github.com/adickin/ISlicer
-- **Privacy Policy URL:** https://github.com/adickin/ISlicer/blob/main/PRIVACY.md
+- **Support URL:** https://github.com/adickin/PalmSlice/issues
+- **Marketing URL (optional):** https://github.com/adickin/PalmSlice
+- **Privacy Policy URL:** https://github.com/adickin/PalmSlice/blob/main/PRIVACY.md
 - **Copyright:** © 2026 Adam Dickin
 
 ## Promotional Text (170 chars max)
@@ -81,7 +81,7 @@ upload (Export → Set Up OctoPrint), which needs a user-run OctoPrint server on
 the local network; everything else works offline. To test: tap the + / import
 button, choose any `.stl` file from Files (or use a sample), pick a printer and
 slice profile, then tap Slice, review the layer preview, and tap Export G-code.
-The app is open source (AGPL-3.0): https://github.com/adickin/ISlicer
+The app is open source (AGPL-3.0): https://github.com/adickin/PalmSlice
 
 ## Screenshots (still needed — manual)
 

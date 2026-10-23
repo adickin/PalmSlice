@@ -4,6 +4,7 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-10-22
 
+- **Repository moved to https://github.com/adickin/PalmSlice.** The About screen's source, license and privacy links, `PRIVACY.md` and the App Store listing URLs point there
 - **Profile screens no longer mention PrusaSlicer.** The section at the bottom of each printer, material and slice editor is now **Defaults** ("Based On", "Choose Different Defaults…", "Use the Printer's Defaults", All Settings, "Export .ini"); a changed setting's reset is **Use Default**; "+" menus read **From Default Slice Settings… / From Default Filaments… / From Printer Library… / Import .ini…**; help text says "the default" instead of "PrusaSlicer's default". The About screen still credits PrusaSlicer/libslic3r
 - Docs: `PROGRESS.md` To Do lists only outstanding work (finished items moved to Completed); `FUTURE_FEATURES.md` drops items that are done (extra speeds, seam position and per-feature widths are in All Settings; vendor `printer_model` placeholders; more built-in printers), merges the reset items, rewrites multi-extruder, and adds **Settings for one part**
 
