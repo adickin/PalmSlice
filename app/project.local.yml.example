@@ -6,7 +6,7 @@
 #   It's the string in parentheses, e.g. "Apple Development: Your Name (XXXXXXXXXX)"
 
 targets:
-  SlicePal:
+  PalmSlice:
     settings:
       base:
         DEVELOPMENT_TEAM: XXXXXXXXXX

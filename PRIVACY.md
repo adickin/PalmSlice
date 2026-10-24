@@ -1,6 +1,6 @@
 # Privacy Policy — PalmSlice
 
-Last updated: 2026-10-14
+Last updated: 2026-10-24
 
 PalmSlice is an on-device 3D printing slicer. This policy is short because
 the app does very little with your data: it doesn't leave your device.
@@ -24,7 +24,7 @@ PalmSlice collects **no data of any kind**. Specifically:
 
 ## Files You Provide
 
-When you import an STL file or export G-code, PalmSlice reads/writes files
+When you import a model (STL, 3MF, OBJ, AMF) or a profile `.ini` file, or export G-code or a profile, PalmSlice reads/writes files
 you explicitly choose via the iOS file picker or the Files app. Those files
 stay on your device (and in your own iCloud Drive, if that's where you keep
 them) — PalmSlice never transmits them anywhere, except to an OctoPrint server

@@ -15,7 +15,7 @@ Outstanding work only. Feature ideas and longer-term plans are in
 - [x] **PrusaSlicer vendor presets as the base of every slice** — 32 vendor bundles shipped (`PrusaSlicerProfiles/vendor`, build step 21), loaded with libslic3r's `PresetBundle`; printer preset + print preset + filament preset, then PalmSlice profiles. `PresetDriftTests` fails if a setting PalmSlice doesn't control differs from the vendor preset
 - [x] **Lossless profile ↔ PrusaSlicer settings conversion** (`ProfileSettings.swift`): typed fields + `extraSettings`; imported print / filament / printer presets slice to byte-identical G-code
 - [x] **One settings path** (`SliceSetup` → `slicer_apply_settings`, validated by libslic3r)
-- [x] **Built-in printers generated from vendor presets**; "From PrusaSlicer Library…" adds any of ~1,000 printers; new slice/material profiles seeded from the printer's presets or any compatible preset
+- [x] **Built-in printers generated from vendor presets**; "From Printer Library…" adds any of ~1,000 printers; new slice/material profiles seeded from the printer's presets or any compatible preset
 - [x] **All Settings screen** (every PrusaSlicer setting, categories, help text, validated edits), base preset shown/changeable
 - [x] **3MF per-part settings** (object overrides, height ranges, variable layer heights) with badge + Settings from File sheet; **Create Profiles from This File**. Parity with slicing the 3MF project directly verified on Piper J-3 Cub parts
 - [x] **PrusaSlicer .ini import** (flat configs and config bundles with inheritance) **and export**
@@ -36,7 +36,7 @@ Outstanding work only. Feature ideas and longer-term plans are in
 ### Slice / Export, Icon, Profiles (2026-10-04)
 - [x] **Split Slice and Export** — Slice writes G-code to the temp directory and opens the layer preview automatically; **Export G-code** (collapsed bar + expanded panel) copies it to Documents and presents the share sheet. Slice button becomes "Re-slice" once a slice exists
 - [x] **New app icon** (pickup truck) — cut out of its white backing, corners filled, full-bleed 1024×1024, no alpha; also applied to `LaunchImage@1x/2x/3x` and `images/PalmSliceAppIcon.PNG`
-- [x] **8 more built-in printer profiles** (all Untested) — Creality Ender-3, Ender-3 S1 (PrusaSlicer vendor), Ender-5, Prusa MK4, Elegoo Neptune-3 Pro, Sovol SV06, Voron 2.4 350; Prusa profiles hardcode their `M862.3` model name since the bridge doesn't set `printer_model`
+- [x] **8 more built-in printer profiles** (all Untested) — Creality Ender-3, Ender-3 S1 (PrusaSlicer vendor), Ender-5, Prusa MK4, Elegoo Neptune-3 Pro, Sovol SV06, Voron 2.4 350; Prusa profiles hardcoded their `M862.3` model name at the time (no longer needed since 2026-10-22: `printer_model` is set from the vendor preset)
 - [x] **`PrinterProfileSliceTests`** — slices a sample STL with every built-in printer profile (skipped if the sample STL isn't on disk)
 - [x] **Fix UUID in generated filenames** — output name now derives from the model's original name, not the temp-copy URL
 - [x] **Layer slider text field** — type a layer number instead of dragging; slider restyled as a material card
@@ -55,7 +55,7 @@ Plan: `Plans/material_profiles.md`
 - [x] `MaterialProfile` struct — Codable; filament diameter, temperatures (first layer + other, hotend + bed), extrusion multiplier, retraction (length/speed/restart extra/Z-hop/min travel), cooling/fan (min/max/bridge speed, disable-first-N-layers, fan-below-layer-time, slowdown-below-layer-time, min-print-speed)
 - [x] `MaterialProfileStore` — same `@MainActor ObservableObject` pattern as `ProfileStore` / `SliceProfileStore`; JSON to `material_profiles.json`; seed version bump
 - [x] `BuiltInMaterialProfiles` — PLA, PETG, ABS, TPU with sensible defaults including cooling/retraction differences per material
-- [x] `SlicerMaterialConfig` C struct + `slicer_apply_material_config()` in `slicer_bridge.h/.cpp`; all per-extruder keys wrapped in single-element vectors; `retract_length=0` disables retraction natively
+- [x] `SlicerMaterialConfig` C struct + `slicer_apply_material_config()` in `slicer_bridge.h/.cpp` *(removed 2026-10-22; all profiles now go through `slicer_apply_settings`)*; all per-extruder keys wrapped in single-element vectors; `retract_length=0` disables retraction natively
 - [x] `MaterialProfileEditorView` — Form with Name / Filament & Temperature / Retraction / Cooling sections; sub-fields hidden behind toggles
 - [x] `MaterialProfilePickerView` — circle-checkmark select, row-tap to edit, swipe-to-delete, + button
 - [x] `ContentView` — "Material" row (drop icon) below slice profile row; `applyMaterialProfile()` called before slicing (optional — slicing proceeds with bridge defaults if no profile selected); call order: printer → material → slice
@@ -67,11 +67,11 @@ Plan: `Plans/slicing_profiles.md`
 - [x] `SupportStyle` enum — Normal (Snug) / Tree (Organic); `bridgeInt` → smsSnug(1) / smsOrganic(3)
 - [x] `SupportPlacement` enum — Everywhere / Touching Build Plate Only
 - [x] `BrimType` enum — Outer Only / Inner Only / Outer and Inner; `bridgeInt` → btOuterOnly(1) / btInnerOnly(2) / btOuterAndInner(3)
-- [x] `AdhesionType` enum — None / Skirt / Brim / Raft (top-level wrapper; maps to PrusaSlicer's separate `brim_type` / `skirts` / `raft_layers` keys)
+- [x] `AdhesionType` enum — None / Skirt / Brim / Raft (top-level wrapper; maps to PrusaSlicer's separate `brim_type` / `skirts` / `raft_layers` keys). *Replaced 2026-10-22 by independent skirt / brim / raft settings*
 - [x] `SliceProfile` struct — all settings Codable; `pickerSubtitle` computed property (layer height · infill % · speed · supports on/off)
 - [x] `SliceProfileStore` — `@MainActor ObservableObject`; JSON load/save to `slice_profiles.json`; seed version bump
 - [x] `BuiltInSliceProfiles` — Draft (0.3 mm / 15% grid / 80 mm/s), Standard (0.2 mm / 20% gyroid / 60 mm/s), Fine (0.1 mm / 20% gyroid / 40 mm/s)
-- [x] `SlicerSliceConfig` C struct + `slicer_apply_slice_config()` — sets all 26 slice settings on `DynamicPrintConfig`; adhesion type fan-out to correct PrusaSlicer keys; speed type bug fixed (`perimeter_speed` / `infill_speed` are `ConfigOptionFloat`, not `ConfigOptionFloatOrPercent`)
+- [x] `SlicerSliceConfig` C struct + `slicer_apply_slice_config()` *(removed 2026-10-22, see above)* — sets all 26 slice settings on `DynamicPrintConfig`; adhesion type fan-out to correct PrusaSlicer keys; speed type bug fixed (`perimeter_speed` / `infill_speed` are `ConfigOptionFloat`, not `ConfigOptionFloatOrPercent`)
 - [x] `slice_config_applied` flag on `SlicerContext` — prevents `slicer_slice_with_progress` legacy params from overwriting the slice config
 - [x] `SliceProfileEditorView` — Form with Name / Layers / Walls / Top-Bottom / Infill / Speed / Support / Adhesion sections; support sub-options revealed when generate support is on; adhesion sub-options switch by type; help button at bottom
 - [x] `SliceProfilePickerView` — circle-checkmark select, row-tap to edit, swipe-to-delete, + button; subtitle shows live profile summary
@@ -89,7 +89,7 @@ Plan: `Plans/slicing_profiles.md`
 - [x] `GCodeEditorView` — reusable bordered monospaced TextEditor with copy button
 - [x] `PrinterProfileEditorView` — Form with Name / Machine / G-Code / Printhead / per-Extruder sections
 - [x] `ProfilePickerView` — list with circle-checkmark select, row-tap to edit, swipe-to-delete, + button
-- [x] `slicer_bridge` — `SlicerPrinterConfig` C struct + `slicer_apply_printer_config()`; `kFlavorMap[]` keeps Swift `bridgeInt` and C++ enum in sync
+- [x] `slicer_bridge` — `SlicerPrinterConfig` C struct + `slicer_apply_printer_config()` *(removed 2026-10-22, see above)*; `kFlavorMap[]` keeps Swift `bridgeInt` and C++ enum in sync
 - [x] `ContentView` — profile row shows active printer name; "No Printer Selected" alert guards slice; `applyPrinterProfile()` called before every slice
 - [x] `PalmSliceApp` — `ProfileStore` created as `@StateObject`, injected as `.environmentObject`, loaded via `.task`
 
@@ -161,7 +161,7 @@ Plan: `Plans/slicing_profiles.md`
 - [x] **Build number bumped to 2** — `CFBundleVersion: "2"` in `project.yml` (1.0 (1) already uploaded)
 - [x] **App Store listing copy drafted** — `APP_STORE_LISTING.md` (name, subtitle, description, keywords, category, age rating, review notes). Screenshots still need to be captured manually
 - [x] **Upload build 1.0 (2)** — archived and uploaded via `xcodebuild -exportArchive` (`method: app-store-connect`, `destination: upload`) on 2026-10-14; includes the export sheet and OctoPrint upload. `CFBundleVersion` bumped to `"3"` for the next upload (iPad UI + Apple Pencil)
-- [x] **basic automated tests** — new `PalmSliceTests` XCTest target (hosted by `PalmSlice`, auto-attached by xcodegen); 15 tests covering profile Codable round-trips, built-in profile sanity, bridge-int enum uniqueness, and `GCodeParser` layer/extrusion-type parsing — all passing on `iphonesimulator`
+- [x] **basic automated tests** — new `PalmSliceTests` XCTest target (hosted by `PalmSlice`, auto-attached by xcodegen); initially 15 tests (since grown to cover presets, 3MF import, file settings and per-printer slicing) covering profile Codable round-trips, built-in profile sanity, bridge-int enum uniqueness, and `GCodeParser` layer/extrusion-type parsing — all passing on `iphonesimulator`
 
 ### Model Manipulation (Plan: `Plans/model_manipulation.md`)
 - [x] **Transform controls** — `ModelTransform` state (positionMM / rotationDeg / scale); `pivotNode` in `STLSceneView` applies transform live; `TransformPanelView` sheet with Move / Rotate / Scale sections (2026-04-17)

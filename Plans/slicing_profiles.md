@@ -397,7 +397,7 @@ Add a "Profile: [Name]" tappable row alongside the printer row. Before slicing:
 3. Call `slicer_apply_printer_config` with the selected printer profile.
 4. Then call `slicer_slice_with_progress`.
 
-Inject `SliceProfileStore` as a second `@EnvironmentObject` from `SlicePalApp`.
+Inject `SliceProfileStore` as a second `@EnvironmentObject` from `PalmSliceApp`.
 
 ---
 
@@ -405,19 +405,19 @@ Inject `SliceProfileStore` as a second `@EnvironmentObject` from `SlicePalApp`.
 
 | File | New / Modified |
 |------|---------------|
-| `app/SlicePal/InfillPattern.swift` | New |
-| `app/SlicePal/SupportStyle.swift` | New |
-| `app/SlicePal/SupportPlacement.swift` | New |
-| `app/SlicePal/BrimType.swift` | New |
-| `app/SlicePal/SliceProfile.swift` | New |
-| `app/SlicePal/SliceProfileStore.swift` | New |
-| `app/SlicePal/BuiltInSliceProfiles.swift` | New |
-| `app/SlicePal/SliceProfilePickerView.swift` | New |
-| `app/SlicePal/SliceProfileEditorView.swift` | New |
-| `app/SlicePal/slicer_bridge.h` | Modified — add `SlicerSliceConfig` + `slicer_apply_slice_config` |
-| `app/SlicePal/slicer_bridge.cpp` | Modified — implement `slicer_apply_slice_config`; refactor config accumulation |
-| `app/SlicePal/ContentView.swift` | Modified — slice profile row, call apply before slice |
-| `app/SlicePal/SlicePalApp.swift` | Modified — create `SliceProfileStore`, inject as environment |
+| `app/PalmSlice/InfillPattern.swift` | New |
+| `app/PalmSlice/SupportStyle.swift` | New |
+| `app/PalmSlice/SupportPlacement.swift` | New |
+| `app/PalmSlice/BrimType.swift` | New |
+| `app/PalmSlice/SliceProfile.swift` | New |
+| `app/PalmSlice/SliceProfileStore.swift` | New |
+| `app/PalmSlice/BuiltInSliceProfiles.swift` | New |
+| `app/PalmSlice/SliceProfilePickerView.swift` | New |
+| `app/PalmSlice/SliceProfileEditorView.swift` | New |
+| `app/PalmSlice/slicer_bridge.h` | Modified — add `SlicerSliceConfig` + `slicer_apply_slice_config` |
+| `app/PalmSlice/slicer_bridge.cpp` | Modified — implement `slicer_apply_slice_config`; refactor config accumulation |
+| `app/PalmSlice/ContentView.swift` | Modified — slice profile row, call apply before slice |
+| `app/PalmSlice/PalmSliceApp.swift` | Modified — create `SliceProfileStore`, inject as environment |
 
 ---
 
@@ -429,7 +429,7 @@ Inject `SliceProfileStore` as a second `@EnvironmentObject` from `SlicePalApp`.
 4. **C bridge** — `SlicerSliceConfig` struct + `slicer_apply_slice_config`; refactor bridge to accumulate configs
 5. **SliceProfileEditorView** — full Form
 6. **SliceProfilePickerView** — list with summary subtitle
-7. **ContentView + SlicePalApp** — wire up second environment object, row, bridge call
+7. **ContentView + PalmSliceApp** — wire up second environment object, row, bridge call
 8. **End-to-end test** — confirm gyroid infill at 20%, 3 walls, supports, and brim all appear in exported gcode
 
 ---

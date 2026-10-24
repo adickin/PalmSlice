@@ -28,12 +28,13 @@ Building this from source? See **[BUILDING.md](BUILDING.md)**.
 
 Single-screen SwiftUI app with a live 3D viewer:
 
-- Load an STL, 3MF, OBJ or AMF file via the document picker or drag-and-drop (3MF/AMF print settings are ignored; geometry and layout are kept)
-- View it in an interactive SceneKit viewer — orbit/pan/zoom, wireframe, overhang/face-normal color modes, layer preview after slicing
-- Move / rotate / scale the model with on-screen gizmos, "Lay Flat" snap-to-face, fit-to-bed/center/drop-to-bed helpers
-- Choose a printer profile, slice profile, and material profile (built-ins provided, fully editable)
+- Load STL, 3MF, OBJ or AMF files via the document picker or drag-and-drop; several models at once, with collision and out-of-bed highlighting. A 3MF's per-part settings (overrides, height ranges, variable layer height) come with it, and its print settings can be turned into profiles
+- View them in an interactive SceneKit viewer — orbit/pan/zoom, wireframe, overhang/face-normal color modes, layer preview after slicing
+- Move / rotate / scale with on-screen gizmos or typed mm sizes, "Lay Flat" snap-to-face, fit-to-bed/center/drop-to-bed helpers
+- Choose a printer profile, slice profile, and material profile. Every slice starts from the printer's PrusaSlicer vendor preset (~1,000 printers bundled), with your profiles on top; an All Settings screen exposes every setting, and profiles import/export PrusaSlicer `.ini` files
 - Slice on-device with a progress indicator and cancel support
-- Export G-code to the app's Documents directory — visible in the iOS Files app and shareable via the Share Sheet (AirDrop, Files, send anywhere)
+- Export G-code to Files, the Share Sheet (AirDrop, send anywhere), or upload it to an OctoPrint server
+- iPad layout with Models / Slice sidebars, drag-and-drop, keyboard shortcuts and Apple Pencil support
 
 See [CHANGELOG.md](CHANGELOG.md) for the history of features as they landed, and [PROGRESS.md](PROGRESS.md) for current status and what's next.
 
@@ -65,10 +66,14 @@ a printer not listed here, please open an issue with the printer model and outco
 - [x] Printer / slicing / material profiles
 - [x] Model transform controls (move/rotate/scale, snap-to-face, fit-to-bed)
 - [x] Confirmed working: valid G-code produced and printed on real hardware
-- [ ] Auto-orient / support structures
+- [x] Multiple models on the bed, with collision detection
+- [x] iPad layout + Apple Pencil
+- [x] 3MF / OBJ / AMF import, including 3MF per-part settings
+- [x] PrusaSlicer vendor presets as the base of every slice; `.ini` import/export
+- [x] OctoPrint upload
+- [ ] Auto-orient
 - [ ] Cut tool
-- [ ] Multi-model arrangement
-- [ ] iPad layout
+- [ ] Paint-on supports / seams
 
 ## License
 

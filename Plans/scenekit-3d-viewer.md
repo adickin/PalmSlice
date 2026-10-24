@@ -11,7 +11,7 @@ All visualization is pure Swift/SceneKit — no C bridge changes needed. The STL
 Three new Swift files + a few ContentView edits:
 
 ```
-app/SlicePal/
+app/PalmSlice/
   STLParser.swift        ← STL → SCNGeometry (binary + ASCII)
   STLSceneView.swift     ← UIViewRepresentable wrapping SCNView + gestures
   ContentView.swift      ← add geometry state, wire viewer into layout

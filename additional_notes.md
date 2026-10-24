@@ -1,6 +1,6 @@
 # Additional Notes — PalmSlice
 
-Reference material removed from CLAUDE.md for brevity. Still accurate as of initial setup.
+Reference material removed from CLAUDE.md for brevity. Last reviewed 2026-10-24 (PrusaSlicer 2.9.6).
 
 ## Additional Key Paths
 
@@ -17,6 +17,9 @@ We patch the PrusaSlicer source tree directly. All changes are gated on the `SLI
 - `~/ios-sources/PrusaSlicer/CMakeLists.txt` — added `SLIC3R_IOS` option; gated CURL, OpenGL/GLEW, NLopt, OpenVDB
 - `~/ios-sources/PrusaSlicer/src/CMakeLists.txt` — gated `libseqarrange` add_subdirectory and PrusaSlicer install block
 - `~/ios-sources/PrusaSlicer/src/libslic3r/CMakeLists.txt` — excluded JPEG; swapped stub source files; gated libseqarrange link
+- `~/ios-sources/PrusaSlicer/src/sla-time-estimates/CMakeLists.txt` — skips the `sla_time_estimate_app` executable on iOS
+
+The changes live in `patches/prusaslicer_ios.patch` and are applied by step 02; see BUILDING.md "Updating PrusaSlicer".
 
 **Stub files added to PrusaSlicer source:**
 - `src/libslic3r/ArrangeHelper_ios_stub.cpp` — replaces ArrangeHelper.cpp; `check_seq_conflict` returns nullopt
@@ -50,7 +53,8 @@ We patch the PrusaSlicer source tree directly. All changes are gated on the `SLI
 Check the actual commit: `cd ~/ios-sources/PrusaSlicer && git log --oneline -1`
 
 Key call sites in `slicer_bridge.cpp` to watch when updating PrusaSlicer:
-- `Slic3r::load_stl(path, &model, nullptr)` — returns bool
+- `Slic3r::load_stl(path, &model, nullptr)` — returns bool (STL only; 3MF/OBJ/AMF go through the format loaders in `slicer_import_model_file`)
 - `print.apply(model, std::move(config))` — takes model + moved config
-- `print.process()` — blocks; no progress callback in current bridge
+- `print.process()` — blocks; progress comes from `print.set_status_callback`
+- `PresetBundle` — loads the vendor profiles (`slicer_presets_load`)
 - `print.export_gcode(path, nullptr, nullptr)` — third arg is thumbnail callback

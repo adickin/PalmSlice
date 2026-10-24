@@ -1,7 +1,7 @@
 # PalmSlice — Future Features
 
 Planned features that are not yet implemented. This is the single place to
-look for "what's next" — it consolidates the previous `BACKLOG.md` plus the
+look for "what's next" — it consolidates the old backlog plus the
 longer-term (non-checklist) items that were living in `PROGRESS.md`'s To Do
 section. Where a detailed implementation plan already exists under `Plans/`,
 this doc links to it instead of duplicating it.

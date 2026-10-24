@@ -16,6 +16,7 @@ private let thirdPartyLicenses: [ThirdPartyLicense] = [
     .init(name: "MPFR",                    license: "LGPL-3.0"),
     .init(name: "Eigen",                   license: "MPL-2.0"),
     .init(name: "Clipper2",                license: "Boost Software License 1.0"),
+    .init(name: "cereal",                  license: "BSD-3-Clause"),
     .init(name: "Qhull",                   license: "Qhull license (permissive)"),
     .init(name: "LibBGCode",               license: "AGPL-3.0"),
     .init(name: "heatshrink",              license: "ISC"),

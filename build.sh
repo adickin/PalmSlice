@@ -75,5 +75,5 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  All steps complete."
 echo ""
 echo "  Next: generate and open the Xcode project:"
-echo "    cd app && xcodegen && open IosSlicer.xcodeproj"
+echo "    cd app && xcodegen && open PalmSlice.xcodeproj"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

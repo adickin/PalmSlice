@@ -19,7 +19,7 @@ CGAL 5.6.2 is downloaded from GitHub by step 13 — do **not** `brew install cga
 ./build.sh
 ```
 
-This runs 15 numbered steps in order. Each step is **idempotent** — re-running skips steps that are already done. To restart from a specific step:
+This runs 22 numbered steps (0–21) in order. Each step is **idempotent** — re-running skips steps that are already done. To restart from a specific step:
 
 ```bash
 ./build.sh --from 7    # restart from Boost
@@ -115,8 +115,8 @@ Two small stub `.cpp` files are compiled instead of their JPEG/Z3-dependent orig
 ### Updating PrusaSlicer
 
 1. Pick the new release tag and set `PRUSA_TAG` in `scripts/common.sh`. Set `LIBBGCODE_COMMIT` to the commit in that tag's `deps/+LibBGCode/LibBGCode.cmake`.
-2. Move the source tree: `cd ~/ios-sources/PrusaSlicer && git fetch --depth=1 origin tag <tag> && git checkout -- . && git checkout <tag>`, and delete the two `*_ios_stub.cpp` files from it.
-3. `git apply --reject ~/work/IosSlicer/patches/prusaslicer_ios.patch`, fix any `.rej` hunks by hand, copy the stub `.cpp` files back in (step 02 does this), then regenerate the patch: `git diff HEAD -- CMakeLists.txt src/CMakeLists.txt src/libslic3r/CMakeLists.txt src/sla-time-estimates/CMakeLists.txt > ~/work/IosSlicer/patches/prusaslicer_ios.patch`.
+2. Move the source tree: `git -C ~/ios-sources/PrusaSlicer fetch --depth=1 origin tag <tag> && git -C ~/ios-sources/PrusaSlicer checkout -- . && git -C ~/ios-sources/PrusaSlicer checkout <tag>`, and delete the two `*_ios_stub.cpp` files from it. Run this and step 3 from the root of this repo.
+3. `git -C ~/ios-sources/PrusaSlicer apply --reject < patches/prusaslicer_ios.patch`, fix any `.rej` hunks by hand, copy the stub `.cpp` files back in (step 02 does this), then regenerate the patch: `git -C ~/ios-sources/PrusaSlicer diff HEAD -- CMakeLists.txt src/CMakeLists.txt src/libslic3r/CMakeLists.txt src/sla-time-estimates/CMakeLists.txt > patches/prusaslicer_ios.patch`.
 4. Check `git diff <old> <new> -- src/libslic3r/ArrangeHelper.hpp src/libslic3r/GCode/Thumbnails.hpp` — the stubs must still match those headers.
 5. Look for new libraries linked by `src/libslic3r/CMakeLists.txt`; add each `.a` to the bundled-lib loop in `scripts/10_libslic3r.sh` and to `OTHER_LDFLAGS` in `app/project.yml`.
 6. Delete the `libbgcode_core.a` and `libslic3r.a` sentinels in both sysroots, run steps 17 and 18 for simulator and device (`PLATFORM=OS64`), then steps 20 and 21, `xcodegen`, and the test suite.
@@ -126,10 +126,10 @@ Two small stub `.cpp` files are compiled instead of their JPEG/Z3-dependent orig
 
 | Step | Likely issue | Fix |
 |------|-------------|-----|
-| Boost (07) | Build time ~30 min on first run | Let it run; subsequent runs skip via sentinel |
+| Boost (7) | Build time ~30 min on first run | Let it run; subsequent runs skip via sentinel |
 | GMP (11) | `--disable-assembly` makes it slower but portable to iOS simulator | No action needed; it's intentional |
 | CGAL version | PrusaSlicer 2.7–2.9 uses CGAL 5.6.2 API; CGAL 6.x changed `property_map()` return type | Script installs CGAL 5.6.2 headers from source, not homebrew |
-| libslic3r (14) | `Print::apply()` / `export_gcode()` signature may differ from cloned version | Check `git log` in `~/ios-sources/PrusaSlicer`; adjust the flagged lines in `slicer_bridge.cpp` |
+| libslic3r (18) | `Print::apply()` / `export_gcode()` signature may differ from cloned version | Check `git log` in `~/ios-sources/PrusaSlicer`; adjust the flagged lines in `slicer_bridge.cpp` |
 | Xcode link | Missing `.a` symbols at link time | Verify `~/ios-sysroot-sim/lib/` has all expected files; cross-check `OTHER_LDFLAGS` in `app/project.yml` |
 | Xcode update | CMake caches keep the old SDK path; if that SDK is gone, clang silently targets Mac Catalyst and the XCFramework step fails with a duplicate `ios-arm64-maccatalyst` slice | Steps 17 and 18 now wipe a build dir whose cached SDK no longer exists; for other steps, delete the build dir by hand |
 | Clang 19+ (Xcode 16.3+) | `error: a template argument list is expected after a name prefixed by the template keyword` in Boost / CGAL headers | Step 18 passes `-Wno-missing-template-arg-list-after-template-kw` |
@@ -144,7 +144,7 @@ PalmSlice/
 ├── README.md
 ├── BUILDING.md
 ├── CHANGELOG.md
-├── build.sh                          ← master build entry point (steps 0–20, simulator)
+├── build.sh                          ← master build entry point (steps 0–21, simulator)
 ├── build_device.sh                   ← mirrors build.sh for PLATFORM=OS64 (device)
 ├── patches/
 │   ├── prusaslicer_ios.patch         ← CMakeLists changes (SLIC3R_IOS option)
@@ -176,12 +176,15 @@ PalmSlice/
 │   └── 12_vendor_profiles.sh         ← PrusaSlicer vendor presets → app bundle
 └── app/
     ├── project.yml                   ← xcodegen spec (links ~40 static libs)
-    └── PalmSlice/
-        ├── PalmSliceApp.swift
-        ├── ContentView.swift
-        ├── slicer_bridge.h           ← C API visible to Swift
-        ├── slicer_bridge.cpp         ← libslic3r wrapper
-        ├── PalmSlice-Bridging-Header.h
-        └── Resources/
-            └── cube.stl              ← 20mm test model
+    ├── PalmSlice/
+    │   ├── PalmSliceApp.swift
+    │   ├── ContentView.swift
+    │   ├── slicer_bridge.h           ← C API visible to Swift
+    │   ├── slicer_bridge.cpp         ← libslic3r wrapper
+    │   ├── PalmSlice-Bridging-Header.h
+    │   ├── PresetLibrary.swift       ← loads the vendor presets, applies them per slice
+    │   ├── PrusaSlicerProfiles/vendor/ ← vendor .ini bundles (step 21, committed)
+    │   └── Resources/
+    │       └── cube.stl              ← 20mm test model
+    └── PalmSliceTests/               ← XCTest target (fixtures in Fixtures/)
 ```

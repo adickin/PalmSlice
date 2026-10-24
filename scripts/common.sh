@@ -5,7 +5,8 @@
 set -euo pipefail
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-export PROJECT_ROOT="$HOME/work/IosSlicer"
+# Repo root, derived from this file's location (scripts/..) so the checkout can live anywhere
+export PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export IOS_SOURCES="$HOME/ios-sources"           # cloned repos live here
 export IOS_SYSROOT=""   # set below based on PLATFORM
 export IOS_TOOLCHAIN="$HOME/ios-toolchain/ios.toolchain.cmake"

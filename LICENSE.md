@@ -42,6 +42,7 @@ https://www.gnu.org/licenses/agpl-3.0.en.html
 | [MPFR](https://www.mpfr.org/) | LGPL-3.0 |
 | [Eigen](https://eigen.tuxfamily.org/) | MPL-2.0 |
 | [Clipper2](https://github.com/AngusJohnson/Clipper2) | Boost Software License 1.0 |
+| [cereal](https://github.com/USCiLab/cereal) | BSD-3-Clause |
 | [Qhull](http://www.qhull.org/) | Qhull license (permissive) |
 | [LibBGCode](https://github.com/prusa3d/libbgcode) | AGPL-3.0 |
 | [heatshrink](https://github.com/atomicobject/heatshrink) | ISC |

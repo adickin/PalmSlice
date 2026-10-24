@@ -26,7 +26,7 @@ Support loading multiple STL files simultaneously, each with independent transfo
 
 ## Step 1 — `PlacedModel` Data Model
 
-**File:** `app/SlicePal/PlacedModel.swift` (new file)
+**File:** `app/PalmSlice/PlacedModel.swift` (new file)
 
 ```swift
 struct PlacedModel: Identifiable {
@@ -90,7 +90,7 @@ Gizmo gestures:
 
 ## Step 4 — Intersection Detection
 
-**File:** `app/SlicePal/IntersectionChecker.swift` (new file)
+**File:** `app/PalmSlice/IntersectionChecker.swift` (new file)
 
 ```swift
 func checkIntersections(models: inout [PlacedModel]) {
