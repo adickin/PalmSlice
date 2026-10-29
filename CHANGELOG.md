@@ -2,6 +2,10 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-10-29
+
+- Plan for multi-tool printing, Snapmaker U1 support, ColorMix (Prusa's layer-alternating colour mixing, already in our libslic3r 2.9.6) and painting colours onto the model: [Plans/u1_colormix.md](Plans/u1_colormix.md), with a handoff for starting the work in [Plans/u1_colormix_handoff.md](Plans/u1_colormix_handoff.md). `FUTURE_FEATURES.md`'s multi-extruder entry points to it
+
 ## 2026-10-24
 
 - Docs brought up to date: README feature list and roadmap (3MF settings, vendor presets, All Settings, `.ini`, OctoPrint, iPad/Pencil; 3MF settings are no longer "ignored"); BUILDING step count (22 steps, 0–21), friction-table step numbers and project layout; App Store listing and `PRIVACY.md` mention 3MF/OBJ/AMF and `.ini` files; `PROGRESS.md` notes which early bridge calls and the single adhesion setting were later replaced; `additional_notes.md` API notes refreshed; old "SlicePal" name replaced in `Plans/`

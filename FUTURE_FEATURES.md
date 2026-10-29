@@ -53,7 +53,9 @@ only, or also a viewer/app theme color?
   extruder and parts can't be assigned to an extruder, so nothing prints
   with a second extruder. Needs a material per extruder, a per-part extruder
   choice, and checking tool changes / wipe tower output. Unlocks
-  dual-extruder printers such as the Ultimaker S5/S7.
+  dual-extruder printers such as the Ultimaker S5/S7. Planned in
+  [Plans/u1_colormix.md](Plans/u1_colormix.md) (Phase 1), together with
+  Snapmaker U1 support, ColorMix and painting colours onto the model.
 
 ## Profiles (printer, slice, material)
 
