@@ -454,7 +454,7 @@ extension MaterialProfile: PrusaSettingsConvertible {
                                  "filament_retract_before_travel"]
 
     static let typedKeys: Set<String> = Set([
-        "filament_type", "filament_diameter", "first_layer_temperature", "temperature",
+        "filament_type", "filament_colour", "filament_diameter", "first_layer_temperature", "temperature",
         "first_layer_bed_temperature", "bed_temperature", "extrusion_multiplier",
         "cooling", "min_fan_speed", "max_fan_speed", "bridge_fan_speed",
         "disable_fan_first_layers", "fan_below_layer_time", "slowdown_below_layer_time",
@@ -465,6 +465,7 @@ extension MaterialProfile: PrusaSettingsConvertible {
         typealias V = PrusaValue
         var s: [String: String] = [
             "filament_type": V.strings([filamentType]),
+            "filament_colour": V.strings([colour]),
             "filament_diameter": V.floats([filamentDiameter]),
             "first_layer_temperature": V.ints([firstLayerTemp]),
             "temperature": V.ints([otherLayersTemp]),
@@ -491,6 +492,7 @@ extension MaterialProfile: PrusaSettingsConvertible {
     mutating func updateTyped(fromPrusa s: [String: String]) {
         typealias V = PrusaValue
         if let v = s["filament_type"].flatMap({ V.parseStrings($0).first }), !v.isEmpty { filamentType = v }
+        if let v = s["filament_colour"].flatMap({ V.parseStrings($0).first }), HexColour(v) != nil { colour = v }
         if let v = s["filament_diameter"].flatMap(V.parseFloat) { filamentDiameter = v }
         if let v = s["first_layer_temperature"].flatMap(V.parseInt) { firstLayerTemp = v }
         if let v = s["temperature"].flatMap(V.parseInt) { otherLayersTemp = v }

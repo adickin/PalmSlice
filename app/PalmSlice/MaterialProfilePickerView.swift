@@ -4,6 +4,18 @@ struct MaterialProfilePickerView: View {
     @EnvironmentObject var materialProfileStore: MaterialProfileStore
     @EnvironmentObject var profileStore: ProfileStore
     @Environment(\.dismiss) private var dismiss
+    /// The tool (1-based) whose material is picked; tool 1 is the selected profile.
+    var tool: Int = 1
+    /// Number of tools on the printer (shows "Tool n" in the title when > 1).
+    var toolCount: Int = 1
+
+    private var selectedID: UUID? {
+        tool == 1 ? materialProfileStore.selectedProfileId : materialProfileStore.material(forTool: tool)?.id
+    }
+
+    private func choose(_ id: UUID) {
+        materialProfileStore.setMaterial(id, forTool: tool)
+    }
 
     @State private var newProfile: MaterialProfile? = nil
     @State private var showPresetPicker = false
@@ -16,8 +28,8 @@ struct MaterialProfilePickerView: View {
                 ForEach(materialProfileStore.profiles) { profile in
                     MaterialProfileRowView(
                         profile: profile,
-                        isSelected: materialProfileStore.selectedProfileId == profile.id,
-                        onSelect: { materialProfileStore.select(id: profile.id) },
+                        isSelected: selectedID == profile.id,
+                        onSelect: { choose(profile.id) },
                         onOpen:   { profileToEdit = profile },
                         onDelete: { materialProfileStore.delete(id: profile.id) },
                         canDelete: materialProfileStore.profiles.count > 1
@@ -26,9 +38,9 @@ struct MaterialProfilePickerView: View {
             }
             .iniImporter(MaterialProfile.self, isPresented: $showIniImport) { imported in
                 for profile in imported { materialProfileStore.add(profile) }
-                if let last = imported.last { materialProfileStore.select(id: last.id) }
+                if let last = imported.last { choose(last.id) }
             }
-            .navigationTitle("Material Profile")
+            .navigationTitle(toolCount > 1 ? "Tool \(tool) Material" : "Material Profile")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(
                 leading: Button("Done") { dismiss() },
@@ -76,6 +88,11 @@ private struct MaterialProfileRowView: View {
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
             }
             .buttonStyle(.plain)
+
+            Circle()
+                .fill((HexColour(profile.colour) ?? .grey).color)
+                .overlay(Circle().strokeBorder(.secondary.opacity(0.4), lineWidth: 0.5))
+                .frame(width: 16, height: 16)
 
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 2) {

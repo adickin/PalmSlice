@@ -9,6 +9,36 @@ final class MaterialProfileStore: ObservableObject {
         profiles.first { $0.id == selectedProfileId }
     }
 
+    /// Materials loaded in tools 2, 3, … of a multi-tool printer (tool 1 is
+    /// the selected profile). Missing or deleted entries fall back to tool 1's.
+    @Published private(set) var toolMaterialIDs: [UUID] = []
+    private static let toolMaterialsKey = "toolMaterialIDs"
+
+    /// The material in a tool (1-based).
+    func material(forTool tool: Int) -> MaterialProfile? {
+        guard tool > 1, tool - 2 < toolMaterialIDs.count,
+              let m = profiles.first(where: { $0.id == toolMaterialIDs[tool - 2] }) else { return selectedProfile }
+        return m
+    }
+
+    /// Whether the tool has its own material (not tool 1's by default).
+    func hasOwnMaterial(tool: Int) -> Bool {
+        tool == 1 || (tool - 2 < toolMaterialIDs.count && profiles.contains { $0.id == toolMaterialIDs[tool - 2] })
+    }
+
+    func setMaterial(_ id: UUID, forTool tool: Int) {
+        guard tool > 1 else { return select(id: id) }
+        let fallback = selectedProfileId ?? id
+        while toolMaterialIDs.count < tool - 1 { toolMaterialIDs.append(fallback) }
+        toolMaterialIDs[tool - 2] = id
+        UserDefaults.standard.set(toolMaterialIDs.map(\.uuidString), forKey: Self.toolMaterialsKey)
+    }
+
+    /// Materials for tools 2…count.
+    func toolMaterials(count: Int) -> [MaterialProfile] {
+        count < 2 ? [] : (2...count).compactMap { material(forTool: $0) }
+    }
+
     private var storeURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("material_profiles.json")
@@ -45,6 +75,8 @@ final class MaterialProfileStore: ObservableObject {
         if selectedProfileId == nil || !profiles.contains(where: { $0.id == selectedProfileId }) {
             selectedProfileId = profiles.first?.id
         }
+        toolMaterialIDs = (UserDefaults.standard.stringArray(forKey: Self.toolMaterialsKey) ?? [])
+            .compactMap(UUID.init)
     }
 
     private static let offeredBuiltInsKey = "materialBuiltInsOffered"

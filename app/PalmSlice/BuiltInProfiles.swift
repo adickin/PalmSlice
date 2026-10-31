@@ -35,6 +35,9 @@ enum BuiltInProfiles {
         Entry(key: "elegoo-neptune3pro", name: "Elegoo Neptune-3 Pro", systemPreset: "Elegoo Neptune-3 Pro"),
         Entry(key: "sovol-sv06", name: "Sovol SV06", systemPreset: "SV06"),
         Entry(key: "voron-v2-350", name: "Voron 2.4 (350)", systemPreset: "Voron_v2_350 0.4 nozzle"),
+        // From PalmSlice's own vendor bundle (profiles/PalmSlice.ini, ported
+        // from OrcaSlicer). Not printed on real hardware yet.
+        Entry(key: "snapmaker-u1", name: "Snapmaker U1", systemPreset: "Snapmaker U1 (0.4 nozzle)"),
     ]
 
     /// PrusaSlicer printer preset by builtInKey, for linking saved copies.

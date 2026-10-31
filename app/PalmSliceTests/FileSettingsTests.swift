@@ -116,7 +116,9 @@ final class ProjectParityTests: XCTestCase {
             guard let h = slicer_create() else { return XCTFail("slicer_create") }
             defer { slicer_destroy(h) }
             try SliceSetup.configure(h, printer: printer, material: material, slice: slice)
-            let idx = slicer_add_stl(h, object.url.path)
+            // The app's path: the native object, then its file settings.
+            let idx = slicer_add_model_object(h, try XCTUnwrap(object.nativeURL).path, 1)
+            XCTAssertGreaterThanOrEqual(idx, 0, String(cString: slicer_last_error(h)))
             var t = SlicerModelTransform(); t.scale_x = 1; t.scale_y = 1; t.scale_z = 1
             XCTAssertEqual(slicer_set_object_transform(h, idx, &t), 0)
             if let fs = object.fileSettings {

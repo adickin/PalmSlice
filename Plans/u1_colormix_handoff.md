@@ -86,9 +86,9 @@ our settings layer uses PrusaSlicer key names throughout.
   `~/ios-sources/test-data/` (existing: `PS_3MF/`, the 3DLabPrint Cub parity set).
 - DEBUG screenshots: `SIMCTL_CHILD_PALMSLICE_DEBUG_SCREEN=<DebugScreen case>`;
   simulator screenshots need `sips -r 270`.
-- There is no XCTest target yet. The plan's Testing section proposes starting one with
-  bridge tests (native import keeps volumes/extruders/mixes; U1 slice has no
-  unresolved `{…}` placeholders; ColorMix 3MF matches the reference slice).
+- The XCTest target is `app/PalmSliceTests` (this note used to say there was none).
+  The bridge tests the plan proposed now exist: `NativeImportTests`, `SnapmakerU1Tests`,
+  `ColorMixTests`, `PaintingTests`.
 - The 3MF settings import (per-object settings, layer ranges, variable layer
   height) must keep working once import stops flattening. Re-run the Cub parity check.
 

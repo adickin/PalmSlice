@@ -59,7 +59,7 @@ clone_and_patch() {
     for stub_src in ArrangeHelper_ios_stub.cpp; do
         DST="$PRUSA_SRC/src/libslic3r/$stub_src"
         SRC="$PATCHES_DIR/$stub_src"
-        if [ ! -f "$DST" ] && [ -f "$SRC" ]; then
+        if [ -f "$SRC" ] && ! cmp -s "$SRC" "$DST"; then
             cp "$SRC" "$DST"
             log_ok "Installed $stub_src"
         elif [ ! -f "$DST" ] && [ ! -f "$SRC" ]; then
@@ -72,7 +72,7 @@ clone_and_patch() {
     for stub_src in Thumbnails_ios_stub.cpp; do
         DST="$PRUSA_SRC/src/libslic3r/GCode/$stub_src"
         SRC="$PATCHES_DIR/$stub_src"
-        if [ ! -f "$DST" ] && [ -f "$SRC" ]; then
+        if [ -f "$SRC" ] && ! cmp -s "$SRC" "$DST"; then
             cp "$SRC" "$DST"
             log_ok "Installed $stub_src"
         elif [ ! -f "$DST" ] && [ ! -f "$SRC" ]; then

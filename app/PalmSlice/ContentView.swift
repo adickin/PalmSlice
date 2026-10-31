@@ -42,6 +42,10 @@ struct ContentView: View {
     @State private var showProfilePicker = false
     @State private var showSliceProfilePicker = false
     @State private var showMaterialProfilePicker = false
+    @State private var materialPickerTool = 1
+    @State private var showMixes = false
+    /// Paint mode on the selected model.
+    @State private var paintController: PaintController? = nil
     @State private var showNoProfileAlert = false
     @State private var showNoSliceProfileAlert = false
     #if DEBUG
@@ -50,6 +54,16 @@ struct ContentView: View {
     @State private var showAbout = false
     /// Part whose settings-from-file sheet is open.
     @State private var fileSettingsModelID: UUID? = nil
+    /// Model whose Parts & Tools sheet is open.
+    @State private var partsModelID: UUID? = nil
+    /// Volume shown in the 3D view from the Parts & Tools sheet.
+    @State private var shownPart: STLSceneView.ShownPart? = nil
+    /// Wipe tower position dragged on the bed this session (printer mm); nil = the default.
+    @State private var wipeTowerPosition: SIMD2<Double>? = nil
+    /// The last slice's wipe tower depth (mm); nil = estimate it.
+    @State private var slicedTowerDepth: Double? = nil
+    /// Settings of the PrusaSlicer print preset the slice profile is layered on.
+    @State private var basePrintSettings: [String: String] = [:]
     /// A just-imported file's print settings, offered for use (see offerFileProfiles).
     @State private var fileProfilesOffer: FileProfilesOffer? = nil
     @State private var showIntersectingAlert = false
@@ -87,11 +101,16 @@ struct ContentView: View {
     // Viewer controls
     @State private var showWireframe: Bool = false
     @State private var viewerColorMode: ViewerColorMode = .solid
+    /// The session's ColorMix mixes (from imported files and the mix editor).
+    @State private var mixes: [ToolMix] = []
     @State private var isParsingSTL = false
 
     // Layer preview
     @State private var showLayerPreview: Bool = false
     @State private var parsedLayers: [GCodeLayer] = []
+    @State private var previewColouring: PreviewColouring = .tool
+    /// The sliced G-code uses more than one tool (offer colouring by tool).
+    @State private var previewUsesSeveralTools = false
     @State private var currentLayerIndex: Int = 0
 
     /// Retained while a slice is in progress; lets the cancel button reach slicer_cancel().
@@ -144,13 +163,25 @@ struct ContentView: View {
                 compactLayout
             }
         }
+        .task(id: "\(profileStore.selectedProfileId?.uuidString ?? "")|\(sliceProfileStore.selectedProfileId?.uuidString ?? "")") {
+            // The stores load after the vendor presets; don't start that load here.
+            guard let printer = profileStore.selectedProfile, let slice = sliceProfileStore.selectedProfile else { return }
+            basePrintSettings = await Task.detached(priority: .utility) {
+                SliceSetup.base(printer: printer, material: nil, slice: slice)
+                    .flatMap { PresetLibrary.settings(.print, $0.print) } ?? [:]
+            }.value
+            wipeTowerPosition = nil
+            slicedTowerDepth = nil
+        }
+        .onChange(of: plateTools) { _ in slicedTowerDepth = nil }
         .onChange(of: viewerColorMode) { _ in
             let mode = viewerColorMode
             for model in models {
                 let url     = model.url
                 let modelID = model.id
+                let parts   = model.partFacetCounts
                 Task.detached(priority: .userInitiated) {
-                    let geo = try? parseSTL(url: url, colorMode: mode)
+                    let geo = try? parseSTL(url: url, colorMode: mode, partFacetCounts: parts)
                     await MainActor.run {
                         if let i = models.firstIndex(where: { $0.id == modelID }) {
                             models[i].geometry = geo
@@ -165,6 +196,16 @@ struct ContentView: View {
         #if DEBUG
         // Simulator scripting: `SIMCTL_CHILD_PALMSLICE_DEBUG_STL=/path/a.stl xcrun simctl launch …`
         .task {
+            // `PALMSLICE_DEBUG_PRINTER=<PrusaSlicer printer preset>` selects (adding if
+            // needed) a printer from the vendor presets, e.g. a multi-tool one.
+            if let preset = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_PRINTER"] {
+                if let existing = profileStore.profiles.first(where: { $0.systemPreset == preset }) {
+                    profileStore.select(id: existing.id)
+                } else if let printer = PrinterProfile(systemPreset: preset) {
+                    profileStore.add(printer)
+                    profileStore.select(id: printer.id)
+                }
+            }
             if let path = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_STL"], models.isEmpty {
                 importModel(from: URL(fileURLWithPath: path))
             }
@@ -174,9 +215,37 @@ struct ContentView: View {
         .sheet(item: $debugScreen) { $0.view }
         .task {
             try? await Task.sleep(for: .seconds(3))   // after the splash and store loads
+            // `PALMSLICE_DEBUG_TOOL_COLOURS=#FF0000,#00FF00,…` loads a copy of the
+            // selected material in that colour into each tool.
+            if let colours = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_TOOL_COLOURS"],
+               let base = materialProfileStore.selectedProfile {
+                for (i, colour) in colours.split(separator: ",").enumerated() {
+                    let name = "\(base.name) T\(i + 1)"
+                    var m = materialProfileStore.profiles.first { $0.name == name } ?? base
+                    if m.id == base.id { m.id = UUID(); m.name = name; materialProfileStore.add(m) }
+                    m.colour = String(colour)
+                    materialProfileStore.update(m)
+                    materialProfileStore.setMaterial(m.id, forTool: i + 1)
+                }
+            }
+            // `PALMSLICE_DEBUG_SLICE=1` slices once the models have loaded.
+            if ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_SLICE"] == "1" {
+                while models.isEmpty || models.contains(where: { $0.geometry == nil }) {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                triggerSlice()
+            }
             let screen = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_SCREEN"]
             if screen == "fileSettings" {
                 fileSettingsModelID = models.first?.id   // with PALMSLICE_DEBUG_STL set to a 3MF
+            } else if screen == "paint" {
+                selectedModelID = models.last?.id
+                startPainting()
+            } else if screen == "parts" {
+                partsModelID = models.first?.id
+                shownPart = models.first.flatMap { m in
+                    m.parts.firstIndex { $0.kind == .modifier && $0.extruder == 0 }.map { .init(model: m.id, part: $0) }
+                }
             } else {
                 debugScreen = screen.flatMap(DebugScreen.init)
             }
@@ -187,7 +256,12 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showProfilePicker) { ProfilePickerView() }
         .sheet(isPresented: $showSliceProfilePicker) { SliceProfilePickerView() }
-        .sheet(isPresented: $showMaterialProfilePicker) { MaterialProfilePickerView() }
+        .sheet(isPresented: $showMixes) {
+            MixesView(mixes: $mixes, palette: toolPalette, usedTools: plateTools)
+        }
+        .sheet(isPresented: $showMaterialProfilePicker) {
+            MaterialProfilePickerView(tool: materialPickerTool, toolCount: toolCount)
+        }
         .sheet(isPresented: $showAbout) { AboutView() }
         .alert("Use This File's Print Settings?",
                isPresented: Binding(get: { fileProfilesOffer != nil }, set: { if !$0 { fileProfilesOffer = nil } }),
@@ -205,6 +279,16 @@ struct ContentView: View {
                                     set: { if !$0 { fileSettingsModelID = nil } })) {
             if let id = fileSettingsModelID, let binding = modelBinding(id: id) {
                 ModelFileSettingsView(model: binding)
+            }
+        }
+        .sheet(isPresented: Binding(get: { partsModelID != nil },
+                                    set: { if !$0 { partsModelID = nil } })) {
+            if let id = partsModelID, let binding = modelBinding(id: id) {
+                ModelPartsView(model: binding, palette: toolPalette,
+                               shownPart: Binding(get: { shownPart?.model == id ? shownPart?.part : nil },
+                                                  set: { shownPart = $0.map { .init(model: id, part: $0) } }))
+                    .presentationDetents([.medium, .large])
+                    .interactiveBehindMediumSheet()
             }
         }
         .sheet(isPresented: $showTransformPanel) {
@@ -534,6 +618,17 @@ struct ContentView: View {
                     }
                 }
                 Spacer()
+                if model.isPainted {
+                    Image(systemName: "paintbrush.pointed.fill").foregroundStyle(.secondary)
+                        .accessibilityLabel("Painted")
+                }
+                if showsToolColours || !model.parts.isEmpty {
+                    Button { partsModelID = model.id } label: {
+                        ToolBadge(tool: model.extruder, colour: toolPalette.colour(model.extruder))
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Parts and tools")
+                }
                 if model.fileSettings != nil || model.projectSettings != nil {
                     Button { fileSettingsModelID = model.id } label: { FileSettingsBadge(model: model) }
                         .buttonStyle(.borderless)
@@ -551,6 +646,9 @@ struct ContentView: View {
             }
         }
         .contextMenu {
+            Button { partsModelID = model.id } label: {
+                Label("Parts & Tools…", systemImage: "square.stack.3d.up")
+            }
             if model.fileSettings != nil || model.projectSettings != nil {
                 Button { fileSettingsModelID = model.id } label: {
                     Label("Settings from File…", systemImage: "slider.horizontal.3")
@@ -688,7 +786,9 @@ struct ContentView: View {
                 layers: parsedLayers,
                 currentLayerIndex: currentLayerIndex,
                 bedX: bedXVal,
-                bedY: bedYVal
+                bedY: bedYVal,
+                colouring: previewUsesSeveralTools ? previewColouring : .feature,
+                toolColours: toolPalette.physical
             )
         } else {
             STLSceneView(
@@ -715,8 +815,21 @@ struct ContentView: View {
                 onCameraSet: {
                     cameraHasBeenSet = true
                 },
-                onPencilAction: { cycleGizmoMode() }
+                onPencilAction: { cycleGizmoMode() },
+                palette: showsToolColours ? toolPalette : nil,
+                shownPart: shownPart,
+                wipeTower: wipeTower,
+                bedCentreMM: bedCentreMM,
+                onWipeTowerMove: { wipeTowerPosition = $0 },
+                paintController: paintController
             )
+            .overlay(alignment: .bottom) {
+                if let controller = paintController {
+                    PaintToolbar(controller: controller, palette: toolPalette) { finishPainting() }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 12)
+                }
+            }
             .overlay {
                 if isParsingSTL {
                     Color(.systemGray6).opacity(0.7)
@@ -751,7 +864,9 @@ struct ContentView: View {
                         onAdd: { showFilePicker = true },
                         disabled: isBusy,
                         onModelsChanged: { updateIntersections() },
-                        onShowFileSettings: { fileSettingsModelID = $0 }
+                        onShowFileSettings: { fileSettingsModelID = $0 },
+                        onShowParts: { partsModelID = $0 },
+                        palette: showsToolColours ? toolPalette : nil
                     )
                 }
                 if !showLayerPreview && selectedModelID != nil && selectedModel != nil {
@@ -807,6 +922,12 @@ struct ContentView: View {
                     overlayButton(icon: "move.3d",   label: "Move",   active: gizmoMode == .translate) { gizmoMode = .translate }
                     overlayButton(icon: "rotate.3d", label: "Rotate", active: gizmoMode == .rotate)    { gizmoMode = .rotate }
                     overlayButton(icon: "scale.3d",  label: "Scale",  active: gizmoMode == .scale)     { gizmoMode = .scale }
+                    if showsToolColours {
+                        Divider().frame(width: 36).padding(.vertical, 2)
+                        overlayButton(icon: "paintbrush.pointed", label: "Paint", active: paintController != nil) {
+                            if paintController == nil { startPainting() } else { finishPainting() }
+                        }
+                    }
                 }
             }
 
@@ -1148,6 +1269,18 @@ struct ContentView: View {
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
 
+            if previewUsesSeveralTools {
+                Picker("Colour by", selection: $previewColouring) {
+                    ForEach(PreviewColouring.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+            }
+            if showsToolColours {
+                toolChangeHereMenu
+                    .fixedSize()
+            }
+
             Slider(
                 value: Binding(
                     get: { Double(currentLayerIndex) },
@@ -1160,6 +1293,41 @@ struct ContentView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Colour by height from the preview: from the current layer up, the
+    /// selected model (or every model, if none is selected) prints with a tool.
+    private var toolChangeHereMenu: some View {
+        Menu {
+            let choices = Array(1...toolCount) + mixes.map(\.id)
+            ForEach(choices, id: \.self) { tool in
+                Button(toolMenuTitle(tool)) { addToolChangeAtCurrentLayer(tool) }
+            }
+        } label: {
+            Label("Tool from here", systemImage: "paintpalette")
+                .font(.caption.weight(.semibold))
+        }
+        .disabled(isBusy)
+    }
+
+    private func toolMenuTitle(_ tool: Int) -> String {
+        if let mix = mixes.first(where: { $0.id == tool }) {
+            return "\(mix.name) (" + mix.tools.map { "T\($0)" }.joined(separator: "+") + ")"
+        }
+        return "T\(tool) – \(materialProfileStore.material(forTool: tool)?.name ?? "")"
+    }
+
+    private func addToolChangeAtCurrentLayer(_ tool: Int) {
+        guard parsedLayers.indices.contains(currentLayerIndex) else { return }
+        // The band starts at the bottom of the current layer, so it includes it.
+        let from = currentLayerIndex > 0 ? Double(parsedLayers[currentLayerIndex - 1].z) : 0
+        let rounded = (from * 1000).rounded() / 1000
+        for i in models.indices where selectedModelID == nil || models[i].id == selectedModelID {
+            models[i].toolBands.removeAll { abs($0.fromZ - rounded) < 0.001 }
+            models[i].toolBands.append(ToolBand(fromZ: rounded, tool: tool))
+            models[i].toolBands.sort { $0.fromZ < $1.fromZ }
+        }
+        triggerSlice()
     }
 
     // MARK: - Bottom Panel
@@ -1381,19 +1549,145 @@ struct ContentView: View {
         }
         .disabled(isBusy)
 
-        // Material profile row
-        Button { showMaterialProfilePicker = true } label: {
-            HStack {
-                Label(
-                    materialProfileStore.selectedProfile?.name ?? "No Material Selected",
-                    systemImage: "drop"
-                )
-                .font(.subheadline)
+        // Material profile row; one per tool on a multi-tool printer.
+        if toolCount <= 1 {
+            Button { materialPickerTool = 1; showMaterialProfilePicker = true } label: {
+                HStack {
+                    Label(
+                        materialProfileStore.selectedProfile?.name ?? "No Material Selected",
+                        systemImage: "drop"
+                    )
+                    .font(.subheadline)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(isBusy)
+        } else {
+            toolStrip
+        }
+    }
+
+    /// Tools 1…N with their materials, flagging tools the plate doesn't use.
+    @ViewBuilder
+    private var toolStrip: some View {
+        let used = toolPalette.physicalTools(plateTools)
+        ForEach(1...toolCount, id: \.self) { tool in
+            let material = materialProfileStore.material(forTool: tool)
+            Button { materialPickerTool = tool; showMaterialProfilePicker = true } label: {
+                HStack(spacing: 8) {
+                    ToolBadge(tool: tool, colour: toolPalette.colour(tool))
+                    Text(material?.name ?? "No Material Selected")
+                        .font(.subheadline)
+                        .foregroundStyle(used.contains(tool) ? Color.primary : Color.secondary)
+                    if !used.contains(tool) {
+                        Text("unused").font(.caption2).foregroundStyle(.secondary)
+                    } else if tool > 1 && !materialProfileStore.hasOwnMaterial(tool: tool) {
+                        Text("same as T1").font(.caption2).foregroundStyle(.orange)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(isBusy)
+        }
+        Button { showMixes = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "circle.lefthalf.filled").frame(width: 28)
+                Text(mixes.isEmpty ? "Mixes" : "Mixes (\(mixes.count))").font(.subheadline)
+                ForEach(mixes.prefix(5)) { MixSwatch(mix: $0, palette: toolPalette).scaleEffect(0.6).frame(width: 18, height: 18) }
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
             }
         }
         .disabled(isBusy)
+        if let hint = mixLayerHint {
+            Label(hint, systemImage: "info.circle").font(.caption).foregroundStyle(.orange)
+        }
+    }
+
+    /// ColorMix looks best with thin layers; nudge when a mix is used with thick ones.
+    private var mixLayerHint: String? {
+        guard plateTools.contains(where: ToolMix.isMix),
+              let height = sliceProfileStore.selectedProfile?.layerHeight, height > 0.12 else { return nil }
+        return String(format: "Mixes look smoothest at 0.08–0.12 mm layers (now %g mm). Each layer change in a mixed area is a tool change.", height)
+    }
+
+    // MARK: Tools
+
+    private var toolCount: Int { max(1, profileStore.selectedProfile?.numberOfExtruders ?? 1) }
+
+    /// Display colours for tools 1…N (their materials) and the session's mixes.
+    private var toolPalette: ToolPalette {
+        ToolPalette(physical: (1...toolCount).map {
+            HexColour(materialProfileStore.material(forTool: $0)?.colour ?? "") ?? .grey
+        }, mixes: mixes)
+    }
+
+    /// The wipe tower the slice will print, when the plate uses several tools.
+    private var wipeTower: WipeTowerFootprint? {
+        let height = models.compactMap { m in m.meshInfo.map { Double($0.sizeMMZ * m.transform.scale.z) } }.max() ?? 0
+        return WipeTowerFootprint.make(
+            settings: sliceProfileStore.selectedProfile?.prusaSettings() ?? [:], base: basePrintSettings,
+            toolCount: toolCount, toolsUsed: toolPalette.physicalTools(plateTools).count,
+            modelHeight: height, slicedDepth: slicedTowerDepth, position: wipeTowerXY)
+    }
+
+    /// Where the wipe tower goes: dragged, or the default for this bed.
+    private var wipeTowerXY: SIMD2<Double> {
+        wipeTowerPosition ?? WipeTowerFootprint.defaultPosition(
+            bedX: bedXVal, bedY: bedYVal, originAtCenter: profileStore.selectedProfile?.originAtCenter == true)
+    }
+
+    /// Bed centre in printer coordinates; model positions are relative to it.
+    private var bedCentreMM: SIMD2<Double> {
+        profileStore.selectedProfile?.originAtCenter == true ? .zero : SIMD2(bedXVal / 2, bedYVal / 2)
+    }
+
+    // MARK: Painting
+
+    /// Paints the selected model; an STL model first becomes a native object.
+    private func startPainting() {
+        guard let id = selectedModelID, let i = models.firstIndex(where: { $0.id == id }) else { return }
+        if models[i].nativeURL == nil {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("paint-" + UUID().uuidString)
+            guard let object = try? importModelFile(at: models[i].url, outputDir: dir).objects.first else {
+                state = .failed(message: "Could not prepare \(models[i].name) for painting.")
+                showErrorAlert = true
+                return
+            }
+            models[i].nativeURL = object.nativeURL
+            models[i].parts = object.parts
+        }
+        guard let controller = PaintController(model: models[i]) else { return }
+        controller.tool = toolCount > 1 ? 2 : 1
+        controller.onModelChange = { updated in
+            guard let j = models.firstIndex(where: { $0.id == updated.id }) else { return }
+            models[j].nativeURL = updated.nativeURL
+            models[j].parts = updated.parts
+            models[j].paint = updated.paint
+            models[j].paintVersion = updated.paintVersion
+        }
+        showLayerPreview = false
+        paintController = controller
+    }
+
+    private func finishPainting() {
+        guard let controller = paintController else { return }
+        let updated = controller.finish()
+        if let j = models.firstIndex(where: { $0.id == updated.id }) {
+            models[j].nativeURL = updated.nativeURL
+            models[j].parts = updated.parts
+        }
+        paintController = nil
+    }
+
+    /// Tint models by tool when there's more than one colour to tell apart.
+    private var showsToolColours: Bool { toolCount > 1 || !mixes.isEmpty }
+
+    /// Every tool (PalmSlice number) the models on the plate print with.
+    private var plateTools: Set<Int> {
+        models.reduce(into: Set<Int>()) { $0.formUnion($1.usedTools) }
     }
 
     // MARK: Sub-views
@@ -1415,7 +1709,7 @@ struct ContentView: View {
         case .done(let url, let time, let filament):
             var msg = "Sliced: \(url.lastPathComponent)\nReview the preview, then tap Export."
             if let t = time { msg += "\nTime: \(t)" }
-            if let f = filament { msg += "\nFilament: \(f) g" }
+            if let f = filament { msg += "\nFilament: \(f)" }
             return msg
         case .failed(let msg):   return "Error: \(msg)"
         }
@@ -1472,7 +1766,9 @@ struct ContentView: View {
     /// it and choose Files, Share, or OctoPrint. Slicing alone never writes outside temp.
     private func exportGCode() {
         guard case .done(let tempURL, _, _) = state else { return }
-        exportRequest = ExportRequest(sourceURL: tempURL)
+        let project = tempURL.deletingPathExtension().appendingPathExtension("3mf")
+        exportRequest = ExportRequest(sourceURL: tempURL,
+                                      projectURL: FileManager.default.fileExists(atPath: project.path) ? project : nil)
     }
 
     // MARK: - File import
@@ -1515,13 +1811,16 @@ struct ContentView: View {
         let outputDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("import-" + importID.uuidString, isDirectory: true)
         isParsingSTL = true
+        let sessionMixes = mixes
         Task.detached(priority: .userInitiated) {
-            let result = Result { try convertModelFile(at: dest, outputDir: outputDir) }
+            let result = Result { try importModelFile(at: dest, outputDir: outputDir, mixes: sessionMixes) }
             try? FileManager.default.removeItem(at: dest)
             await MainActor.run {
                 isParsingSTL = false
                 switch result {
-                case .success(var objects):
+                case .success(let file):
+                    var objects = file.objects
+                    mixes = file.mixes
                     // A single-object file keeps the file's name, like an STL import.
                     if objects.count == 1 {
                         objects[0].name = fileName
@@ -1545,7 +1844,8 @@ struct ContentView: View {
         // Offset each additional import along X so it doesn't land exactly on top of
         // existing models in the slicer (which can crash libslic3r with coincident objects).
         let baseX: Float = models.isEmpty ? 0 : Float(models.count) * 50
-        var added: [(id: UUID, url: URL, name: String)] = []
+        var added: [(id: UUID, url: URL, name: String, parts: [Int], volumes: [(Int, URL)],
+                     native: (url: URL, parts: [ModelPart])?)] = []
         for object in objects {
             var initialTransform = ModelTransform()
             initialTransform.positionMM.x = baseX + object.offsetMM.x
@@ -1559,9 +1859,14 @@ struct ContentView: View {
                 geometry: nil,
                 transform: initialTransform,
                 fileSettings: object.fileSettings,
-                projectSettings: object.projectSettings
+                projectSettings: object.projectSettings,
+                nativeURL: object.nativeURL,
+                extruder: object.extruder,
+                parts: object.parts
             ))
-            added.append((id, object.url, object.name))
+            let volumes = object.parts.enumerated().compactMap { k, part in part.meshURL.map { (k, $0) } }
+            added.append((id, object.url, object.name, models.last!.partFacetCounts, volumes,
+                          object.nativeURL.map { ($0, object.parts) }))
         }
         selectedModelID = added.last?.id
         state = .idle
@@ -1574,9 +1879,20 @@ struct ContentView: View {
         Task.detached(priority: .userInitiated) {
             for model in added {
                 let parsed = Result { () throws -> (SCNGeometry, STLMeshInfo) in
-                    (try parseSTL(url: model.url, colorMode: mode), try parseSTLMeshInfo(url: model.url))
+                    (try parseSTL(url: model.url, colorMode: mode, partFacetCounts: model.parts),
+                     try parseSTLMeshInfo(url: model.url))
                 }
                 let bvh = (try? parsed.get()).flatMap { TriangleBVH.build(triangleVertices: $0.1.vertices) }
+                // Colour painting from the file, drawn over the model.
+                let paint = model.native.flatMap { loadPaintMesh(nativeURL: $0.url, parts: $0.parts) }
+                // Other volumes, centred like the object's geometry.
+                var volumeGeometries: [Int: SCNGeometry] = [:]
+                if let info = try? parsed.get().1 {
+                    let centre = (info.boundingBoxMM.min + info.boundingBoxMM.max) * 0.5
+                    for (k, url) in model.volumes {
+                        volumeGeometries[k] = try? parseSTL(url: url, centreMM: centre)
+                    }
+                }
                 await MainActor.run {
                     guard let idx = models.firstIndex(where: { $0.id == model.id }) else { return }
                     switch parsed {
@@ -1584,6 +1900,9 @@ struct ContentView: View {
                         models[idx].geometry = geo
                         models[idx].meshInfo = info
                         models[idx].bvh      = bvh
+                        models[idx].partGeometries = volumeGeometries
+                        models[idx].paint = paint
+                        models[idx].paintVersion += 1
                         updateIntersections()
 
                         if checkUnits, !showUnitScaleAlert, let scale = info.suspectedUnitScale {
@@ -1670,9 +1989,13 @@ struct ContentView: View {
         //    slice profiles on top (SliceSetup).
         await setPhase("Applying profiles…")
         let selectedMaterial = await MainActor.run(body: { materialProfileStore.selectedProfile })
+        let toolMaterials = await MainActor.run(body: {
+            materialProfileStore.toolMaterials(count: printerProfile.numberOfExtruders)
+        })
         do {
             try SliceSetup.configure(handle, printer: printerProfile,
-                                     material: selectedMaterial, slice: sliceProfile)
+                                     material: selectedMaterial, slice: sliceProfile,
+                                     toolMaterials: toolMaterials)
         } catch {
             await MainActor.run { state = .failed(message: "\(error)") ; showErrorAlert = true }
             return
@@ -1680,10 +2003,27 @@ struct ContentView: View {
         // Struct form of the slice profile for the wall/top/bottom geometry check.
         var sliceCfg = sliceProfile.bridgeConfig()
 
+        // Keep the printer's G-code thumbnails; they're rendered after slicing.
+        slicer_enable_thumbnails(handle, 1)
+
+        // The wipe tower where the bed view shows it.
+        let tower = await MainActor.run(body: { wipeTowerXY })
+        slicer_set_wipe_tower_position(handle, Float(tower.x), Float(tower.y), 0)
+
+        // Mixes before the models: their tool numbers depend on them.
+        let sessionMixes = await MainActor.run(body: { mixes })
+        if slicer_set_virtual_extruders(handle, ToolMix.json(sessionMixes)) != 0 {
+            let msg = String(cString: slicer_last_error(handle))
+            await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+            return
+        }
+
         // 9. Load each model
         for (i, model) in snapshotModels.enumerated() {
             await setPhase("Loading \(model.name)… (\(i+1)/\(snapshotModels.count))")
-            let objIdx = slicer_add_stl(handle, model.url.path)
+            let objIdx = model.nativeURL.map {
+                slicer_add_model_object(handle, $0.path, model.useFileSettings ? 1 : 0)
+            } ?? slicer_add_stl(handle, model.url.path)
             if objIdx < 0 {
                 let msg = String(cString: slicer_last_error(handle))
                 await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
@@ -1709,6 +2049,10 @@ struct ContentView: View {
                 await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
                 return
             }
+            if let msg = SliceSetup.applyTools(handle, object: objIdx, model: model) {
+                await MainActor.run { state = .failed(message: "\(model.name): \(msg)") ; showErrorAlert = true }
+                return
+            }
             // Settings the model's 3MF stores on it, over the profiles. Heights
             // follow the part's Z scale; a tilted part keeps only the
             // height-independent settings.
@@ -1720,6 +2064,10 @@ struct ContentView: View {
                     await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
                     return
                 }
+            }
+            if let msg = SliceSetup.applyToolBands(handle, object: objIdx, model: model) {
+                await MainActor.run { state = .failed(message: "\(model.name): \(msg)") ; showErrorAlert = true }
+                return
             }
         }
 
@@ -1804,6 +2152,20 @@ struct ContentView: View {
             return
         }
 
+        // 10.5 Thumbnails the printer asks for (e.g. its screen's preview).
+        var sizes = [Int32](repeating: 0, count: 16)
+        let sizeCount = min(Int(slicer_thumbnail_sizes(handle, &sizes, 8)), 8)
+        if sizeCount > 0 {
+            for i in 0..<sizeCount {
+                let (w, h) = (Int(sizes[2 * i]), Int(sizes[2 * i + 1]))
+                let pixels = await MainActor.run(body: {
+                    ThumbnailRenderer.render(models: snapshotModels, palette: showsToolColours ? toolPalette : nil,
+                                             width: w, height: h)
+                })
+                if let pixels { slicer_set_thumbnail(handle, Int32(w), Int32(h), pixels) }
+            }
+        }
+
         // 11. Write G-code (to temp; the user exports after previewing)
         await setPhase("Generating G-code…", progress: 0.95)
         if slicer_export_gcode(handle, gcodeURL.path) != 0 {
@@ -1814,34 +2176,26 @@ struct ContentView: View {
 
         // 12. Parse stats and layer preview
         await setPhase("Parsing results…", progress: 0.99)
-        let (printTime, filamentG) = parseGCodeStats(url: gcodeURL)
+        var towerDepth: Float = 0
+        let hasTower = slicer_wipe_tower_size(handle, &towerDepth, nil, nil) == 0
+        // The same plate as a PrusaSlicer project, offered next to the G-code.
+        let projectURL = gcodeURL.deletingPathExtension().appendingPathExtension("3mf")
+        try? FileManager.default.removeItem(at: projectURL)
+        slicer_export_project_3mf(handle, projectURL.path)
+        let summary = GCodeSummary(url: gcodeURL)
         let layers = parseGCode(url: gcodeURL)
+        let severalTools = layers.contains { $0.moves.contains { $0.tool != 0 } }
 
         await MainActor.run {
-            state = .done(gcodeURL: gcodeURL, printTime: printTime, filamentG: filamentG)
+            var filament = summary?.filamentText
+            if let changes = summary?.toolChanges, changes > 0 { filament = (filament ?? "") + "\nTool changes: \(changes)" }
+            state = .done(gcodeURL: gcodeURL, printTime: summary?.printTime, filamentG: filament)
+            previewUsesSeveralTools = severalTools
+            slicedTowerDepth = hasTower ? Double(towerDepth) : nil
             parsedLayers = layers
             currentLayerIndex = max(0, layers.count - 1)
             showLayerPreview = !layers.isEmpty
         }
-    }
-
-    // MARK: G-code stats parsing
-
-    private func parseGCodeStats(url: URL) -> (printTime: String?, filamentG: String?) {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return (nil, nil) }
-        var printTime: String?
-        var filamentG: String?
-        for line in text.components(separatedBy: "\n") {
-            let s = line.trimmingCharacters(in: .whitespaces)
-            if printTime == nil, s.hasPrefix("; estimated printing time (normal mode) =") {
-                printTime = s.components(separatedBy: "=").last?.trimmingCharacters(in: .whitespaces)
-            }
-            if filamentG == nil, s.hasPrefix("; filament used [g] =") {
-                filamentG = s.components(separatedBy: "=").last?.trimmingCharacters(in: .whitespaces)
-            }
-            if printTime != nil && filamentG != nil { break }
-        }
-        return (printTime, filamentG)
     }
 }
 

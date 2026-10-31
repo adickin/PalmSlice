@@ -3,12 +3,24 @@ import Security
 
 // MARK: - Settings
 
-/// OctoPrint connection settings. The base URL lives in UserDefaults; the API
+/// The kind of print server PalmSlice uploads to.
+enum PrintHostType: String, CaseIterable, Identifiable {
+    /// OctoPrint's REST API (also accepted by Moonraker's OctoPrint emulation).
+    case octoPrint
+    /// Klipper's Moonraker API (Mainsail / Fluidd printers, Snapmaker U1).
+    case moonraker
+
+    var id: String { rawValue }
+    var name: String { self == .octoPrint ? "OctoPrint" : "Moonraker" }
+}
+
+/// Print server connection settings. The base URL lives in UserDefaults; the API
 /// key lives in the Keychain so it isn't stored in plain text.
 final class OctoPrintSettings: ObservableObject {
     static let shared = OctoPrintSettings()
 
     private static let urlKey = "octoprint.baseURL"
+    private static let hostTypeKey = "octoprint.hostType"
     private static let keychainService = "com.adickin.PalmSlice.octoprint"
     private static let keychainAccount = "apiKey"
 
@@ -18,9 +30,14 @@ final class OctoPrintSettings: ObservableObject {
     @Published var apiKey: String {
         didSet { Self.saveKeychain(apiKey) }
     }
+    @Published var hostType: PrintHostType {
+        didSet { UserDefaults.standard.set(hostType.rawValue, forKey: Self.hostTypeKey) }
+    }
 
+    /// Moonraker usually runs without an API key on the local network.
     var isConfigured: Bool {
-        normalizedBaseURL != nil && !apiKey.trimmingCharacters(in: .whitespaces).isEmpty
+        normalizedBaseURL != nil
+            && (hostType == .moonraker || !apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
     }
 
     /// The base URL with a scheme added (http:// if omitted) and trailing slashes removed.
@@ -38,6 +55,7 @@ final class OctoPrintSettings: ObservableObject {
     private init() {
         baseURL = UserDefaults.standard.string(forKey: Self.urlKey) ?? ""
         apiKey  = Self.loadKeychain() ?? ""
+        hostType = UserDefaults.standard.string(forKey: Self.hostTypeKey).flatMap(PrintHostType.init) ?? .octoPrint
     }
 
     private static var keychainQuery: [String: Any] {
@@ -100,10 +118,35 @@ enum OctoPrintError: LocalizedError {
 
 // MARK: - Client
 
+/// What PalmSlice does with a print server: a connection test, the folder
+/// tree, new folders and uploads.
+protocol PrintHostClient {
+    /// The server's name and version; used as a connection test.
+    func version() async throws -> String
+    /// The root folder (path "") with every subfolder.
+    func folderTree() async throws -> OctoPrintFolder
+    func createFolder(named name: String, in parentPath: String) async throws
+    func upload(fileURL: URL, as fileName: String, to folderPath: String,
+                select: Bool, print: Bool,
+                progress: @escaping @Sendable (Double) -> Void) async throws
+}
+
+enum PrintHost {
+    static func client(settings: OctoPrintSettings) throws -> any PrintHostClient {
+        guard settings.isConfigured, let url = settings.normalizedBaseURL else {
+            throw OctoPrintError.notConfigured
+        }
+        switch settings.hostType {
+        case .octoPrint: return OctoPrintClient(baseURL: url, apiKey: settings.apiKey)
+        case .moonraker: return MoonrakerClient(baseURL: url, apiKey: settings.apiKey)
+        }
+    }
+}
+
 /// Minimal OctoPrint REST client: version check, folder listing, folder
 /// creation, and file upload to local storage.
 /// API reference: https://docs.octoprint.org/en/master/api/files.html
-struct OctoPrintClient {
+struct OctoPrintClient: PrintHostClient {
     let baseURL: URL
     let apiKey: String
 
@@ -219,6 +262,136 @@ struct OctoPrintClient {
         let delegate = UploadProgressDelegate(onProgress: progress)
         let (data, resp) = try await Self.session.upload(for: req, fromFile: bodyURL, delegate: delegate)
         try check(data, resp)
+    }
+}
+
+// MARK: - Moonraker
+
+/// Minimal Moonraker client (Klipper printers, including the Snapmaker U1):
+/// server info, the gcodes folder tree, folder creation, upload (optionally
+/// starting the print), print status and cancel.
+/// API reference: https://moonraker.readthedocs.io/en/latest/web_api/
+struct MoonrakerClient: PrintHostClient {
+    let baseURL: URL
+    let apiKey: String
+
+    init(baseURL: URL, apiKey: String) {
+        self.baseURL = baseURL
+        self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A print job as Moonraker's print_stats / virtual_sdcard report it.
+    struct PrintStatus: Equatable {
+        /// standby, printing, paused, complete, cancelled or error.
+        var state: String
+        var fileName: String
+        /// 0…1
+        var progress: Double
+        var isActive: Bool { state == "printing" || state == "paused" }
+    }
+
+    private static let session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 15
+        cfg.timeoutIntervalForResource = 600
+        return URLSession(configuration: cfg)
+    }()
+
+    private func request(_ path: String, query: [String: String] = [:], method: String = "GET") -> URLRequest {
+        var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        if !query.isEmpty { components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) } }
+        var req = URLRequest(url: components.url!)
+        req.httpMethod = method
+        if !apiKey.isEmpty { req.setValue(apiKey, forHTTPHeaderField: "X-Api-Key") }
+        return req
+    }
+
+    /// The response's "result" object; Moonraker errors carry {"error": {"message": …}}.
+    private func result(_ req: URLRequest) async throws -> [String: Any] {
+        let (data, resp) = try await Self.session.data(for: req)
+        return try Self.result(data, resp)
+    }
+
+    private static func result(_ data: Data, _ response: URLResponse) throws -> [String: Any] {
+        guard let http = response as? HTTPURLResponse else { throw OctoPrintError.invalidResponse }
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard (200..<300).contains(http.statusCode) else {
+            let message = ((json?["error"] as? [String: Any])?["message"] as? String)
+                ?? String(data: data, encoding: .utf8) ?? ""
+            throw OctoPrintError.http(http.statusCode, String(message.prefix(200)))
+        }
+        guard let result = json?["result"] as? [String: Any] else { throw OctoPrintError.invalidResponse }
+        return result
+    }
+
+    func version() async throws -> String {
+        let info = try await result(request("server/info"))
+        let version = info["moonraker_version"] as? String ?? ""
+        let klippy = info["klippy_state"] as? String ?? ""
+        return "Moonraker \(version)" + (klippy.isEmpty ? "" : " (Klipper \(klippy))")
+    }
+
+    func folderTree() async throws -> OctoPrintFolder {
+        let (children, count) = try await folders(in: "", depth: 0)
+        return OctoPrintFolder(name: "G-code Files", path: "", children: children, fileCount: count)
+    }
+
+    private func folders(in path: String, depth: Int) async throws -> ([OctoPrintFolder], Int) {
+        let dir = try await result(request("server/files/directory",
+                                           query: ["path": path.isEmpty ? "gcodes" : "gcodes/" + path]))
+        let files = (dir["files"] as? [[String: Any]])?.count ?? 0
+        var children: [OctoPrintFolder] = []
+        for entry in (dir["dirs"] as? [[String: Any]]) ?? [] {
+            guard let name = entry["dirname"] as? String, !name.hasPrefix(".") else { continue }
+            let childPath = path.isEmpty ? name : path + "/" + name
+            let (sub, n) = depth < 6 ? try await folders(in: childPath, depth: depth + 1) : ([], 0)
+            children.append(OctoPrintFolder(name: name, path: childPath, children: sub, fileCount: n))
+        }
+        children.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return (children, files)
+    }
+
+    func createFolder(named name: String, in parentPath: String) async throws {
+        let path = "gcodes/" + (parentPath.isEmpty ? name : parentPath + "/" + name)
+        _ = try await result(request("server/files/directory", query: ["path": path], method: "POST"))
+    }
+
+    /// Uploads into gcodes/`folderPath`; `print` starts it right away
+    /// (Moonraker has no separate "select").
+    func upload(fileURL: URL, as fileName: String, to folderPath: String,
+                select: Bool, print: Bool,
+                progress: @escaping @Sendable (Double) -> Void) async throws {
+        let bodyURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("moonraker-upload-\(UUID().uuidString).multipart")
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
+        var form = MultipartForm()
+        form.addField("root", "gcodes")
+        if !folderPath.isEmpty { form.addField("path", folderPath) }
+        if print { form.addField("print", "true") }
+        try form.writeFile(to: bodyURL, fieldName: "file", fileName: fileName, contents: fileURL)
+        var req = request("server/files/upload", method: "POST")
+        req.setValue(form.contentType, forHTTPHeaderField: "Content-Type")
+        let delegate = UploadProgressDelegate(onProgress: progress)
+        let (data, resp) = try await Self.session.upload(for: req, fromFile: bodyURL, delegate: delegate)
+        guard let http = resp as? HTTPURLResponse else { throw OctoPrintError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            throw OctoPrintError.http(http.statusCode, String((String(data: data, encoding: .utf8) ?? "").prefix(200)))
+        }
+    }
+
+    func printStatus() async throws -> PrintStatus {
+        let result = try await result(request("printer/objects/query",
+                                              query: ["print_stats": "", "virtual_sdcard": ""]))
+        let status = result["status"] as? [String: Any] ?? [:]
+        let stats = status["print_stats"] as? [String: Any] ?? [:]
+        let sdcard = status["virtual_sdcard"] as? [String: Any] ?? [:]
+        return PrintStatus(state: stats["state"] as? String ?? "unknown",
+                           fileName: stats["filename"] as? String ?? "",
+                           progress: (sdcard["progress"] as? NSNumber)?.doubleValue ?? 0)
+    }
+
+    func cancelPrint() async throws {
+        _ = try await result(request("printer/print/cancel", method: "POST"))
     }
 }
 

@@ -103,7 +103,13 @@ enum STLParseError: Error {
 
 // MARK: - Public entry point
 
-func parseSTL(url: URL, colorMode: ViewerColorMode = .solid) throws -> SCNGeometry {
+/// `partFacetCounts`: triangles per part, in file order (an imported object's
+/// display STL); each part gets its own triangle element and material, before
+/// the wireframe element (always last).
+/// `centreMM`: centre the geometry on this point instead of its own bounding
+/// box (a part's mesh, positioned in its object's display geometry).
+func parseSTL(url: URL, colorMode: ViewerColorMode = .solid, partFacetCounts: [Int] = [],
+              centreMM: SIMD3<Float>? = nil) throws -> SCNGeometry {
     let data = try Data(contentsOf: url)
     guard data.count > 84 else { throw STLParseError.cannotReadFile }
 
@@ -117,7 +123,8 @@ func parseSTL(url: URL, colorMode: ViewerColorMode = .solid) throws -> SCNGeomet
 
     guard !triangles.isEmpty else { throw STLParseError.emptyMesh }
 
-    return buildGeometry(triangles: triangles, colorMode: colorMode)
+    return buildGeometry(triangles: triangles, colorMode: colorMode, partFacetCounts: partFacetCounts,
+                         centreMM: centreMM)
 }
 
 // MARK: - Format detection
@@ -195,7 +202,9 @@ private func parseASCII(_ data: Data) throws -> [(SIMD3<Float>, SIMD3<Float>, SI
 
 private func buildGeometry(
     triangles: [(v0: SIMD3<Float>, v1: SIMD3<Float>, v2: SIMD3<Float>)],
-    colorMode: ViewerColorMode
+    colorMode: ViewerColorMode,
+    partFacetCounts: [Int],
+    centreMM: SIMD3<Float>?
 ) -> SCNGeometry {
     let vertexCount = triangles.count * 3
     var positions = [SCNVector3]()
@@ -211,7 +220,7 @@ private func buildGeometry(
     for tri in triangles {
         for v in [tri.v0, tri.v1, tri.v2] { minPt = min(minPt, v); maxPt = max(maxPt, v) }
     }
-    let center = (minPt + maxPt) * 0.5
+    let center = centreMM ?? (minPt + maxPt) * 0.5
     let scale: Float = 1.0 / 100.0
 
     for tri in triangles {
@@ -275,9 +284,16 @@ private func buildGeometry(
         sources.append(colorSource)
     }
 
-    // Triangle element
-    let triIndices = (0..<Int32(vertexCount)).map { $0 }
-    let triElement = SCNGeometryElement(indices: triIndices, primitiveType: .triangles)
+    // Triangle elements: one per part when the counts match the mesh.
+    var parts = partFacetCounts
+    if parts.reduce(0, +) != triangles.count || parts.count < 2 { parts = [triangles.count] }
+    var triElements: [SCNGeometryElement] = []
+    var first: Int32 = 0
+    for count in parts {
+        let n = Int32(count * 3)
+        triElements.append(SCNGeometryElement(indices: Array(first..<(first + n)), primitiveType: .triangles))
+        first += n
+    }
 
     // Wireframe lines element — always built; hidden via material transparency until toggled on.
     // Each triangle contributes 3 line segments: (3i→3i+1), (3i+1→3i+2), (3i+2→3i).
@@ -289,7 +305,7 @@ private func buildGeometry(
     }
     let lineElement = SCNGeometryElement(indices: lineIndices, primitiveType: .line)
 
-    let geometry = SCNGeometry(sources: sources, elements: [triElement, lineElement])
+    let geometry = SCNGeometry(sources: sources, elements: triElements + [lineElement])
 
     // Face material — PBR for solid, constant for colour modes (vertex colours drive output)
     let faceMat = SCNMaterial()
@@ -313,6 +329,6 @@ private func buildGeometry(
     wireMat.lightingModel    = .constant
     wireMat.transparency     = 0.0   // STLSceneView toggles this to 1.0 when wireframe is on
 
-    geometry.materials = [faceMat, wireMat]
+    geometry.materials = [faceMat] + (1..<triElements.count).map { _ in faceMat.copy() as! SCNMaterial } + [wireMat]
     return geometry
 }

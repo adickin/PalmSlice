@@ -9,7 +9,24 @@ Outstanding work only. Feature ideas and longer-term plans are in
 - [ ] **App Store screenshots** — required size 6.9"; suggested shot list in `APP_STORE_LISTING.md`
 - [ ] **Broaden real-device test coverage** — currently validated on iPhone 14 Pro → Ender 3 S1 with real prints; try more STL geometries/sizes to rule out crashes/memory pressure on larger meshes
 
+### Multi-tool / Snapmaker U1 / ColorMix (`Plans/u1_colormix.md`)
+- [ ] **Spikes 0.2–0.4 on a real U1** — Moonraker upload, a single-colour print with the ported profile, what the touchscreen reads from the file; then mark the U1 tested
+- [ ] **Desktop G-code diff for spike 0.1** — slice `app/PalmSliceTests/Fixtures/colormix.3mf` with desktop PrusaSlicer 2.9.6 and compare with `slicer_reference_slice_3mf`
+- [ ] **Painting on hardware** — strokes on a 200k-triangle model on an iPhone 14 Pro (plan §4.1 performance target); tested so far through the bridge and the simulator only
+- [ ] **Colour by mix in the preview** (plan §3.5) — the G-code only has physical tools
+- [ ] **Remap / warn on paint for tools a smaller printer lacks** (plan §4.3) — such tools print with T1 today (Parts & Tools warns)
+
 ## Completed
+
+### Multi-tool, Snapmaker U1, ColorMix, painting (2026-10-29)
+- [x] **Native 3MF import** (parts, modifiers, part tools, painting, mixes) and printer-independent tool numbers — `NativeImportTests`, Cub parity on the native path
+- [x] **Tools per object / part / modifier / height**, Parts & Tools sheet, tool tints and see-through tool modifiers in the 3D view
+- [x] **One material per tool** (tool strip, per-extruder settings, material colour)
+- [x] **Wipe tower** footprint (draggable) and Multi-Material settings; **preview by tool**, filament per tool, tool changes
+- [x] **Snapmaker U1** built-in printer from `profiles/PalmSlice.ini` (ported from OrcaSlicer; untested on hardware); **G-code thumbnails**; **Moonraker** uploads and print status
+- [x] **ColorMix**: bridge, Mixes sheet (blends, gradients, suggestions), mixes in every tool picker, layer-height hint
+- [x] **Painting** with tools and mixes (brush, smart fill, fill, erase, undo); desktop paint shown on import
+- [x] **PrusaSlicer project export** (.3mf) — round trip checked against PrusaSlicer's own slicing path
 
 ### Profiles on PrusaSlicer presets (2026-10-22)
 - [x] **PrusaSlicer vendor presets as the base of every slice** — 32 vendor bundles shipped (`PrusaSlicerProfiles/vendor`, build step 21), loaded with libslic3r's `PresetBundle`; printer preset + print preset + filament preset, then PalmSlice profiles. `PresetDriftTests` fails if a setting PalmSlice doesn't control differs from the vendor preset

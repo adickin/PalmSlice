@@ -45,7 +45,8 @@ Sizes are relative: **S** ≈ a day or two, **M** ≈ under a week, **L** ≈ mo
 
 Do these before building anything else. Each one can kill or reshape a later phase.
 
-- [ ] **0.1 ColorMix on iOS.** Make a ColorMix 3MF in desktop PrusaSlicer 2.9.6
+- [x] **0.1 ColorMix on iOS.** (2026-10-29: reference slice on iOS resolves mixes to
+  physical tools, `ColorMixTests`; the desktop G-code diff is still to do.) Make a ColorMix 3MF in desktop PrusaSlicer 2.9.6
   (Prusa XL 5T profile), run it through `slicer_reference_slice_3mf` in the
   simulator, and diff the G-code against desktop output. This proves the engine works on-device.
 - [ ] **0.2 Upload to a U1.** Point the existing OctoPrint settings at the U1

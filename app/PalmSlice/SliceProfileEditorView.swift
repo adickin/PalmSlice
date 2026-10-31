@@ -31,6 +31,9 @@ struct SliceProfileEditorView: View {
                 infillSection
                 speedSection
                 supportSection
+                if (profileStore.selectedProfile?.numberOfExtruders ?? 1) > 1 {
+                    multiMaterialSection
+                }
                 adhesionSection
                 advancedSection
                 DefaultsSection(
@@ -87,6 +90,43 @@ struct SliceProfileEditorView: View {
     }
 
     // MARK: - Sections
+
+    // Settings without a typed field, read over the base preset and written
+    // to the profile's extra settings.
+    private func setting(_ key: String) -> String? { draft.prusaSettings()[key] ?? baseSettings[key] }
+    private func boolSetting(_ key: String, _ fallback: Bool = false) -> Binding<Bool> {
+        Binding(get: { setting(key).flatMap(PrusaValue.parseBool) ?? fallback },
+                set: { draft.setPrusaSetting(key, PrusaValue.bool($0)) })
+    }
+    private func floatSetting(_ key: String, _ fallback: Float = 0, integer: Bool = false) -> Binding<Float> {
+        Binding(get: { setting(key).flatMap(PrusaValue.parseFloat).map(Float.init) ?? fallback },
+                set: { draft.setPrusaSetting(key, PrusaValue.float(Double(integer ? $0.rounded() : $0))) })
+    }
+
+    /// Wipe tower and ooze control, for printers with more than one tool.
+    @ViewBuilder
+    private var multiMaterialSection: some View {
+        Section {
+            Toggle("Wipe Tower", isOn: boolSetting("wipe_tower", true))
+            if boolSetting("wipe_tower", true).wrappedValue {
+                LabeledContent("Width (mm)") { FloatField(value: floatSetting("wipe_tower_width", 60), fmt: "%g") }
+                LabeledContent("Brim Width (mm)") { FloatField(value: floatSetting("wipe_tower_brim_width", 2), fmt: "%g") }
+                LabeledContent("Bridging (mm)") { FloatField(value: floatSetting("wipe_tower_bridging", 10), fmt: "%g") }
+                Toggle("Wipe into Infill", isOn: boolSetting("wipe_into_infill"))
+                Toggle("Wipe into Objects", isOn: boolSetting("wipe_into_objects"))
+            }
+            Toggle("Ooze Prevention", isOn: boolSetting("ooze_prevention"))
+            if boolSetting("ooze_prevention").wrappedValue {
+                LabeledContent("Standby Temperature Δ (°C)") {
+                    FloatField(value: floatSetting("standby_temperature_delta", -5, integer: true), fmt: "%g")
+                }
+            }
+        } header: {
+            Text("Multi-Material")
+        } footer: {
+            Text("Each tool change primes the next tool on the wipe tower. Drag the tower on the bed to place it. Ooze prevention drops idle tools to a standby temperature.")
+        }
+    }
 
     private var nameSection: some View {
         Section("Name") {

@@ -70,3 +70,44 @@ final class GCodeParserTests: XCTestCase {
         XCTAssertTrue(parseGCode(url: url).isEmpty)
     }
 }
+
+final class GCodeToolTests: XCTestCase {
+    private let gcode = """
+    T0
+    ;LAYER_CHANGE
+    ;Z:0.2
+    ;TYPE:External perimeter
+    G1 X10 Y10 E1
+    G1 X20 Y10 E1
+    T1 S1 L0 D0
+    ;TYPE:Wipe tower
+    G1 X30 Y10 E1
+    ;TYPE:Perimeter
+    G1 X40 Y10 E1
+    ;LAYER_CHANGE
+    ;Z:0.4
+    T0
+    G1 X50 Y10 E1
+    ; filament used [g] = 1.50, 0.25
+    ; estimated printing time (normal mode) = 1m 2s
+    """
+
+    func testMovesCarryTheirTool() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        try gcode.write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let layers = parseGCode(url: url)
+        XCTAssertEqual(layers.count, 2)
+        XCTAssertEqual(layers[0].moves.map(\.tool), [0, 0, 1, 1])
+        XCTAssertEqual(layers[0].moves.map(\.type), [.externalPerimeter, .externalPerimeter, .wipeTower, .perimeter])
+        XCTAssertEqual(layers[1].moves.map(\.tool), [0])
+    }
+
+    func testSummaryCountsToolChangesAndFilamentPerTool() {
+        let summary = GCodeSummary(text: gcode)
+        XCTAssertEqual(summary.toolChanges, 2)
+        XCTAssertEqual(summary.filamentG, [1.5, 0.25])
+        XCTAssertEqual(summary.printTime, "1m 2s")
+        XCTAssertEqual(summary.filamentText, "1.75 g (T1 1.50 · T2 0.25)")
+    }
+}

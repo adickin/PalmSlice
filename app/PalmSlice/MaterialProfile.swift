@@ -10,6 +10,12 @@ struct MaterialProfile: Codable, Identifiable {
     // filament preset a slice starts from (see PresetLibrary.base), so
     // settings this profile doesn't set match the material.
     var filamentType: String = "PLA"
+    /// Display colour, "#RRGGBB" — filament_colour. Tints the 3D view and the
+    /// tool-coloured preview, and feeds the ColorMix colour predictor.
+    var colour: String = MaterialProfile.defaultColour
+
+    /// PrusaSlicer's default filament_colour.
+    static let defaultColour = "#29B2B2"
 
     // MARK: - Temperatures
     var firstLayerTemp: Int = 215            // °C  — first_layer_temperature (per-extruder)
@@ -76,6 +82,7 @@ extension MaterialProfile {
         name = try v(.name, d.name)
         filamentDiameter = try v(.filamentDiameter, d.filamentDiameter)
         filamentType = try v(.filamentType, d.filamentType)
+        colour = try v(.colour, d.colour)
         firstLayerTemp = try v(.firstLayerTemp, d.firstLayerTemp)
         otherLayersTemp = try v(.otherLayersTemp, d.otherLayersTemp)
         firstLayerBedTemp = try v(.firstLayerBedTemp, d.firstLayerBedTemp)

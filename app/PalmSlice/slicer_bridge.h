@@ -38,10 +38,36 @@ int slicer_slice_with_progress(SlicerHandle handle,
 // Returns 0 on success, negative on error.
 int slicer_export_gcode(SlicerHandle handle, const char* output_path);
 
+// Where the wipe tower goes: its front-left corner in printer coordinates (mm)
+// and its rotation about that corner. (PrusaSlicer 2.9 keeps these on the
+// model, not in the settings.) Default 180, 140, 0.
+int slicer_set_wipe_tower_position(SlicerHandle handle, float x, float y, float rotation_deg);
+
+// Size of the wipe tower in the last slice (mm): depth along Y, brim width,
+// height. Its width is the wipe_tower_width setting.
+// Returns 0, or negative if the slice has no wipe tower.
+int slicer_wipe_tower_size(SlicerHandle handle, float* depth, float* brim_width, float* height);
+
 // Cancel an in-progress slice. Safe to call from any thread while
 // slicer_slice / slicer_slice_with_progress is running.
 // The canceled flag is cleared automatically at the start of the next slice.
 void slicer_cancel(SlicerHandle handle);
+
+// ── Thumbnails ────────────────────────────────────────────────────────────────
+// G-code thumbnails (e.g. the Snapmaker U1's 48×48 and 300×300 PNGs). Enable
+// before slicing to keep the printer's `thumbnails` setting (otherwise it's
+// cleared); after slicing, set one RGBA image (top-down rows, width*height*4
+// bytes) per size from slicer_thumbnail_sizes, then export.
+int slicer_enable_thumbnails(SlicerHandle handle, int enabled);
+// Sizes the printer asks for, as width/height pairs: writes up to max_sizes
+// pairs into out_sizes and returns how many there are (0 = none).
+int slicer_thumbnail_sizes(SlicerHandle handle, int* out_sizes, int max_sizes);
+int slicer_set_thumbnail(SlicerHandle handle, int width, int height, const unsigned char* rgba);
+
+// Writes the plate as a PrusaSlicer project (objects as placed, their parts,
+// tools and painting, the mixes, and every setting) for desktop PrusaSlicer.
+// Call after adding the objects (typically after slicing).
+int slicer_export_project_3mf(SlicerHandle handle, const char* path);
 
 // Returns a human-readable error string for the last failed call.
 // Valid until the next call on the same handle.
@@ -189,15 +215,84 @@ int slicer_add_stl(SlicerHandle handle, const char* path);
 int slicer_set_object_transform(SlicerHandle handle, int object_index,
                                 const SlicerModelTransform* t);
 
+// ── Tools and mixes ───────────────────────────────────────────────────────────
+//
+// PalmSlice tool numbers, used everywhere a tool is stored (object / part
+// extruder, painted areas, height ranges): 0 = default, 1 … SLICER_MIX_BASE-1
+// = physical tools, SLICER_MIX_BASE + n = mix n (n ≥ 1). They don't depend on
+// the printer's tool count; the bridge converts them to libslic3r's numbering
+// (mixes after the physical tools) when objects are added and sliced.
+#define SLICER_MIX_BASE 100
+
+// The session's mixes (ColorMix / PrusaSlicer "Full Spectrum" virtual
+// extruders) as JSON in PrusaSlicer's Prusa_Slicer_full_spectrum.json format,
+// with PalmSlice tool numbers as "id". Normalized; invalid entries dropped.
+// Set before slicer_import_model_file (a file's mixes are merged into these)
+// and before adding objects to slice. Returns 0, or negative on bad JSON.
+int         slicer_set_virtual_extruders(SlicerHandle handle, const char* json);
+// The session's mixes (after an import: including the file's new mixes).
+// Valid until the next call on the handle.
+const char* slicer_get_virtual_extruders(SlicerHandle handle);
+
+// Predicted colour of a mix (PrusaSlicer's calibrated FDM colour mixer):
+// parts = "#RRGGBB:ratio;#RRGGBB:ratio[;…]". Writes "#RRGGBB" into out_hex
+// (len ≥ 8). Returns 0, or negative on bad input.
+int slicer_mix_color(const char* parts, char* out_hex, int len);
+// CIEDE2000 colour difference between two "#RRGGBB" colours.
+int slicer_color_delta_e(const char* hex_a, const char* hex_b, double* out);
+
 // ── Model file import ─────────────────────────────────────────────────────────
 
-// Loads a 3MF, OBJ, AMF or STL file and writes each object instance as a binary
-// STL to "<out_dir>/<i>.stl" (i = 0..count-1), with the instance's rotation,
-// scale and mirroring baked in. Settings stored in the file are available via
+// ModelVolume types.
+enum {
+    SLICER_VOLUME_PART             = 0,
+    SLICER_VOLUME_NEGATIVE         = 1,
+    SLICER_VOLUME_MODIFIER         = 2,
+    SLICER_VOLUME_SUPPORT_BLOCKER  = 3,
+    SLICER_VOLUME_SUPPORT_ENFORCER = 4,
+};
+
+// Loads a 3MF, OBJ, AMF or STL file and writes each object instance to out_dir:
+//   <i>.3mf      the object as libslic3r keeps it (all volumes, their settings,
+//                painting), with the instance's rotation / scale / mirroring
+//                folded into the volumes; add it with slicer_add_model_object
+//   <i>.stl      the printable parts merged, in volume order (for display and
+//                collision checks; part k's triangles follow part k-1's)
+//   <i>.v<k>.stl volume k, for volumes that aren't printable parts
+// Tool numbers in the file are converted to PalmSlice tool numbers; the file's
+// mixes are merged into the handle's (slicer_get_virtual_extruders), reusing
+// an identical mix's number. Settings stored in the file are available via
 // slicer_imported_object_settings / slicer_imported_project_settings.
 // Returns the number of objects written (> 0), or a negative error code.
 // Does not touch the handle's model; only the import results below.
 int slicer_import_model_file(SlicerHandle handle, const char* path, const char* out_dir);
+
+// The Nth imported object's tool (PalmSlice number, 0 = default).
+int         slicer_imported_object_extruder(SlicerHandle handle, int index);
+// Volumes of the Nth imported object, in the order of its .3mf.
+int         slicer_imported_volume_count(SlicerHandle handle, int index);
+const char* slicer_imported_volume_name(SlicerHandle handle, int index, int volume);
+int         slicer_imported_volume_type(SlicerHandle handle, int index, int volume);     // SLICER_VOLUME_*
+int         slicer_imported_volume_extruder(SlicerHandle handle, int index, int volume); // 0 = the object's
+int         slicer_imported_volume_facets(SlicerHandle handle, int index, int volume);   // triangles in <i>.stl
+int         slicer_imported_volume_painted(SlicerHandle handle, int index, int volume);  // 1 if colour-painted
+// Tools (PalmSlice numbers) painted on the volume: writes up to `max` into
+// `out` and returns how many there are.
+int         slicer_imported_volume_paint_tools(SlicerHandle handle, int index, int volume, int* out, int max);
+
+// Adds an object written by slicer_import_model_file (<i>.3mf), centred on
+// the bed like slicer_add_stl. The object's own settings, height ranges and
+// layer heights are left out (apply them with slicer_set_object_file_settings).
+// keep_volume_settings = 0 also clears the volumes' settings except their
+// tool, and removes modifiers that don't set a tool. Call after the printer
+// settings and slicer_set_virtual_extruders. Returns the object index (≥ 0),
+// or a negative error code.
+int slicer_add_model_object(SlicerHandle handle, const char* path, int keep_volume_settings);
+
+// Tool (PalmSlice number, 0 = default) for an added object, or for volume
+// `volume` (index in the object's .3mf; 0 = the object's tool).
+int slicer_set_object_extruder(SlicerHandle handle, int object_index, int tool);
+int slicer_set_volume_extruder(SlicerHandle handle, int object_index, int volume, int tool);
 
 // Name of the Nth object from the last slicer_import_model_file call ("" if out of range).
 // The pointer is valid until the next import call or slicer_destroy.
@@ -229,6 +324,49 @@ const char* slicer_imported_project_settings(SlicerHandle handle);
 // above the bed, so they only fit the object in its imported orientation.
 // Returns 0 on success, negative on error (nothing applied).
 int slicer_set_object_file_settings(SlicerHandle handle, int object_index, const char* text);
+
+// Colour by height: tool bands for an added object, as "<from_z> <to_z> <tool>"
+// lines (mm above the bed, PalmSlice tool numbers, 0 = the object's tool).
+// Merged into the object's height ranges (call after
+// slicer_set_object_file_settings): ranges are split at band edges and keep
+// their settings; bands are clamped to the object's height, so call after
+// slicer_set_object_transform. Returns 0, or negative on a bad line.
+int slicer_set_object_tool_ranges(SlicerHandle handle, int object_index, const char* spec);
+
+// ── Painting ──────────────────────────────────────────────────────────────────
+//
+// Colour painting on one printable volume of an imported object, like
+// PrusaSlicer's multi-material painting. Points are in the object's display
+// frame (the <i>.stl from slicer_import_model_file, mm); facet is the triangle
+// index within the volume (display triangle index minus the earlier parts'
+// counts). States are PalmSlice tool numbers; 0 erases (the part's own tool).
+
+// Starts painting volume `volume` of the object in `path` (an <i>.3mf).
+int slicer_paint_begin(SlicerHandle handle, const char* path, int volume);
+// Call at the start of each stroke or fill: saves an undo step.
+int slicer_paint_stroke_begin(SlicerHandle handle);
+// Brush at point (3 floats) on facet; `previous` (or NULL) is the last brush
+// point of the stroke, so the stroke is continuous. camera = eye position.
+// sphere = 1 paints everything within the radius, 0 only facing triangles.
+int slicer_paint_brush(SlicerHandle handle, int facet, const float* point, const float* previous,
+                       const float* camera, float radius, int state, int sphere);
+// Fills the surface around point: smart = 1 stops at edges sharper than
+// angle_deg; 0 fills the connected area of one existing colour.
+int slicer_paint_fill(SlicerHandle handle, int facet, const float* point, int state, float angle_deg, int smart);
+int slicer_paint_clear(SlicerHandle handle);
+// Undo (redo = 0) or redo (1) a stroke. Returns 1 if there was nothing to do.
+int slicer_paint_undo(SlicerHandle handle, int redo);
+// The painted triangles for display: returns their count; then
+// slicer_paint_mesh_vertices (9 floats each, display frame) and
+// slicer_paint_mesh_states (one state each) are valid until the next update.
+int                  slicer_paint_mesh_update(SlicerHandle handle);
+const float*         slicer_paint_mesh_vertices(SlicerHandle handle);
+const unsigned char* slicer_paint_mesh_states(SlicerHandle handle);
+// Tools painted now: writes up to max into out, returns how many there are.
+int slicer_paint_used_tools(SlicerHandle handle, int* out, int max);
+// Ends the session, writing the object with its painting to save_path
+// (NULL = discard the changes).
+int slicer_paint_end(SlicerHandle handle, const char* save_path);
 
 // ── PrusaSlicer system presets ────────────────────────────────────────────────
 //
@@ -284,6 +422,15 @@ int slicer_apply_preset(SlicerHandle handle, int type, const char* name);
 // validated by libslic3r; on any bad key or value nothing is applied and the
 // error names the offending line. Returns 0 on success, negative on error.
 int slicer_apply_settings(SlicerHandle handle, const char* ini_text);
+
+// Per-tool filament settings. Sets element `tool - 1` (tool is 1-based,
+// physical) of each per-extruder setting in the .ini text, or in a filament
+// system preset, leaving the other tools' values; vectors shorter than the
+// printer's tool count are first filled with their first value. Settings
+// that aren't per-extruder are ignored. Call after the printer and the
+// first tool's material. Returns 0, or negative on a bad line (nothing applied).
+int slicer_apply_tool_settings(SlicerHandle handle, int tool, const char* ini_text);
+int slicer_apply_tool_preset(SlicerHandle handle, int tool, const char* name);
 
 // Current value of a setting in the context, serialized as PrusaSlicer writes
 // it; NULL if the key is unknown. Valid until the next call on this thread.

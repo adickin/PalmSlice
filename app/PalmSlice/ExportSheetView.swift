@@ -7,6 +7,8 @@ import UIKit
 struct ExportRequest: Identifiable {
     let id = UUID()
     let sourceURL: URL
+    /// The plate as a PrusaSlicer project (.3mf), if one was written.
+    var projectURL: URL? = nil
 }
 
 private enum ExportRoute: Hashable {
@@ -77,6 +79,18 @@ struct ExportSheetView: View {
                     } label: {
                         Label("Share…", systemImage: "square.and.arrow.up")
                     }
+                    if let project = request.projectURL {
+                        Button {
+                            do {
+                                let name = String(fileName.dropLast(6)) + ".3mf"
+                                saveItem = StagedFile(url: try stageExportCopy(of: project, named: name))
+                            } catch {
+                                errorMessage = "Could not prepare the project: \(error.localizedDescription)"
+                            }
+                        } label: {
+                            Label("Save PrusaSlicer Project (.3mf)…", systemImage: "shippingbox")
+                        }
+                    }
                 } header: {
                     Text("Save")
                 }
@@ -84,15 +98,18 @@ struct ExportSheetView: View {
                 Section {
                     if octoSettings.isConfigured {
                         NavigationLink(value: ExportRoute.octoPrintFolder(path: "")) {
-                            Label("Send to OctoPrint…", systemImage: "printer.dotmatrix")
+                            Label("Send to \(octoSettings.hostType.name)…", systemImage: "printer.dotmatrix")
                         }
                     }
                     NavigationLink(value: ExportRoute.octoPrintSettings) {
-                        Label(octoSettings.isConfigured ? "OctoPrint Settings" : "Set Up OctoPrint…",
+                        Label(octoSettings.isConfigured ? "Printer Connection" : "Set Up Printer Connection…",
                               systemImage: "gearshape")
                     }
+                    if octoSettings.isConfigured && octoSettings.hostType == .moonraker {
+                        MoonrakerStatusRow()
+                    }
                 } header: {
-                    Text("OctoPrint")
+                    Text("Send to Printer")
                 } footer: {
                     if let host = octoSettings.normalizedBaseURL?.host, octoSettings.isConfigured {
                         Text("Uploads to \(host). Choose an existing folder or create a new one.")
@@ -116,7 +133,7 @@ struct ExportSheetView: View {
                         sourceURL: request.sourceURL,
                         openFolder: { nav.append(.octoPrintFolder(path: $0)) },
                         onUploaded: { dest in
-                            savedMessage = "Uploaded to OctoPrint: \(dest)"
+                            savedMessage = "Uploaded to \(octoSettings.hostType.name): \(dest)"
                         }
                     )
                 case .octoPrintSettings:
@@ -127,6 +144,7 @@ struct ExportSheetView: View {
         // Drop the cached folder tree if the server changes.
         .onChange(of: octoSettings.baseURL) { _ in browser.root = nil }
         .onChange(of: octoSettings.apiKey) { _ in browser.root = nil }
+        .onChange(of: octoSettings.hostType) { _ in browser.root = nil }
         .sheet(item: $saveItem) { item in
             ExportDocumentPicker(url: item.url) { saved in
                 if saved { savedMessage = "Saved \(item.url.lastPathComponent)" }
@@ -221,7 +239,7 @@ final class OctoPrintBrowserModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            let client = try OctoPrintClient(settings: .shared)
+            let client = try PrintHost.client(settings: .shared)
             root = try await client.folderTree()
             loadError = nil
         } catch {
@@ -244,7 +262,7 @@ final class OctoPrintBrowserModel: ObservableObject {
 
     /// Creates the folder and refreshes the tree; returns the new folder's path.
     func createFolder(named name: String, in parent: String) async throws -> String {
-        let client = try OctoPrintClient(settings: .shared)
+        let client = try PrintHost.client(settings: .shared)
         try await client.createFolder(named: name, in: parent)
         await load(force: true)
         let created = folder(at: parent)?.children.first {
@@ -272,7 +290,7 @@ private struct OctoPrintFolderView: View {
     @State private var errorMessage: String?
 
     private var folder: OctoPrintFolder? { model.folder(at: path) }
-    private var title: String { path.isEmpty ? "OctoPrint" : (folder?.name ?? path) }
+    private var title: String { path.isEmpty ? OctoPrintSettings.shared.hostType.name : (folder?.name ?? path) }
     private var isUploading: Bool { uploadProgress != nil }
 
     var body: some View {
@@ -318,7 +336,7 @@ private struct OctoPrintFolderView: View {
                 Section {
                     if let p = uploadProgress {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(p < 1 ? "Uploading \(fileName)…" : "Waiting for OctoPrint…")
+                            Text(p < 1 ? "Uploading \(fileName)…" : "Waiting for the printer…")
                                 .font(.subheadline)
                             ProgressView(value: p)
                         }
@@ -342,7 +360,7 @@ private struct OctoPrintFolderView: View {
                     Button("Retry") { Task { await model.load(force: true) } }
                 }
             } else if model.root != nil {
-                Text("This folder no longer exists on OctoPrint.").foregroundStyle(.secondary)
+                Text("This folder no longer exists on the printer.").foregroundStyle(.secondary)
             }
         }
         .navigationTitle(title)
@@ -367,7 +385,7 @@ private struct OctoPrintFolderView: View {
         } message: {
             Text("Create a folder in \(path.isEmpty ? "Local Storage" : "/" + path).")
         }
-        .alert("OctoPrint Error", isPresented: Binding(
+        .alert("Upload Error", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
         )) {
@@ -393,7 +411,7 @@ private struct OctoPrintFolderView: View {
         uploadProgress = 0
         defer { uploadProgress = nil }
         do {
-            let client = try OctoPrintClient(settings: .shared)
+            let client = try PrintHost.client(settings: .shared)
             try await client.upload(fileURL: sourceURL, as: fileName, to: path,
                                     select: selectAfterUpload || printAfterUpload,
                                     print: printAfterUpload) { p in
@@ -423,17 +441,25 @@ struct OctoPrintSettingsView: View {
     var body: some View {
         Form {
             Section {
-                TextField("http://octopi.local", text: $settings.baseURL)
+                Picker("Server", selection: $settings.hostType) {
+                    ForEach(PrintHostType.allCases) { Text($0.name).tag($0) }
+                }
+                TextField(settings.hostType == .moonraker ? "http://192.168.1.50" : "http://octopi.local",
+                          text: $settings.baseURL)
                     .keyboardType(.URL)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                SecureField("API key", text: $settings.apiKey)
+                SecureField(settings.hostType == .moonraker ? "API key (optional)" : "API key", text: $settings.apiKey)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
             } header: {
-                Text("Server")
+                Text("Printer Connection")
             } footer: {
-                Text("Enter your OctoPrint address (hostname or IP). Create an API key in OctoPrint under Settings → Application Keys. The key is stored in the iOS Keychain.")
+                if settings.hostType == .moonraker {
+                    Text("For Klipper printers (Mainsail, Fluidd, Snapmaker U1): enter the printer's address. An API key is only needed if Moonraker requires one. It's stored in the iOS Keychain.")
+                } else {
+                    Text("Enter your OctoPrint address (hostname or IP). Create an API key in OctoPrint under Settings → Application Keys. The key is stored in the iOS Keychain.")
+                }
             }
 
             Section {
@@ -454,14 +480,15 @@ struct OctoPrintSettingsView: View {
                 .disabled(!settings.isConfigured)
             } footer: {
                 switch testState {
-                case .ok(let v):     Text("Connected — OctoPrint \(v)")
+                case .ok(let v):     Text(settings.hostType == .moonraker ? "Connected — \(v)" : "Connected — OctoPrint \(v)")
                 case .failed(let m): Text(m).foregroundStyle(.red)
                 default:             EmptyView()
                 }
             }
         }
-        .navigationTitle("OctoPrint")
+        .navigationTitle("Printer Connection")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: settings.hostType) { _ in testState = .idle }
         .onChange(of: settings.baseURL) { _ in testState = .idle }
         .onChange(of: settings.apiKey) { _ in testState = .idle }
     }
@@ -469,10 +496,90 @@ struct OctoPrintSettingsView: View {
     private func test() async {
         testState = .testing
         do {
-            let client = try OctoPrintClient(settings: settings)
+            let client = try PrintHost.client(settings: settings)
             testState = .ok(try await client.version())
         } catch {
             testState = .failed(error.localizedDescription)
+        }
+    }
+}
+
+// MARK: - Moonraker print status
+
+/// The Moonraker printer's current job, refreshed every few seconds, with Cancel.
+private struct MoonrakerStatusRow: View {
+    @State private var status: MoonrakerClient.PrintStatus?
+    @State private var error: String?
+    @State private var confirmCancel = false
+
+    var body: some View {
+        HStack {
+            Image(systemName: icon).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).lineLimit(1)
+                if let status, status.isActive {
+                    ProgressView(value: status.progress)
+                } else if let error {
+                    Text(error).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            Spacer()
+            if status?.isActive == true {
+                Button("Cancel", role: .destructive) { confirmCancel = true }
+                    .buttonStyle(.borderless)
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                await refresh()
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+        .confirmationDialog("Cancel the print on the printer?", isPresented: $confirmCancel, titleVisibility: .visible) {
+            Button("Cancel Print", role: .destructive) { Task { await cancel() } }
+        }
+    }
+
+    private var icon: String {
+        switch status?.state {
+        case "printing": return "printer.fill"
+        case "paused": return "pause.circle"
+        case "complete": return "checkmark.circle"
+        case "error": return "exclamationmark.triangle"
+        default: return "printer"
+        }
+    }
+
+    private var title: String {
+        guard let status else { return error == nil ? "Checking printer…" : "Printer unavailable" }
+        switch status.state {
+        case "printing", "paused":
+            return "\(status.state.capitalized) \(status.fileName) — \(Int(status.progress * 100))%"
+        case "standby": return "Printer idle"
+        default: return "Printer: \(status.state)" + (status.fileName.isEmpty ? "" : " (\(status.fileName))")
+        }
+    }
+
+    private func client() throws -> MoonrakerClient {
+        guard let client = try PrintHost.client(settings: .shared) as? MoonrakerClient else { throw OctoPrintError.notConfigured }
+        return client
+    }
+
+    private func refresh() async {
+        do {
+            status = try await client().printStatus()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func cancel() async {
+        do {
+            try await client().cancelPrint()
+            await refresh()
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

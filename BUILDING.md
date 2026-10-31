@@ -55,6 +55,8 @@ Device (non-simulator) builds use `build_device.sh`, which mirrors the same step
 | 20 | `11_xcframework.sh` | Package `libslic3r.a` as XCFramework | seconds |
 | 21 | `12_vendor_profiles.sh` | Copy PrusaSlicer's vendor profile bundles (`resources/profiles/*.ini`, FFF only) into `app/PalmSlice/PrusaSlicerProfiles/vendor` | seconds |
 
+Step 21 also copies `profiles/PalmSlice.ini`, PalmSlice's own vendor bundle for printers PrusaSlicer doesn't have (the Snapmaker U1, ported from OrcaSlicer). It's generated: edit `scripts/profiles/make_palmslice_bundle.py` and run `python3 scripts/profiles/make_palmslice_bundle.py profiles/PalmSlice.ini`, then step 21. `SnapmakerU1Tests` checks every key in it is a real PrusaSlicer setting (unknown keys are dropped silently on load).
+
 The vendor profiles are committed, so a fresh clone builds without step 21. Every slice starts from them: the printer's PrusaSlicer preset, its default print preset and a matching filament preset are applied first, then the PalmSlice profiles on top (see `PresetLibrary.swift`).
 
 All deps install into `~/ios-sysroot-sim/`. All source repos clone into `~/ios-sources/`.
@@ -101,7 +103,7 @@ Two small stub `.cpp` files are compiled instead of their JPEG/Z3-dependent orig
 
 | Stub file | Replaces | What it does |
 |-----------|----------|-------------|
-| `src/libslic3r/GCode/Thumbnails_ios_stub.cpp` | `Thumbnails.cpp` | Returns empty buffers — thumbnails in gcode are optional |
+| `src/libslic3r/GCode/Thumbnails_ios_stub.cpp` | `Thumbnails.cpp` | Upstream's PNG encoder and `thumbnails` parser; JPG/QOI return empty buffers (no libjpeg on iOS) |
 | `src/libslic3r/ArrangeHelper_ios_stub.cpp` | `ArrangeHelper.cpp` | `check_seq_conflict` returns `nullopt`; sequential arrange is never invoked in basic FDM |
 
 ### Stub headers in `~/ios-sysroot-sim/include/`

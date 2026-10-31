@@ -32,6 +32,24 @@ struct STLSceneView: UIViewRepresentable {
     var onCameraSet: (() -> Void)? = nil
     /// Apple Pencil double-tap / squeeze (when the user's system preference isn't "Ignore").
     var onPencilAction: (() -> Void)? = nil
+    /// Tints parts by their tool's colour (multi-tool printers); nil = plain grey.
+    var palette: ToolPalette? = nil
+    /// A volume to show even if it isn't drawn normally (modifiers, negative volumes, …).
+    var shownPart: ShownPart? = nil
+    /// The wipe tower to draw on the bed (draggable); nil = none.
+    var wipeTower: WipeTowerFootprint? = nil
+    /// Bed centre in printer coordinates (mm); models are positioned relative to it.
+    var bedCentreMM: SIMD2<Double> = .zero
+    /// The wipe tower was dragged to a new front-left corner (printer mm).
+    var onWipeTowerMove: ((SIMD2<Double>) -> Void)? = nil
+    /// Paint mode: one finger / the Pencil paints this controller's model,
+    /// two fingers orbit, pinch zooms.
+    var paintController: PaintController? = nil
+
+    struct ShownPart: Equatable {
+        let model: UUID
+        let part: Int
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -119,6 +137,27 @@ struct STLSceneView: UIViewRepresentable {
             action: #selector(Coordinator.handleHover(_:)))
         scnView.addGestureRecognizer(hover)
 
+        // Paint mode only: paint with one finger or the Pencil, orbit with two, pinch to zoom.
+        let paintPan = UIPanGestureRecognizer(target: context.coordinator,
+                                              action: #selector(Coordinator.handlePaintPan(_:)))
+        paintPan.maximumNumberOfTouches = 1
+        paintPan.isEnabled = false
+        scnView.addGestureRecognizer(paintPan)
+        context.coordinator.paintPanGesture = paintPan
+        let orbitPan = UIPanGestureRecognizer(target: context.coordinator,
+                                              action: #selector(Coordinator.handleOrbitPan(_:)))
+        orbitPan.minimumNumberOfTouches = 2
+        orbitPan.isEnabled = false
+        orbitPan.delegate = context.coordinator
+        scnView.addGestureRecognizer(orbitPan)
+        context.coordinator.orbitPanGesture = orbitPan
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator,
+                                             action: #selector(Coordinator.handlePinch(_:)))
+        pinch.isEnabled = false
+        pinch.delegate = context.coordinator
+        scnView.addGestureRecognizer(pinch)
+        context.coordinator.pinchGesture = pinch
+
         let pencilInteraction = UIPencilInteraction()
         pencilInteraction.delegate = context.coordinator
         scnView.addInteraction(pencilInteraction)
@@ -156,6 +195,25 @@ struct STLSceneView: UIViewRepresentable {
         coord.onPencilAction    = onPencilAction
         coord.didSetCamera      = didSetCamera
         coord.lockScale         = lockScale
+        coord.onWipeTowerMove   = onWipeTowerMove
+        if coord.paintController !== paintController {
+            coord.paintController = paintController
+            let painting = paintController != nil
+            scnView.allowsCameraControl = !painting
+            coord.paintPanGesture?.isEnabled = painting
+            coord.orbitPanGesture?.isEnabled = painting
+            coord.pinchGesture?.isEnabled = painting
+            coord.updateGizmoGroupVisibility()
+        }
+        coord.wipeTower         = wipeTower
+        coord.bedCentreMM       = bedCentreMM
+        if coord.lastWipeTower != wipeTower || coord.lastBedCentreMM != bedCentreMM, let scene = scnView.scene {
+            coord.wipeTowerNode?.removeFromParentNode()
+            coord.wipeTowerNode = wipeTower.map { makeWipeTowerNode($0, bedCentreMM: bedCentreMM) }
+            if let node = coord.wipeTowerNode { scene.rootNode.addChildNode(node) }
+            coord.lastWipeTower = wipeTower
+            coord.lastBedCentreMM = bedCentreMM
+        }
 
         // 1. Rebuild bed/axes on dimension change.
         if coord.lastBedX != bedX || coord.lastBedY != bedY || coord.lastBedZ != bedZ,
@@ -283,6 +341,23 @@ struct STLSceneView: UIViewRepresentable {
 
             // 5d. Bounding box visibility.
             entry.bboxNode?.isHidden = (model.id != selectedModelID)
+
+            if let info = model.meshInfo {
+                entry.centreMM = (info.boundingBoxMM.min + info.boundingBoxMM.max) * 0.5
+                coord.modelEntries[model.id] = entry
+            }
+
+            // 5e. Tool tints and see-through volumes.
+            let shown = shownPart?.model == model.id ? shownPart?.part : nil
+            let tintKey = TintKey(geometry: model.geometry.map(ObjectIdentifier.init), palette: palette,
+                                  extruder: model.extruder, parts: model.parts,
+                                  overlays: model.partGeometries.count, shown: shown,
+                                  paintVersion: model.paintVersion, centre: entry.centreMM)
+            if entry.tintKey != tintKey {
+                applyTint(model, shown: shown, to: &entry)
+                entry.tintKey = tintKey
+                coord.modelEntries[model.id] = entry
+            }
         }
 
         // 6. Update gizmo position / scale to the selected model.
@@ -311,9 +386,62 @@ struct STLSceneView: UIViewRepresentable {
         }
     }
 
+    struct TintKey: Equatable {
+        var geometry: ObjectIdentifier?
+        var palette: ToolPalette?
+        var extruder: Int
+        var parts: [ModelPart]
+        var overlays: Int
+        var shown: Int?
+        var paintVersion: Int
+        var centre: SIMD3<Float>
+    }
+
+    /// Colours each printable part with its tool, and draws modifiers that set
+    /// a tool (tinted) and the shown volume see-through over the model.
+    private func applyTint(_ model: PlacedModel, shown: Int?, to entry: inout Coordinator.ModelEntry) {
+        guard let geo = entry.mesh.geometry else { return }
+        let faceMaterials = geo.materials.dropLast()   // the last one is the wireframe's
+        let printable = model.parts.filter { $0.kind == .part }
+        let tools = printable.count == faceMaterials.count
+            ? printable.map { $0.extruder != 0 ? $0.extruder : model.extruder }
+            : Array(repeating: model.extruder, count: faceMaterials.count)
+        for (material, tool) in zip(faceMaterials, tools) where material.lightingModel == .physicallyBased {
+            material.diffuse.contents = palette?.colour(tool).uiColor ?? UIColor(white: 0.82, alpha: 1)
+        }
+
+        for node in entry.overlayNodes { node.removeFromParentNode() }
+        entry.overlayNodes = []
+        if let paint = model.paint, let geometry = makePaintGeometry(paint, centreMM: entry.centreMM, palette: palette) {
+            let node = SCNNode(geometry: geometry)
+            node.name = "paint"
+            entry.mesh.addChildNode(node)
+            entry.overlayNodes.append(node)
+        }
+        for (k, part) in model.parts.enumerated() where part.kind != .part {
+            let showsTool = palette != nil && part.kind == .modifier && part.extruder > 0
+            guard showsTool || shown == k, let source = model.partGeometries[k] else { continue }
+            let overlay = source.copy() as! SCNGeometry
+            let material = SCNMaterial()
+            material.diffuse.contents = showsTool ? palette!.colour(part.extruder).uiColor : part.kind.overlayColour
+            material.transparency = shown == k ? 0.65 : 0.45
+            material.isDoubleSided = true
+            material.writesToDepthBuffer = false
+            material.lightingModel = .physicallyBased
+            let hidden = SCNMaterial()
+            hidden.transparency = 0
+            overlay.materials = [material, hidden]
+            let node = SCNNode(geometry: overlay)
+            node.name = "volume_\(k)"
+            node.renderingOrder = 10
+            entry.mesh.addChildNode(node)
+            entry.overlayNodes.append(node)
+        }
+    }
+
     private func applyWireframe(_ geo: SCNGeometry, show: Bool) {
         guard geo.materials.count > 1 else { return }
-        geo.materials[1].transparency = show ? 1.0 : 0.0
+        geo.materials.last?.transparency = show ? 1.0 : 0.0
     }
 }
 
@@ -641,6 +769,10 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
         /// transform.scale x/y/z — see effectiveGizmoScale). Diagonal of this * transform.scale
         /// gives the model's current on-screen size, so the gizmo can grow/shrink with it.
         var meshExtent:    SIMD3<Float> = SIMD3(repeating: 0.06)
+        var tintKey:       STLSceneView.TintKey?
+        var overlayNodes:  [SCNNode] = []
+        /// Centre of the model's display STL (mm), which its geometry is centred on.
+        var centreMM:      SIMD3<Float> = .zero
     }
     var modelEntries: [UUID: ModelEntry] = [:]
 
@@ -673,6 +805,21 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
     var bedDragPlaneY:      Float? = nil
     var bedDragAnchor:      SIMD3<Float> = .zero
     var bedDragStart:       ModelTransform = .identity
+    // Wipe tower (drawn and dragged on the bed).
+    var wipeTower:          WipeTowerFootprint?
+    var lastWipeTower:      WipeTowerFootprint?
+    var bedCentreMM:        SIMD2<Double> = .zero
+    var lastBedCentreMM:    SIMD2<Double> = .zero
+    var wipeTowerNode:      SCNNode?
+    var towerDragStart:     SIMD2<Double>?
+    // Paint mode.
+    var paintController:    PaintController?
+    var paintPanGesture:    UIPanGestureRecognizer?
+    var orbitPanGesture:    UIPanGestureRecognizer?
+    var pinchGesture:       UIPinchGestureRecognizer?
+    private var lastOrbit:  CGPoint = .zero
+    private var lastPinch:  CGFloat = 1
+    var onWipeTowerMove:    ((SIMD2<Double>) -> Void)?
     var isHoverHighlighting = false
     var dragMode:           GizmoMode = .translate
     var lastPanLocation:    CGPoint? = nil
@@ -693,7 +840,7 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
             gizmoContainerNode?.isHidden = true
             return
         }
-        let show = entry.mesh.geometry != nil
+        let show = entry.mesh.geometry != nil && paintController == nil   // no gizmo while painting
         gizmoContainerNode?.isHidden = !show
         guard show else { return }
         gizmoTranslateGroup?.isHidden = gizmoMode != .translate
@@ -703,7 +850,69 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
 
     // MARK: Tap
 
+    // MARK: Paint
+
+    /// The painted model's triangle under a screen point: printable part
+    /// (geometry element), triangle within it, and the hit and camera in the
+    /// model's display-STL frame (mm).
+    private func paintHit(_ location: CGPoint, in v: SCNView)
+        -> (element: Int, facet: Int, point: SIMD3<Float>, camera: SIMD3<Float>)? {
+        guard let controller = paintController, let entry = modelEntries[controller.modelID],
+              let pov = v.pointOfView else { return nil }
+        let hits = v.hitTest(location, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue,
+                                                 .rootNode: entry.mesh, .ignoreHiddenNodes: true])
+        guard let hit = hits.first(where: { $0.node === entry.mesh }),
+              let elements = entry.mesh.geometry?.elements.count, hit.geometryIndex < elements - 1 else { return nil }
+        let point = SIMD3<Float>(hit.localCoordinates) * 100 + entry.centreMM
+        let camera = entry.mesh.simdConvertPosition(pov.simdWorldPosition, from: nil) * 100 + entry.centreMM
+        return (hit.geometryIndex, hit.faceIndex, point, camera)
+    }
+
+    @objc func handlePaintPan(_ gesture: UIPanGestureRecognizer) {
+        guard let v = gesture.view as? SCNView, let controller = paintController else { return }
+        let location = gesture.location(in: v)
+        switch gesture.state {
+        case .began:
+            // Start where the finger first touched, not where the pan was recognized.
+            let start = CGPoint(x: location.x - gesture.translation(in: v).x, y: location.y - gesture.translation(in: v).y)
+            if let h = paintHit(start, in: v) ?? paintHit(location, in: v) {
+                controller.touchBegan(element: h.element, facet: h.facet, point: h.point, camera: h.camera)
+            }
+        case .changed:
+            if let h = paintHit(location, in: v) {
+                controller.touchMoved(element: h.element, facet: h.facet, point: h.point, camera: h.camera)
+            }
+        default:
+            controller.touchEnded()
+        }
+    }
+
+    @objc func handleOrbitPan(_ gesture: UIPanGestureRecognizer) {
+        guard let v = gesture.view as? SCNView else { return }
+        let t = gesture.translation(in: v)
+        if gesture.state == .began { lastOrbit = .zero }
+        let d = CGPoint(x: t.x - lastOrbit.x, y: t.y - lastOrbit.y)
+        lastOrbit = t
+        v.defaultCameraController.rotateBy(x: Float(d.x) * 0.3, y: Float(d.y) * 0.3)
+    }
+
+    @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        guard let v = gesture.view as? SCNView else { return }
+        if gesture.state == .began { lastPinch = 1 }
+        let delta = Float(gesture.scale / lastPinch)
+        lastPinch = gesture.scale
+        v.defaultCameraController.dolly(by: (delta - 1) * 2, onScreenPoint: gesture.location(in: v), viewport: v.bounds.size)
+    }
+
     @objc func handleTap(_ tap: UITapGestureRecognizer) {
+        if let controller = paintController, let v = tap.view as? SCNView {
+            // A tap is a single brush dab or a fill.
+            if let h = paintHit(tap.location(in: v), in: v) {
+                controller.touchBegan(element: h.element, facet: h.facet, point: h.point, camera: h.camera)
+                controller.touchEnded()
+            }
+            return
+        }
         guard let scnView = tap.view as? SCNView else { return }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                         to: nil, from: nil, for: nil)
@@ -745,7 +954,12 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
         case .began:
             let loc  = gesture.location(in: scnView)
             let hits = scnView.hitTest(loc, options: [.searchMode: SCNHitTestSearchMode.all.rawValue])
-            if gizmoContainerNode?.isHidden == false,
+            if let tower = wipeTower, hits.contains(where: { $0.node.name == wipeTowerNodeName }),
+               let anchor = bedPlanePoint(loc, planeY: 0, in: scnView) {
+                towerDragStart = SIMD2(tower.x, tower.y)
+                bedDragAnchor = anchor
+                scnView.allowsCameraControl = false
+            } else if gizmoContainerNode?.isHidden == false,
                let info = hits.lazy.compactMap({ self.gizmoNodeInfo($0.node) }).first {
                 dragAxis = info.axis
                 dragMode = info.mode
@@ -766,6 +980,14 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
             }
 
         case .changed:
+            if let start = towerDragStart {
+                guard let p = bedPlanePoint(gesture.location(in: scnView), planeY: 0, in: scnView) else { return }
+                // Scene X = print X, scene Z = −print Y; 1 scene unit = 100 mm.
+                let moved = SIMD2(start.x + Double(p.x - bedDragAnchor.x) * 100,
+                                  start.y - Double(p.z - bedDragAnchor.z) * 100)
+                onWipeTowerMove?(SIMD2((moved.x * 10).rounded() / 10, (moved.y * 10).rounded() / 10))
+                return
+            }
             if let planeY = bedDragPlaneY {
                 guard let id = selectedModelID,
                       let p = bedPlanePoint(gesture.location(in: scnView), planeY: planeY, in: scnView)
@@ -830,6 +1052,7 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
         case .ended, .cancelled:
             dragAxis = nil
             bedDragPlaneY = nil
+            towerDragStart = nil
             lastPanLocation = nil
             scnView.allowsCameraControl = true
             restoreGizmoAxisHighlight()
@@ -850,6 +1073,8 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
                                    options: [.searchMode: SCNHitTestSearchMode.all.rawValue])
         let gizmoVisible = selectedModelID != nil && gizmoContainerNode?.isHidden == false
         if gizmoVisible, hits.contains(where: { gizmoNodeInfo($0.node) != nil }) { return true }
+        // The wipe tower drags with a finger or the Pencil.
+        if wipeTower != nil, hits.contains(where: { $0.node.name == wipeTowerNodeName }) { return true }
         // Pencil can also grab any model body; on empty space it falls through to the camera.
         return gr === pencilPanGesture && hits.contains { modelID(for: $0.node) != nil }
     }
@@ -998,4 +1223,86 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
         let proj = (screenDelta.x*px + screenDelta.y*py) / plen
         return Float(proj) * 0.3
     }
+}
+
+// MARK: - Wipe tower
+
+let wipeTowerNodeName = "wipeTower"
+
+/// The wipe tower as a translucent box on its brim, rotated about its
+/// front-left corner like PrusaSlicer draws it.
+func makeWipeTowerNode(_ tower: WipeTowerFootprint, bedCentreMM: SIMD2<Double>) -> SCNNode {
+    let corner = SCNNode()
+    corner.position = SCNVector3(Float(tower.x - bedCentreMM.x) / 100, 0, -Float(tower.y - bedCentreMM.y) / 100)
+    corner.eulerAngles.y = Float(tower.rotationDeg * .pi / 180)
+
+    let w = CGFloat(tower.width / 100), d = CGFloat(tower.depth / 100), h = CGFloat(tower.height / 100)
+    let box = SCNBox(width: w, height: h, length: d, chamferRadius: 0)
+    let material = SCNMaterial()
+    material.diffuse.contents = UIColor(red: 0.55, green: 0.70, blue: 0.55, alpha: 1)
+    material.transparency = tower.isEstimate ? 0.45 : 0.7
+    material.lightingModel = .physicallyBased
+    box.materials = [material]
+    let body = SCNNode(geometry: box)
+    body.name = wipeTowerNodeName
+    body.position = SCNVector3(Float(w / 2), Float(h / 2), -Float(d / 2))
+    corner.addChildNode(body)
+
+    let b = CGFloat(tower.brim / 100)
+    if b > 0 {
+        let brim = SCNBox(width: w + 2 * b, height: 0.002, length: d + 2 * b, chamferRadius: 0)
+        let brimMaterial = SCNMaterial()
+        brimMaterial.diffuse.contents = UIColor(red: 0.55, green: 0.70, blue: 0.55, alpha: 1)
+        brimMaterial.transparency = 0.35
+        brim.materials = [brimMaterial]
+        let brimNode = SCNNode(geometry: brim)
+        brimNode.name = wipeTowerNodeName
+        brimNode.position = SCNVector3(Float(w / 2), 0.001, -Float(d / 2))
+        corner.addChildNode(brimNode)
+    }
+    return corner
+}
+
+// MARK: - Paint overlay
+
+/// Painted triangles in their tools' colours, nudged off the surface along
+/// their normals so they draw over the model's own triangles.
+func makePaintGeometry(_ paint: PaintMesh, centreMM: SIMD3<Float>, palette: ToolPalette?) -> SCNGeometry? {
+    guard !paint.isEmpty else { return nil }
+    var positions: [SCNVector3] = [], normals: [SCNVector3] = [], colours: [SIMD4<Float>] = []
+    positions.reserveCapacity(paint.states.count * 3)
+    var cache: [UInt8: SIMD4<Float>] = [:]
+    for (i, state) in paint.states.enumerated() {
+        let v = (0..<3).map { k in SIMD3(paint.vertices[i * 9 + k * 3], paint.vertices[i * 9 + k * 3 + 1], paint.vertices[i * 9 + k * 3 + 2]) }
+        var n = simd_cross(v[1] - v[0], v[2] - v[0])
+        let len = simd_length(n)
+        n = len > 1e-10 ? n / len : SIMD3(0, 0, 1)
+        let colour = cache[state] ?? {
+            let c = palette?.colour(Int(state)) ?? HexColour(red: 0.9, green: 0.4, blue: 0.1)
+            let rgba = SIMD4(Float(c.red), Float(c.green), Float(c.blue), 1)
+            cache[state] = rgba
+            return rgba
+        }()
+        for p in v {
+            let q = (p + n * 0.03 - centreMM) / 100
+            positions.append(SCNVector3(q.x, q.y, q.z))
+            normals.append(SCNVector3(n.x, n.y, n.z))
+            colours.append(colour)
+        }
+    }
+    let colourData = colours.withUnsafeBytes { Data($0) }
+    let geometry = SCNGeometry(
+        sources: [SCNGeometrySource(vertices: positions), SCNGeometrySource(normals: normals),
+                  SCNGeometrySource(data: colourData, semantic: .color, vectorCount: colours.count,
+                                    usesFloatComponents: true, componentsPerVector: 4,
+                                    bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0,
+                                    dataStride: MemoryLayout<SIMD4<Float>>.stride)],
+        elements: [SCNGeometryElement(indices: Array(0..<Int32(positions.count)), primitiveType: .triangles)])
+    let material = SCNMaterial()
+    material.diffuse.contents = UIColor.white
+    material.lightingModel = .physicallyBased
+    material.roughness.contents = Float(0.65)
+    material.isDoubleSided = true
+    geometry.materials = [material]
+    return geometry
 }

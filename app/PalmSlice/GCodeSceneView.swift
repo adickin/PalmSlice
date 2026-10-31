@@ -4,11 +4,20 @@ import simd
 
 // MARK: - View
 
+/// What the preview's line colours show.
+enum PreviewColouring: String, CaseIterable, Identifiable {
+    case feature = "Feature", tool = "Tool"
+    var id: String { rawValue }
+}
+
 struct GCodeSceneView: UIViewRepresentable {
     let layers: [GCodeLayer]
     var currentLayerIndex: Int
     var bedX: Double = 220
     var bedY: Double = 220
+    var colouring: PreviewColouring = .feature
+    /// Colour per tool (0-based) for `.tool` colouring.
+    var toolColours: [HexColour] = []
 
     func makeCoordinator() -> GCodeCoordinator { GCodeCoordinator() }
 
@@ -87,9 +96,11 @@ struct GCodeSceneView: UIViewRepresentable {
             coord.lastBedY = bedY
         }
 
-        // 2. Rebuild layer nodes if layers changed
-        if layers.count != coord.lastLayerCount {
+        // 2. Rebuild layer nodes if layers or colours changed
+        let colourKey = colouring == .tool ? toolColours.map(\.hex).joined() : colouring.rawValue
+        if layers.count != coord.lastLayerCount || colourKey != coord.lastColourKey {
             coord.lastLayerCount = layers.count
+            coord.lastColourKey = colourKey
 
             // Cancel any in-flight build
             coord.buildTask?.cancel()
@@ -102,6 +113,9 @@ struct GCodeSceneView: UIViewRepresentable {
             let capturedBedX   = bedX
             let capturedBedY   = bedY
             let capturedIndex  = currentLayerIndex
+            let colours: LineColours = colouring == .tool
+                ? .tool(toolColours.map { SIMD4(Float($0.red), Float($0.green), Float($0.blue), 1) })
+                : .feature
 
             coord.buildTask = Task.detached(priority: .userInitiated) {
                 // Build SCNGeometry objects off the main thread (creating geometry is thread-safe)
@@ -109,7 +123,8 @@ struct GCodeSceneView: UIViewRepresentable {
                 geometries.reserveCapacity(capturedLayers.count)
                 for layer in capturedLayers {
                     guard !Task.isCancelled else { break }
-                    geometries.append(buildLayerGeometry(layer: layer, bedX: capturedBedX, bedY: capturedBedY))
+                    geometries.append(buildLayerGeometry(layer: layer, bedX: capturedBedX, bedY: capturedBedY,
+                                                         colours: colours))
                 }
 
                 guard !Task.isCancelled else { return }
@@ -143,6 +158,7 @@ struct GCodeSceneView: UIViewRepresentable {
 final class GCodeCoordinator: NSObject {
     var buildTask:        Task<Void, Never>?
     var lastLayerCount:   Int = -1
+    var lastColourKey:    String = ""
     var layerNodes:       [SCNNode] = []
     var lastCurrentLayer: Int = -1
     weak var layerContainer: SCNNode?
@@ -159,9 +175,25 @@ final class GCodeCoordinator: NSObject {
 
 // MARK: - Per-layer geometry builder
 
-/// Builds an SCNGeometry of line segments for a single layer, coloured by extrusion type.
+enum LineColours {
+    case feature
+    /// RGBA per tool (0-based); the wipe tower stays its feature colour.
+    case tool([SIMD4<Float>])
+
+    func colour(for move: GCodeMove) -> SIMD4<Float> {
+        switch self {
+        case .feature: return lineColor(for: move.type)
+        case .tool(let colours):
+            guard move.type != .wipeTower, !colours.isEmpty else { return lineColor(for: move.type) }
+            return colours[min(move.tool, colours.count - 1)]
+        }
+    }
+}
+
+/// Builds an SCNGeometry of line segments for a single layer, coloured by extrusion type or tool.
 /// Safe to call off the main thread — creates new geometry objects without touching a scene.
-func buildLayerGeometry(layer: GCodeLayer, bedX: Double, bedY: Double) -> SCNGeometry? {
+func buildLayerGeometry(layer: GCodeLayer, bedX: Double, bedY: Double,
+                        colours: LineColours = .feature) -> SCNGeometry? {
     guard !layer.moves.isEmpty else { return nil }
 
     var vertices: [SCNVector3]    = []
@@ -174,7 +206,7 @@ func buildLayerGeometry(layer: GCodeLayer, bedX: Double, bedY: Double) -> SCNGeo
         let to   = gcodeToScene(pos: move.to,   bedX: bedX, bedY: bedY)
         vertices.append(from)
         vertices.append(to)
-        let c = lineColor(for: move.type)
+        let c = colours.colour(for: move)
         colors.append(c)
         colors.append(c)
     }
@@ -222,7 +254,7 @@ private func gcodeToScene(pos: SIMD3<Float>, bedX: Double, bedY: Double) -> SCNV
     return SCNVector3(sx, sy, sz)
 }
 
-private func lineColor(for type: ExtrusionType) -> SIMD4<Float> {
+func lineColor(for type: ExtrusionType) -> SIMD4<Float> {
     switch type {
     case .externalPerimeter:  return SIMD4(1.00, 0.55, 0.00, 1.0)  // orange
     case .perimeter:          return SIMD4(1.00, 0.85, 0.00, 1.0)  // yellow
@@ -232,6 +264,7 @@ private func lineColor(for type: ExtrusionType) -> SIMD4<Float> {
     case .bridgeInfill:       return SIMD4(0.50, 0.90, 1.00, 1.0)  // light blue
     case .support:            return SIMD4(0.80, 0.60, 1.00, 1.0)  // light purple
     case .supportInterface:   return SIMD4(0.90, 0.70, 1.00, 1.0)  // lighter purple
+    case .wipeTower:          return SIMD4(0.55, 0.70, 0.55, 1.0)  // grey-green
     case .travel:             return SIMD4(0.50, 0.50, 0.50, 0.25) // grey, low alpha
     case .other:              return SIMD4(1.00, 1.00, 1.00, 1.0)  // white
     }

@@ -14,7 +14,10 @@ fi
 
 log_step "Building libslic3r"
 BUILD="$IOS_SOURCES/libslic3r-build-$BUILD_SUFFIX"
-reset_stale_cmake_build "$BUILD"
+# Always configure from scratch: re-running cmake with -DCMAKE_CXX_FLAGS on an
+# existing build dir replaces the toolchain's initial flags (-target,
+# -fvisibility=hidden), and the exported SLA symbols then fail the app's link.
+rm -rf "$BUILD"
 mkdir -p "$BUILD"
 
 # Gather all Boost library paths for explicit passing

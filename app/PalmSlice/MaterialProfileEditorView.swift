@@ -83,6 +83,7 @@ struct MaterialProfileEditorView: View {
             Picker("Type", selection: $draft.filamentType) {
                 ForEach(filamentTypes, id: \.self) { Text($0).tag($0) }
             }
+            ColorPicker("Colour", selection: $draft.colour.hexColour, supportsOpacity: false)
             Picker("Diameter", selection: $draft.filamentDiameter) {
                 Text("1.75 mm").tag(1.75)
                 Text("2.85 mm").tag(2.85)

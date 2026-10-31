@@ -12,6 +12,7 @@ enum ExtrusionType: Hashable {
     case bridgeInfill
     case support
     case supportInterface
+    case wipeTower
     case travel
     case other
 }
@@ -20,6 +21,8 @@ struct GCodeMove {
     var from: SIMD3<Float>
     var to:   SIMD3<Float>
     var type: ExtrusionType
+    /// Tool printing the move (0-based, from the last T<n> command).
+    var tool: Int = 0
 }
 
 struct GCodeLayer {
@@ -44,6 +47,7 @@ func parseGCode(url: URL) -> [GCodeLayer] {
     var relativeXYZ   = false   // G90 = absolute XYZ (PrusaSlicer default)
     var lastE:        Float     = 0
     var inLayer       = false
+    var tool          = 0
 
     for rawLine in text.components(separatedBy: "\n") {
         // Strip inline comment to get the command portion
@@ -87,6 +91,9 @@ func parseGCode(url: URL) -> [GCodeLayer] {
         guard let cmd = parts.first else { continue }
 
         switch cmd {
+        case _ where cmd.count >= 2 && cmd.first == "T" && Int(cmd.dropFirst()) != nil:
+            tool = Int(cmd.dropFirst())!   // tool change (also Klipper's T<n> macros)
+
         case "G90": relativeXYZ = false
         case "G91": relativeXYZ = true
         case "M82": relativeE   = false
@@ -124,7 +131,7 @@ func parseGCode(url: URL) -> [GCodeLayer] {
                 let moveType = isExtrusion ? currentType : ExtrusionType.travel
                 // Skip travel moves to keep the visualisation clean
                 if moveType != .travel {
-                    currentMoves.append(GCodeMove(from: pos, to: newPos, type: moveType))
+                    currentMoves.append(GCodeMove(from: pos, to: newPos, type: moveType, tool: tool))
                 }
             }
 
@@ -155,6 +162,49 @@ private func extrusionType(from name: String) -> ExtrusionType {
     case "bridge infill":              return .bridgeInfill
     case "support material":           return .support
     case "support material interface": return .supportInterface
+    case "wipe tower":                 return .wipeTower
     default:                           return .other
+    }
+}
+
+// MARK: - Summary
+
+/// Totals from a PrusaSlicer G-code file's footer, and its tool changes.
+struct GCodeSummary: Equatable {
+    var printTime: String?
+    /// Filament used per tool, grams (one entry on single-tool printers).
+    var filamentG: [Double] = []
+    /// Tool changes after the first tool is picked.
+    var toolChanges = 0
+
+    var totalFilamentG: Double { filamentG.reduce(0, +) }
+
+    init(text: String) {
+        var firstTool = true
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            if line.first == "T", let word = line.split(separator: " ").first, Int(word.dropFirst()) != nil {
+                if firstTool { firstTool = false } else { toolChanges += 1 }
+            } else if line.hasPrefix("; estimated printing time (normal mode) =") {
+                printTime = line.split(separator: "=").last?.trimmingCharacters(in: .whitespaces)
+            } else if filamentG.isEmpty, line.hasPrefix("; filament used [g] =") {
+                filamentG = line.split(separator: "=").last?.split(separator: ",")
+                    .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) } ?? []
+            }
+        }
+    }
+
+    init?(url: URL) {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        self.init(text: text)
+    }
+
+    /// "12.34 g", or with several tools "12.34 g (T1 5.10 · T2 7.24)".
+    var filamentText: String? {
+        guard !filamentG.isEmpty else { return nil }
+        let total = String(format: "%.2f g", totalFilamentG)
+        let used = filamentG.enumerated().filter { $0.element > 0 }
+        guard filamentG.count > 1 else { return total }
+        return total + " (" + used.map { String(format: "T%d %.2f", $0.offset + 1, $0.element) }
+            .joined(separator: " · ") + ")"
     }
 }
