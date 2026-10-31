@@ -2,6 +2,11 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-10-31
+
+- **Painting on the phone**: the paint controls open where the Position / Rotation / Scale fields go instead of under the slide-up panel, and starting to paint collapses the panel. Tapping Paint again ends painting
+- Tools that would show the same colour as an earlier tool (e.g. a tool still using tool 1's material) get a distinct stand-in colour in the 3D view, painting, badges and mix previews, so paint stays readable. Slicing still uses each material's own colour
+
 ## 2026-10-29
 
 - **Multi-colour printing on multi-tool printers.** 3MF / OBJ / AMF objects are now imported natively instead of being flattened to one mesh: parts, modifiers, negative volumes and support blockers, each part's tool, PrusaSlicer colour painting and ColorMix mixes all survive. Each imported object keeps a native copy (`<i>.3mf`, written with libslic3r's `store_3mf`) next to its display STL; slicing adds it with `slicer_add_model_object`. Tool numbers are stored printer-independently (1–99 physical, 101+ = Mix 1, 2, …) and converted to libslic3r's numbering when slicing, so switching between e.g. a 5-tool XL and a 4-tool U1 never renumbers paint. A file's mixes join the session's, reusing an identical mix's number

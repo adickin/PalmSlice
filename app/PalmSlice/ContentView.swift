@@ -824,7 +824,9 @@ struct ContentView: View {
                 paintController: paintController
             )
             .overlay(alignment: .bottom) {
-                if let controller = paintController {
+                // The phone layout shows the paint controls where the transform bar goes,
+                // clear of the slide-up panel.
+                if horizontalSizeClass == .regular, let controller = paintController {
                     PaintToolbar(controller: controller, palette: toolPalette) { finishPainting() }
                         .padding(.horizontal, 12)
                         .padding(.bottom, 12)
@@ -869,7 +871,11 @@ struct ContentView: View {
                         palette: showsToolColours ? toolPalette : nil
                     )
                 }
-                if !showLayerPreview && selectedModelID != nil && selectedModel != nil {
+                if let controller = paintController {
+                    PaintToolbar(controller: controller, palette: toolPalette) { finishPainting() }
+                        .padding(.leading, 16)
+                        .padding(.trailing, 72)
+                } else if !showLayerPreview && selectedModelID != nil && selectedModel != nil {
                     transformBarContent
                         .padding(.leading, 16)
                         .padding(.trailing, 72)
@@ -1618,10 +1624,17 @@ struct ContentView: View {
     private var toolCount: Int { max(1, profileStore.selectedProfile?.numberOfExtruders ?? 1) }
 
     /// Display colours for tools 1…N (their materials) and the session's mixes.
+    /// Tool colours for the 3D view, painting and mixes. A tool that would show
+    /// the same colour as an earlier one (e.g. it borrows tool 1's material) gets a
+    /// distinct stand-in so paint stays readable.
     private var toolPalette: ToolPalette {
-        ToolPalette(physical: (1...toolCount).map {
-            HexColour(materialProfileStore.material(forTool: $0)?.colour ?? "") ?? .grey
-        }, mixes: mixes)
+        var physical: [HexColour] = []
+        for tool in 1...toolCount {
+            let colour = HexColour(materialProfileStore.material(forTool: tool)?.colour ?? "") ?? .grey
+            physical.append(physical.contains(colour)
+                ? HexColour.standIn(forTool: tool, avoiding: physical) : colour)
+        }
+        return ToolPalette(physical: physical, mixes: mixes)
     }
 
     /// The wipe tower the slice will print, when the plate uses several tools.
@@ -1670,6 +1683,8 @@ struct ContentView: View {
         }
         showLayerPreview = false
         paintController = controller
+        // On the phone the expanded panel covers most of the model.
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { isPanelExpanded = false }
     }
 
     private func finishPainting() {

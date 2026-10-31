@@ -36,6 +36,17 @@ struct HexColour: Equatable {
     var isLight: Bool { 0.2126 * red + 0.7152 * green + 0.0722 * blue > 0.6 }
 
     static let grey = HexColour(red: 0.82, green: 0.82, blue: 0.82)
+
+    /// Distinct display colours for tools whose material colour repeats another tool's.
+    static let toolStandIns = ["#E8743B", "#4F6BED", "#E0C341", "#B44FD6", "#5BBF4E", "#E04F7A", "#8C6239", "#F2F2F2"]
+        .compactMap(HexColour.init)
+
+    /// A stand-in for the tool, preferring its own slot, else the first one not yet used.
+    static func standIn(forTool tool: Int, avoiding used: [HexColour]) -> HexColour {
+        let own = toolStandIns[(tool - 1) % toolStandIns.count]
+        if !used.contains(own) { return own }
+        return toolStandIns.first { !used.contains($0) } ?? own
+    }
 }
 
 extension Binding where Value == String {
