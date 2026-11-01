@@ -42,7 +42,11 @@ final class SnapmakerU1Tests: XCTestCase {
     }
 
     /// Slices parts.3mf (tools 1–3) on the U1 and returns the G-code.
-    private func sliceOnU1() throws -> String {
+    /// slicer_path_conflict after the last sliceOnU1.
+    private var lastConflict = ""
+
+    /// `tower`: the wipe tower's front-left corner (printer mm), or the default.
+    private func sliceOnU1(tower: SIMD2<Float>? = nil) throws -> String {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let file = try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir)
         guard let h = slicer_create() else { throw XCTSkip("slicer_create") }
@@ -54,6 +58,7 @@ final class SnapmakerU1Tests: XCTestCase {
         let model = PlacedModel(id: UUID(), url: object.url, name: object.name, geometry: nil,
                                 transform: ModelTransform(), nativeURL: object.nativeURL,
                                 extruder: object.extruder, parts: object.parts)
+        if let tower { slicer_set_wipe_tower_position(h, tower.x, tower.y, 0) }
         let idx = slicer_add_model_object(h, try XCTUnwrap(object.nativeURL).path, 1)
         XCTAssertGreaterThanOrEqual(idx, 0, String(cString: slicer_last_error(h)))
         var t = SlicerModelTransform(); t.scale_x = 1; t.scale_y = 1; t.scale_z = 1
@@ -62,6 +67,7 @@ final class SnapmakerU1Tests: XCTestCase {
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
         let out = dir.appendingPathComponent("u1.gcode")
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
+        lastConflict = String(cString: slicer_path_conflict(h))
         return try String(contentsOf: out, encoding: .utf8)
     }
 
@@ -84,6 +90,17 @@ final class SnapmakerU1Tests: XCTestCase {
         // PETG in tool 2 heats to its own temperature at the tool change.
         XCTAssertTrue(body.contains("M109 S\(BuiltInMaterialProfiles.petg.otherLayersTemp) T1"))
         XCTAssertTrue(gcode.contains("; filament_colour = "))
+    }
+
+    // A model moved onto the wipe tower used to crash the slice.
+    func testModelOverlappingWipeTowerDoesNotCrash() throws {
+        let gcode = try sliceOnU1(tower: SIMD2(120, 120))   // the model sits on the bed centre
+        XCTAssertTrue(gcode.contains("; filament_colour = "))
+        let message = try XCTUnwrap(ContentView.pathConflictMessage(lastConflict), lastConflict)
+        XCTAssertTrue(message.contains("runs into the wipe tower"), message)
+
+        _ = try sliceOnU1()   // the default spot is clear of the model
+        XCTAssertEqual(lastConflict, "")
     }
 
     // The U1 asks for 48×48 and 300×300 PNGs; PalmSlice renders and embeds them.

@@ -143,6 +143,7 @@ struct STLSceneView: UIViewRepresentable {
                                               action: #selector(Coordinator.handlePaintPan(_:)))
         paintPan.maximumNumberOfTouches = 1
         paintPan.isEnabled = false
+        paintPan.delegate = context.coordinator
         scnView.addGestureRecognizer(paintPan)
         context.coordinator.paintPanGesture = paintPan
         let orbitPan = UIPanGestureRecognizer(target: context.coordinator,
@@ -821,6 +822,21 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
     private var lastOrbit:  CGPoint = .zero
     /// The current one-finger drag started off the model, so it turns the view.
     private var paintPanOrbits = false
+    /// The current one-finger drag is part of a two-finger gesture: ignored.
+    private var paintPanIgnored = false
+    /// When the last two-finger pan or pinch ended; a finger left behind
+    /// shouldn't start painting or turning.
+    private var lastTwoFingerEnd: CFTimeInterval = 0
+
+    private var twoFingerGestureActive: Bool {
+        [orbitPanGesture, pinchGesture].contains { g in g.map { $0.state == .began || $0.state == .changed } ?? false }
+    }
+
+    private func noteTwoFingerEnd(_ gesture: UIGestureRecognizer) {
+        if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+            lastTwoFingerEnd = CACurrentMediaTime()
+        }
+    }
     private var lastPinch:  CGFloat = 1
     var onWipeTowerMove:    ((SIMD2<Double>) -> Void)?
     var isHoverHighlighting = false
@@ -874,6 +890,18 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
     @objc func handlePaintPan(_ gesture: UIPanGestureRecognizer) {
         guard let v = gesture.view as? SCNView, let controller = paintController else { return }
         let location = gesture.location(in: v)
+        // A second finger (pan / pinch) takes over: drop the stroke the first one began.
+        if gesture.state == .began {
+            paintPanIgnored = twoFingerGestureActive || CACurrentMediaTime() - lastTwoFingerEnd < 0.3
+        } else if !paintPanIgnored, twoFingerGestureActive {
+            paintPanIgnored = true
+            if !paintPanOrbits { controller.cancelStroke() }
+            paintPanOrbits = false
+        }
+        if paintPanIgnored {
+            if gesture.state != .began && gesture.state != .changed { paintPanIgnored = false }
+            return
+        }
         switch gesture.state {
         case .began:
             // Start where the finger first touched, not where the pan was recognized.
@@ -907,6 +935,7 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
 
     /// Two fingers slide the view, keeping the scene under the fingers.
     @objc func handleTwoFingerPan(_ gesture: UIPanGestureRecognizer) {
+        noteTwoFingerEnd(gesture)
         guard let v = gesture.view as? SCNView, let pov = v.pointOfView else { return }
         let t = gesture.translation(in: v)
         if gesture.state == .began { lastOrbit = .zero }
@@ -920,6 +949,7 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        noteTwoFingerEnd(gesture)
         guard let v = gesture.view as? SCNView else { return }
         if gesture.state == .began { lastPinch = 1 }
         let delta = Float(gesture.scale / lastPinch)
@@ -1091,7 +1121,8 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
         // We're the delegate for tap and both pans — only gate the pans.
         // Anything else (notably the tap) must be allowed to recognize.
         guard gr === panGesture || gr === pencilPanGesture else { return true }
-        guard let scnView = gr.view as? SCNView else { return false }
+        // While painting, touches paint or move the view, never the model or wipe tower.
+        guard paintController == nil, let scnView = gr.view as? SCNView else { return false }
         let hits = scnView.hitTest(gr.location(in: scnView),
                                    options: [.searchMode: SCNHitTestSearchMode.all.rawValue])
         let gizmoVisible = selectedModelID != nil && gizmoContainerNode?.isHidden == false
@@ -1106,10 +1137,10 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         // Allow tap to coexist with the camera's orbit gesture — without this, the camera pan
         // cancels the tap, making it impossible to re-select a model after deselecting.
-        // Two fingers pan and pinch at once while painting.
-        if (gr === orbitPanGesture && other === pinchGesture) || (gr === pinchGesture && other === orbitPanGesture) {
-            return true
-        }
+        // While painting, two fingers pan and pinch at once, and a stroke the
+        // first finger began can see the second arrive (and back off).
+        let painting: [UIGestureRecognizer?] = [paintPanGesture, orbitPanGesture, pinchGesture]
+        if painting.contains(where: { $0 === gr }), painting.contains(where: { $0 === other }) { return true }
         return gr === panGesture || other === panGesture
             || gr === pencilPanGesture || other === pencilPanGesture
             || gr === tapGesture || other === tapGesture

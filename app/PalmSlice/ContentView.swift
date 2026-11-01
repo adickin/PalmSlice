@@ -73,6 +73,8 @@ struct ContentView: View {
     @State private var unitScaleAlertScale: Float = 1000
     @State private var unitScaleAlertOriginalSizeMM: SIMD3<Float> = .zero
     @State private var showConfigWarningAlert = false
+    /// The last slice's colliding paths (an object and the wipe tower, or two objects).
+    @State private var pathConflictMessage: String?
     @State private var configWarningCheck: SlicerSliceConfigCheck?
     @State private var configWarningOriginal: (walls: Int, top: Int, bottom: Int)?
     @State private var configDecisionContinuation: CheckedContinuation<SliceConfigDecision, Never>?
@@ -352,6 +354,12 @@ struct ContentView: View {
             too small to print. STL and OBJ files don't store units, so this is likely modeled in meters, not millimeters. \
             Scale \u{00d7}\(Int(unitScaleAlertScale)) to fix it?
             """)
+        }
+        .alert("Paths Collide", isPresented: Binding(get: { pathConflictMessage != nil },
+                                                     set: { if !$0 { pathConflictMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(pathConflictMessage ?? "")
         }
         .alert("Settings May Not Print Cleanly", isPresented: $showConfigWarningAlert) {
             Button("Auto-Adjust") {
@@ -2190,6 +2198,8 @@ struct ContentView: View {
             return
         }
 
+        let conflict = Self.pathConflictMessage(String(cString: slicer_path_conflict(handle)))
+
         // 12. Parse stats and layer preview
         await setPhase("Parsing results…", progress: 0.99)
         var towerDepth: Float = 0
@@ -2211,7 +2221,21 @@ struct ContentView: View {
             parsedLayers = layers
             currentLayerIndex = max(0, layers.count - 1)
             showLayerPreview = !layers.isEmpty
+            pathConflictMessage = conflict
         }
+    }
+
+    /// Explains slicer_path_conflict's "<name>\n<name>\n<height>", or nil.
+    static func pathConflictMessage(_ conflict: String) -> String? {
+        let fields = conflict.split(separator: "\n").map(String.init)
+        guard fields.count == 3 else { return nil }
+        let height = Double(fields[2]).map { String(format: "%.2f mm", $0) } ?? fields[2]
+        let objects = fields[..<2].filter { $0 != "WipeTower" }
+        if objects.count == 1 {
+            return "\(objects[0]) runs into the wipe tower at \(height). Move the model or drag the wipe tower " +
+                "so they don't overlap, then slice again."
+        }
+        return "\(fields[0]) and \(fields[1]) run into each other at \(height). Move them apart, then slice again."
     }
 }
 

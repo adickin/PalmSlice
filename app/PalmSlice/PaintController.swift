@@ -55,6 +55,8 @@ final class PaintController: ObservableObject {
     private var volume = -1
     private var undoDepth = 0, redoDepth = 0
     private var lastPoint: SIMD3<Float>?
+    /// A stroke has begun and its touch hasn't ended.
+    private var strokeOpen = false
     private var changed = false
     private var saveCount = 0
     /// Called with the updated model after each stroke (paint display) and when a part is saved.
@@ -100,6 +102,7 @@ final class PaintController: ObservableObject {
         slicer_paint_stroke_begin(handle)
         undoDepth += 1; redoDepth = 0
         lastPoint = nil
+        strokeOpen = true
         apply(facet: facet, point: point, camera: camera, first: true)
     }
 
@@ -112,6 +115,17 @@ final class PaintController: ObservableObject {
 
     func touchEnded() {
         lastPoint = nil
+        strokeOpen = false
+        updateUndoState()
+    }
+
+    /// Takes back the open stroke: its touch became a two-finger gesture.
+    func cancelStroke() {
+        guard strokeOpen else { return }
+        strokeOpen = false
+        lastPoint = nil
+        if slicer_paint_cancel_stroke(handle) == 0 { undoDepth -= 1 }
+        refreshDisplay()
         updateUndoState()
     }
 

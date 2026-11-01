@@ -96,6 +96,8 @@ struct SlicerContext {
     std::vector<ImportedObject> imported;
     // Project-wide settings stored in the last imported file (3MF / AMF).
     std::string imported_project;
+    // Colliding paths found by the last export (slicer_path_conflict).
+    std::string path_conflict;
 
     // The session's mixes (ColorMix virtual extruders), with PalmSlice tool
     // numbers as IDs (SLICER_MIX_BASE + n). Converted to libslic3r's numbering
@@ -383,11 +385,21 @@ int slicer_export_gcode(SlicerHandle handle, const char* output_path) {
                         if (t.width == unsigned(size.x()) && t.height == unsigned(size.y())) out.push_back(t);
                 return out;
             };
-        ctx->print.export_gcode(std::string(output_path), /*result=*/nullptr, thumbnail_cb);
+        // Print::export_gcode writes a path conflict into the result without
+        // checking it for null, so it needs a real one.
+        Slic3r::GCodeProcessorResult result;
+        ctx->path_conflict.clear();
+        ctx->print.export_gcode(std::string(output_path), &result, thumbnail_cb);
+        if (const auto& c = result.conflict_result)
+            ctx->path_conflict = c->_objName1 + "\n" + c->_objName2 + "\n" + std::to_string(c->_height);
         return 0;
     } catch (const std::exception& e) {
         return set_err(ctx, e);
     }
+}
+
+const char* slicer_path_conflict(SlicerHandle handle) {
+    return CTX(handle)->path_conflict.c_str();
 }
 
 int slicer_export_project_3mf(SlicerHandle handle, const char* path) {
@@ -1450,6 +1462,16 @@ int slicer_paint_undo(SlicerHandle handle, int redo) {
     to.push_back(s->selector->serialize());
     s->selector->deserialize(from.back());
     from.pop_back();
+    return 0;
+}
+
+int slicer_paint_cancel_stroke(SlicerHandle handle) {
+    auto ctx = CTX(handle);
+    auto s = paint_session(ctx);
+    if (!s) return -1;
+    if (s->undo.empty()) return 1;
+    s->selector->deserialize(s->undo.back());
+    s->undo.pop_back();
     return 0;
 }
 

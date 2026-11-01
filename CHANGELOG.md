@@ -7,6 +7,8 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 - **Painting camera**: in paint mode a one-finger drag that starts off the model turns the view, two fingers move it, and pinch zooms while moving
 - Fix: painting an STL model drew the paint offset from the model (below it) and the brush often painted nothing. Reloading the object's native 3MF moves its offset from the volume onto the instance; paint sessions now use instance × volume as the display frame (`PaintingTests.testBrushOnImportedSTLStaysInDisplayFrame`)
 - Fix: the first material picked for a tool after switching printers went to tool 1 (the picker sheet now carries its tool)
+- Fix: slicing crashed when a model's paths ran into the wipe tower (or another model). `Print::export_gcode` writes the conflict into its result without a null check, so `slicer_export_gcode` now passes one; the conflict is reported by `slicer_path_conflict` and a **Paths Collide** alert names the model and height (`SnapmakerU1Tests.testModelOverlappingWipeTowerDoesNotCrash`)
+- Painting: a stroke the first finger began is taken back when a second finger arrives (pan / pinch), without leaving a redo step (`slicer_paint_cancel_stroke`); the Pencil no longer drags models or the wipe tower while painting
 
 ## 2026-10-31
 

@@ -37,6 +37,10 @@ int slicer_slice_with_progress(SlicerHandle handle,
 // Slice must have been called successfully first.
 // Returns 0 on success, negative on error.
 int slicer_export_gcode(SlicerHandle handle, const char* output_path);
+// After slicer_export_gcode: "" or, when two objects' (or an object's and the
+// wipe tower's) paths cross, "<name 1>\n<name 2>\n<height mm>". The wipe tower
+// is named "WipeTower". Valid until the next export.
+const char* slicer_path_conflict(SlicerHandle handle);
 
 // Where the wipe tower goes: its front-left corner in printer coordinates (mm)
 // and its rotation about that corner. (PrusaSlicer 2.9 keeps these on the
@@ -356,6 +360,9 @@ int slicer_paint_fill(SlicerHandle handle, int facet, const float* point, int st
 int slicer_paint_clear(SlicerHandle handle);
 // Undo (redo = 0) or redo (1) a stroke. Returns 1 if there was nothing to do.
 int slicer_paint_undo(SlicerHandle handle, int redo);
+// Drops the stroke begun last (a touch that turned out to be a two-finger
+// gesture), leaving nothing to redo. Returns 1 if there was nothing to do.
+int slicer_paint_cancel_stroke(SlicerHandle handle);
 // The painted triangles for display: returns their count; then
 // slicer_paint_mesh_vertices (9 floats each, display frame) and
 // slicer_paint_mesh_states (one state each) are valid until the next update.
