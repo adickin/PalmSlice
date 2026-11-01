@@ -40,22 +40,10 @@ Next ideas, in priority order:
 
 ## Color Customization
 
-A way for the user to set colors — most likely a filament/material color
-swatch (shown in `MaterialProfilePickerView` and used to tint the model in
-the viewer) and/or a UI accent color. Neither `MaterialProfile` nor
-`SliceProfile` currently has a color field. Needs scoping: filament color
-only, or also a viewer/app theme color?
-
-## Printer Profiles
-
-- **Multi-extruder printing** — printer profiles already carry per-extruder
-  nozzle sizes and offsets, but a slice uses one material for every
-  extruder and parts can't be assigned to an extruder, so nothing prints
-  with a second extruder. Needs a material per extruder, a per-part extruder
-  choice, and checking tool changes / wipe tower output. Unlocks
-  dual-extruder printers such as the Ultimaker S5/S7. Planned in
-  [Plans/u1_colormix.md](Plans/u1_colormix.md) (Phase 1), together with
-  Snapmaker U1 support, ColorMix and painting colours onto the model.
+Filament colour is done: materials have a colour (`filament_colour`) that
+tints models by tool, the sliced preview and mix predictions (2026-10-29).
+Still open: a user-chosen **app accent / viewer theme colour**. Needs
+scoping — accent only, or also the 3D view's background and bed colours?
 
 ## Profiles (printer, slice, material)
 

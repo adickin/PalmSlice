@@ -30,7 +30,7 @@ Outstanding work only. Feature ideas and longer-term plans are in
 ### Multi-tool, Snapmaker U1, ColorMix, painting (2026-10-29)
 - [x] **Native 3MF import** (parts, modifiers, part tools, painting, mixes) and printer-independent tool numbers — `NativeImportTests`, Cub parity on the native path
 - [x] **Tools per object / part / modifier / height**, Parts & Tools sheet, tool tints and see-through tool modifiers in the 3D view
-- [x] **One material per tool** (tool strip, per-extruder settings, material colour)
+- [x] **One material per tool** (tool strip, per-extruder settings, material colour) — with per-part tools and the wipe tower this is multi-extruder printing (formerly a `FUTURE_FEATURES.md` entry), e.g. for dual-extruder printers like the Ultimaker S5/S7
 - [x] **Wipe tower** footprint (draggable) and Multi-Material settings; **preview by tool**, filament per tool, tool changes
 - [x] **Snapmaker U1** built-in printer from `profiles/PalmSlice.ini` (ported from OrcaSlicer; untested on hardware); **G-code thumbnails**; **Moonraker** uploads and print status
 - [x] **ColorMix**: bridge, Mixes sheet (blends, gradients, suggestions), mixes in every tool picker, layer-height hint
