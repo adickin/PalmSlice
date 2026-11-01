@@ -3,7 +3,11 @@ import Foundation
 @MainActor
 final class MaterialProfileStore: ObservableObject {
     @Published var profiles: [MaterialProfile] = []
-    @Published var selectedProfileId: UUID?
+    /// Remembered across launches.
+    @Published var selectedProfileId: UUID? {
+        didSet { UserDefaults.standard.set(selectedProfileId?.uuidString, forKey: Self.selectedKey) }
+    }
+    private static let selectedKey = "lastMaterialID"
 
     var selectedProfile: MaterialProfile? {
         profiles.first { $0.id == selectedProfileId }
@@ -72,6 +76,11 @@ final class MaterialProfileStore: ObservableObject {
             save()
         }
 
+        if selectedProfileId == nil,
+           let saved = UserDefaults.standard.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:)),
+           profiles.contains(where: { $0.id == saved }) {
+            selectedProfileId = saved
+        }
         if selectedProfileId == nil || !profiles.contains(where: { $0.id == selectedProfileId }) {
             selectedProfileId = profiles.first?.id
         }

@@ -4,6 +4,7 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-11-01
 
+- The app remembers the last printer, slice profile and (tool 1's) material across launches; tools 2+ already were. A remembered profile that has been deleted falls back to the default
 - **Painting camera**: in paint mode a one-finger drag that starts off the model turns the view, two fingers move it, and pinch zooms while moving
 - Fix: painting an STL model drew the paint offset from the model (below it) and the brush often painted nothing. Reloading the object's native 3MF moves its offset from the volume onto the instance; paint sessions now use instance × volume as the display frame (`PaintingTests.testBrushOnImportedSTLStaysInDisplayFrame`)
 - Fix: the first material picked for a tool after switching printers went to tool 1 (the picker sheet now carries its tool)
