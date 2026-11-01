@@ -12,11 +12,20 @@ Outstanding work only. Feature ideas and longer-term plans are in
 ### Multi-tool / Snapmaker U1 / ColorMix (`Plans/u1_colormix.md`)
 - [ ] **Spikes 0.2–0.4 on a real U1** — Moonraker upload, a single-colour print with the ported profile, what the touchscreen reads from the file; then mark the U1 tested
 - [ ] **Desktop G-code diff for spike 0.1** — slice `app/PalmSliceTests/Fixtures/colormix.3mf` with desktop PrusaSlicer 2.9.6 and compare with `slicer_reference_slice_3mf`
-- [ ] **Painting on hardware** — strokes on a 200k-triangle model on an iPhone 14 Pro (plan §4.1 performance target); tested so far through the bridge and the simulator only
+- [ ] **Painting performance on hardware** — strokes on a 200k-triangle model on an iPhone 14 Pro (plan §4.1 target); painting itself now works on the iPhone 14 Pro, but only small models have been tried
 - [ ] **Colour by mix in the preview** (plan §3.5) — the G-code only has physical tools
 - [ ] **Remap / warn on paint for tools a smaller printer lacks** (plan §4.3) — such tools print with T1 today (Parts & Tools warns)
 
 ## Completed
+
+### Painting and multi-tool fixes from first device use (2026-11-01)
+- [x] **Paint controls** open where the transform fields go on iPhone (clear of the slide-up panel, which collapses); Paint toggles paint mode
+- [x] **Paint gestures**: one finger on the model paints, off it turns the view; two fingers pan, pinch zooms; a second finger takes back the stroke the first began; the Pencil doesn't drag models while painting
+- [x] **Distinct tool colours** when tools share a material colour, so paint is readable
+- [x] **Paint lands where touched on STL models** — paint sessions use instance × volume as the display frame (`PaintingTests`)
+- [x] **First material pick goes to the tapped tool**
+- [x] **No crash when a model runs into the wipe tower** — a Paths Collide alert names the model and height (`SnapmakerU1Tests`)
+- [x] **Last printer, slice profile and material remembered** across launches
 
 ### Multi-tool, Snapmaker U1, ColorMix, painting (2026-10-29)
 - [x] **Native 3MF import** (parts, modifiers, part tools, painting, mixes) and printer-independent tool numbers — `NativeImportTests`, Cub parity on the native path

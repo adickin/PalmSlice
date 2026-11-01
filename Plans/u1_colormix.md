@@ -264,6 +264,11 @@ virtual IDs are remapped to physical tools per layer (`PrintObjectSlice.cpp`).
   Erase, "Clear painting".
 - Input: Apple Pencil paints and fingers orbit on iPad (reuse the existing Pencil
   support). On iPhone, one finger paints in paint mode and two fingers orbit/zoom.
+  *As built (2026-11-01):* one finger or the Pencil paints when it starts on the
+  model and turns the view when it starts off it; two fingers pan and pinch zooms
+  (together). A second finger arriving takes back the stroke the first one began.
+  On iPhone the paint controls replace the transform fields at the top, clear of
+  the slide-up panel.
 - Hit testing: SceneKit `hitTest` gives the face index on the display mesh. Map it
   to the libslic3r facet index (the display mesh must keep libslic3r's triangle
   order, which it does if we export it from the bridge).
