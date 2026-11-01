@@ -6,6 +6,27 @@ final class PaintingTests: XCTestCase {
     private let fixtures = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().appendingPathComponent("Fixtures")
 
+    /// An STL comes back from its native 3MF with its offset on the instance,
+    /// not the volume; paint must still land where the display mesh is.
+    func testBrushOnImportedSTLStaysInDisplayFrame() throws {
+        let cube = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("PalmSlice/Resources/cube.stl")   // 0…20 mm
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let native = try XCTUnwrap(importModelFile(at: cube, outputDir: dir).objects.first?.nativeURL)
+        guard let h = slicer_create() else { return XCTFail("slicer_create") }
+        defer { slicer_destroy(h) }
+        XCTAssertEqual(slicer_paint_begin(h, native.path, 0), 0, String(cString: slicer_last_error(h)))
+
+        // A dab on the top face (facet 3 holds x + y > 20).
+        XCTAssertEqual(slicer_paint_stroke_begin(h), 0)
+        XCTAssertEqual(slicer_paint_brush(h, 3, [6, 15, 20], nil, [10, 10, 100], 3, 2, 0), 0)
+        let painted = slicer_paint_mesh_update(h)
+        XCTAssertGreaterThan(painted, 0)
+        let vertices = UnsafeBufferPointer(start: slicer_paint_mesh_vertices(h), count: Int(painted) * 9)
+        XCTAssertTrue(stride(from: 2, to: vertices.count, by: 3).allSatisfy { abs(vertices[$0] - 20) < 0.001 })
+        XCTAssertTrue(vertices.allSatisfy { $0 > -0.001 && $0 < 20.001 })
+    }
+
     func testBrushUndoSaveAndSlice() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let file = try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir)

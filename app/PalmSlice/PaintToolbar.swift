@@ -52,7 +52,7 @@ struct PaintToolbar: View {
                 Spacer(minLength: 4)
                 Button("Done", action: onDone).buttonStyle(.borderedProminent)
             }
-            Text("Paint with one finger or the Pencil; two fingers turn the view, pinch to zoom.")
+            Text("Paint on the model with one finger or the Pencil; drag off the model to turn the view, two fingers to move it, pinch to zoom.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: 460)

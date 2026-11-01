@@ -41,8 +41,9 @@ struct ContentView: View {
     @State private var showErrorAlert = false
     @State private var showProfilePicker = false
     @State private var showSliceProfilePicker = false
-    @State private var showMaterialProfilePicker = false
-    @State private var materialPickerTool = 1
+    /// Tool whose material picker is open. An item, not a flag plus a tool
+    /// number: with `isPresented` the first sheet showed the previous tool.
+    @State private var materialPickerTool: MaterialPickerTool? = nil
     @State private var showMixes = false
     /// Paint mode on the selected model.
     @State private var paintController: PaintController? = nil
@@ -259,8 +260,8 @@ struct ContentView: View {
         .sheet(isPresented: $showMixes) {
             MixesView(mixes: $mixes, palette: toolPalette, usedTools: plateTools)
         }
-        .sheet(isPresented: $showMaterialProfilePicker) {
-            MaterialProfilePickerView(tool: materialPickerTool, toolCount: toolCount)
+        .sheet(item: $materialPickerTool) {
+            MaterialProfilePickerView(tool: $0.tool, toolCount: toolCount)
         }
         .sheet(isPresented: $showAbout) { AboutView() }
         .alert("Use This File's Print Settings?",
@@ -1557,7 +1558,7 @@ struct ContentView: View {
 
         // Material profile row; one per tool on a multi-tool printer.
         if toolCount <= 1 {
-            Button { materialPickerTool = 1; showMaterialProfilePicker = true } label: {
+            Button { materialPickerTool = MaterialPickerTool(tool: 1) } label: {
                 HStack {
                     Label(
                         materialProfileStore.selectedProfile?.name ?? "No Material Selected",
@@ -1580,7 +1581,7 @@ struct ContentView: View {
         let used = toolPalette.physicalTools(plateTools)
         ForEach(1...toolCount, id: \.self) { tool in
             let material = materialProfileStore.material(forTool: tool)
-            Button { materialPickerTool = tool; showMaterialProfilePicker = true } label: {
+            Button { materialPickerTool = MaterialPickerTool(tool: tool) } label: {
                 HStack(spacing: 8) {
                     ToolBadge(tool: tool, colour: toolPalette.colour(tool))
                     Text(material?.name ?? "No Material Selected")
@@ -2303,4 +2304,9 @@ struct ShareSheetView: UIViewControllerRepresentable {
 struct FileProfilesOffer {
     let fileName: String
     let project: [String: String]
+}
+
+private struct MaterialPickerTool: Identifiable {
+    let tool: Int
+    var id: Int { tool }
 }

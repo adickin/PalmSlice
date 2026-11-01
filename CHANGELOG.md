@@ -2,6 +2,12 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-01
+
+- **Painting camera**: in paint mode a one-finger drag that starts off the model turns the view, two fingers move it, and pinch zooms while moving
+- Fix: painting an STL model drew the paint offset from the model (below it) and the brush often painted nothing. Reloading the object's native 3MF moves its offset from the volume onto the instance; paint sessions now use instance × volume as the display frame (`PaintingTests.testBrushOnImportedSTLStaysInDisplayFrame`)
+- Fix: the first material picked for a tool after switching printers went to tool 1 (the picker sheet now carries its tool)
+
 ## 2026-10-31
 
 - **Painting on the phone**: the paint controls open where the Position / Rotation / Scale fields go instead of under the slide-up panel, and starting to paint collapses the panel. Tapping Paint again ends painting

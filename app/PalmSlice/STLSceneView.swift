@@ -42,8 +42,8 @@ struct STLSceneView: UIViewRepresentable {
     var bedCentreMM: SIMD2<Double> = .zero
     /// The wipe tower was dragged to a new front-left corner (printer mm).
     var onWipeTowerMove: ((SIMD2<Double>) -> Void)? = nil
-    /// Paint mode: one finger / the Pencil paints this controller's model,
-    /// two fingers orbit, pinch zooms.
+    /// Paint mode: one finger / the Pencil paints this controller's model (or
+    /// turns the view when it starts off the model), two fingers pan, pinch zooms.
     var paintController: PaintController? = nil
 
     struct ShownPart: Equatable {
@@ -137,7 +137,8 @@ struct STLSceneView: UIViewRepresentable {
             action: #selector(Coordinator.handleHover(_:)))
         scnView.addGestureRecognizer(hover)
 
-        // Paint mode only: paint with one finger or the Pencil, orbit with two, pinch to zoom.
+        // Paint mode only: one finger or the Pencil paints on the model and turns the
+        // view off it, two fingers pan, pinch to zoom.
         let paintPan = UIPanGestureRecognizer(target: context.coordinator,
                                               action: #selector(Coordinator.handlePaintPan(_:)))
         paintPan.maximumNumberOfTouches = 1
@@ -145,7 +146,7 @@ struct STLSceneView: UIViewRepresentable {
         scnView.addGestureRecognizer(paintPan)
         context.coordinator.paintPanGesture = paintPan
         let orbitPan = UIPanGestureRecognizer(target: context.coordinator,
-                                              action: #selector(Coordinator.handleOrbitPan(_:)))
+                                              action: #selector(Coordinator.handleTwoFingerPan(_:)))
         orbitPan.minimumNumberOfTouches = 2
         orbitPan.isEnabled = false
         orbitPan.delegate = context.coordinator
@@ -818,6 +819,8 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
     var orbitPanGesture:    UIPanGestureRecognizer?
     var pinchGesture:       UIPinchGestureRecognizer?
     private var lastOrbit:  CGPoint = .zero
+    /// The current one-finger drag started off the model, so it turns the view.
+    private var paintPanOrbits = false
     private var lastPinch:  CGFloat = 1
     var onWipeTowerMove:    ((SIMD2<Double>) -> Void)?
     var isHoverHighlighting = false
@@ -876,24 +879,44 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
             // Start where the finger first touched, not where the pan was recognized.
             let start = CGPoint(x: location.x - gesture.translation(in: v).x, y: location.y - gesture.translation(in: v).y)
             if let h = paintHit(start, in: v) ?? paintHit(location, in: v) {
+                paintPanOrbits = false
                 controller.touchBegan(element: h.element, facet: h.facet, point: h.point, camera: h.camera)
+            } else {
+                paintPanOrbits = true
+                orbit(gesture)
             }
         case .changed:
-            if let h = paintHit(location, in: v) {
+            if paintPanOrbits {
+                orbit(gesture)
+            } else if let h = paintHit(location, in: v) {
                 controller.touchMoved(element: h.element, facet: h.facet, point: h.point, camera: h.camera)
             }
         default:
-            controller.touchEnded()
+            if paintPanOrbits { paintPanOrbits = false } else { controller.touchEnded() }
         }
     }
 
-    @objc func handleOrbitPan(_ gesture: UIPanGestureRecognizer) {
+    private func orbit(_ gesture: UIPanGestureRecognizer) {
         guard let v = gesture.view as? SCNView else { return }
         let t = gesture.translation(in: v)
         if gesture.state == .began { lastOrbit = .zero }
         let d = CGPoint(x: t.x - lastOrbit.x, y: t.y - lastOrbit.y)
         lastOrbit = t
         v.defaultCameraController.rotateBy(x: Float(d.x) * 0.3, y: Float(d.y) * 0.3)
+    }
+
+    /// Two fingers slide the view, keeping the scene under the fingers.
+    @objc func handleTwoFingerPan(_ gesture: UIPanGestureRecognizer) {
+        guard let v = gesture.view as? SCNView, let pov = v.pointOfView else { return }
+        let t = gesture.translation(in: v)
+        if gesture.state == .began { lastOrbit = .zero }
+        let d = CGPoint(x: t.x - lastOrbit.x, y: t.y - lastOrbit.y)
+        lastOrbit = t
+        let ctrl = v.defaultCameraController
+        let distance = simd_distance(pov.simdWorldPosition, SIMD3<Float>(ctrl.target))
+        let fov = Float(pov.camera?.fieldOfView ?? 60) * .pi / 180
+        let perPoint = 2 * distance * tan(fov / 2) / Float(max(v.bounds.height, 1))
+        ctrl.translateInCameraSpaceBy(x: -Float(d.x) * perPoint, y: Float(d.y) * perPoint, z: 0)
     }
 
     @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
@@ -1083,6 +1106,10 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         // Allow tap to coexist with the camera's orbit gesture — without this, the camera pan
         // cancels the tap, making it impossible to re-select a model after deselecting.
+        // Two fingers pan and pinch at once while painting.
+        if (gr === orbitPanGesture && other === pinchGesture) || (gr === pinchGesture && other === orbitPanGesture) {
+            return true
+        }
         return gr === panGesture || other === panGesture
             || gr === pencilPanGesture || other === pencilPanGesture
             || gr === tapGesture || other === tapGesture

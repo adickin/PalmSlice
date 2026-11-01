@@ -50,6 +50,7 @@
 struct PaintSession {
     Slic3r::Model model;                                   // the one object
     Slic3r::ModelVolume* volume = nullptr;
+    Slic3r::Transform3d trafo = Slic3r::Transform3d::Identity();  // volume mesh → display frame
     std::unique_ptr<Slic3r::TriangleSelector> selector;
     std::vector<Slic3r::TriangleSelector::TriangleSplittingData> undo, redo;
     std::vector<float> vertices;                           // display mesh, 9 floats per triangle
@@ -1340,7 +1341,7 @@ static PaintSession* paint_session(SlicerContext* ctx) {
 
 // A point in the object's display frame (the <i>.stl) → the volume's mesh frame.
 static Slic3r::Vec3f to_volume(const PaintSession& s, float x, float y, float z) {
-    return (s.volume->get_matrix().inverse() * Slic3r::Vec3d(x, y, z)).cast<float>();
+    return (s.trafo.inverse() * Slic3r::Vec3d(x, y, z)).cast<float>();
 }
 
 static void push_undo(PaintSession& s) {
@@ -1362,6 +1363,10 @@ int slicer_paint_begin(SlicerHandle handle, const char* path, int volume) {
         if (volume < 0 || volume >= int(obj->volumes.size()) || !obj->volumes[volume]->is_model_part())
             return set_err(ctx, "Only printable parts can be painted");
         s->volume = obj->volumes[volume];
+        // Loading the 3MF can move the object's offset from its volumes onto
+        // the instance, so the display frame is instance × volume.
+        s->trafo = obj->instances.empty() ? s->volume->get_matrix()
+                                          : obj->instances.front()->get_matrix() * s->volume->get_matrix();
         s->selector = std::make_unique<Slic3r::TriangleSelector>(s->volume->mesh());
         s->selector->deserialize(s->volume->mm_segmentation_facets.get_data());
         ctx->paint = std::move(s);
@@ -1388,7 +1393,7 @@ int slicer_paint_brush(SlicerHandle handle, int facet, const float* point, const
     if (state < 0 || state >= int(Slic3r::TRIANGLE_STATE_TYPE_COUNT)) return set_err(ctx, "state out of range");
     try {
         using TS = Slic3r::TriangleSelector;
-        const Slic3r::Transform3d trafo = s->volume->get_matrix();
+        const Slic3r::Transform3d trafo = s->trafo;
         const Slic3r::Vec3f center = to_volume(*s, point[0], point[1], point[2]);
         const Slic3r::Vec3f cam = to_volume(*s, camera[0], camera[1], camera[2]);
         const auto type = sphere ? TS::CursorType::SPHERE : TS::CursorType::CIRCLE;
@@ -1413,7 +1418,7 @@ int slicer_paint_fill(SlicerHandle handle, int facet, const float* point, int st
     try {
         using TS = Slic3r::TriangleSelector;
         const Slic3r::Vec3f hit = to_volume(*s, point[0], point[1], point[2]);
-        Slic3r::Transform3d no_translate = s->volume->get_matrix();
+        Slic3r::Transform3d no_translate = s->trafo;
         no_translate.translation() = Slic3r::Vec3d::Zero();
         if (smart)
             s->selector->seed_fill_select_triangles(hit, facet, no_translate, TS::ClippingPlane(), angle_deg, 0.02f);
@@ -1454,7 +1459,7 @@ int slicer_paint_mesh_update(SlicerHandle handle) {
     if (!s) return -1;
     try {
         const Slic3r::indexed_triangle_set_with_color its = s->selector->get_all_facets_strict_with_colors();
-        const Slic3r::Transform3d trafo = s->volume->get_matrix();
+        const Slic3r::Transform3d trafo = s->trafo;
         s->vertices.clear();
         s->states.clear();
         for (size_t i = 0; i < its.indices.size(); ++i) {
