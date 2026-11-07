@@ -18,25 +18,18 @@ and drags gizmo handles while fingers orbit the camera; double-tap / squeeze
 cycles Move → Rotate → Scale; hover highlights the gizmo handle under the tip.
 Next ideas, in priority order:
 
-1. **Paint-on supports / blockers** *(top pick)* — paint facets of the model
-   to force or forbid support, like PrusaSlicer's support painting gizmo.
-   Pencil pressure could set brush size. Needs a new C bridge call to pass
-   per-facet enforcer/blocker state into libslic3r (its `TriangleSelector`
-   format on `ModelVolume::supported_facets`), plus a per-face colour layer
-   in `STLSceneView` to show the paint.
-2. **Paint seam position** *(top pick)* — same painting machinery, writing
-   `ModelVolume::seam_facets` so the seam lands where it's least visible.
-   Build after (1), since it reuses the brush, hit-testing and bridge plumbing.
-3. **Draw-to-cut** — draw a line across the model to define the cut plane;
+1. **Draw-to-cut** — draw a line across the model to define the cut plane;
    pairs with the Cut tool phase under Model Manipulation.
-4. **Lasso multi-select** — draw around several models to select them for a
+2. **Lasso multi-select** — draw around several models to select them for a
    group move / rotate / scale (needs multi-selection in `ContentView`).
-5. **Hover inspect in layer preview** — hovering over the G-code preview shows
+3. **Hover inspect in layer preview** — hovering over the G-code preview shows
    the extrusion type, speed and layer height of the path under the tip.
-6. **Snap on hold** — holding the Pencil still on a gizmo handle snaps
+4. **Snap on hold** — holding the Pencil still on a gizmo handle snaps
    rotation to 15° steps and moves to the bed grid.
-7. **Scribble** already works in every numeric / text field (system feature,
+5. **Scribble** already works in every numeric / text field (system feature,
    no work needed) — worth calling out in the App Store listing.
+6. **Pressure-sensitive brush** — Pencil pressure sets the paint brush size
+   (colour, support and seam painting are in, 2026-10-29 / 2026-11-01).
 
 ## Color Customization
 
@@ -45,34 +38,16 @@ tints models by tool, the sliced preview and mix predictions (2026-10-29).
 Still open: a user-chosen **app accent / viewer theme colour**. Needs
 scoping — accent only, or also the 3D view's background and bed colours?
 
-## Profiles (printer, slice, material)
-
-- **Reset to default** — a "Reset to Default" button for built-in printer,
-  slice and material profiles. Saved copies of built-ins keep the values they
-  were created with, so they don't pick up improvements in later app
-  versions (`mergeInMissingBuiltIns` only adds missing profiles).
-
 ## Slicing Profiles
 
-- **Settings for one part** — give a single part on the bed its own values
-  (e.g. 40% infill on a wing tip while the rest of the plate uses 15%),
-  optionally only within a height range ("3 walls from 0–5 mm"), like
-  PrusaSlicer's per-object and layer-range settings. Today these only come
-  from a 3MF (shown read-only in the part's Settings from File sheet, on/off
-  only). Plan: a "Settings for This Part" item in the part's context menu
-  that reuses `AllSettingsView` (print keys only) to add, edit and remove
-  overrides; store them on `PlacedModel` alongside `fileSettings`; slicing
-  already applies per-object overrides through
-  `slicer_set_object_file_settings`, so the bridge needs no change. Make the
-  3MF settings editable through the same screen. Not covered: modifier
-  meshes, support blockers/enforcers (see Apple Pencil painting above).
+- **Editable settings from a file** — a 3MF's own part settings are still
+  on/off only (Part Settings, 2026-11-01, go on top of them); editing them in
+  place, and adding modifier meshes in the app, are open.
 
 ## Model Manipulation
 
 Full plan: `Plans/model_manipulation.md`. Remaining phases:
 
-- **Auto-orient** (Phase 6) — rotate to minimize support area; scores
-  candidate rotations by overhang.
 - **Cut tool** (Phase 7) — Z-height slider + live cut-plane preview;
   new `slicer_cut_at_z` C bridge call.
 
@@ -92,7 +67,6 @@ Full plan: `Plans/model_manipulation.md`. Remaining phases:
 
 ## Infrastructure
 
-- **Haptic feedback** on slice complete.
 - **iCloud Drive sync** for profiles and recent files.
 - **Broader TestFlight distribution** — currently uploaded for internal
   testing (see `PROGRESS.md`); expanding to an external tester group is

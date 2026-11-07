@@ -120,6 +120,8 @@ struct DefaultsSection<P: PrusaIniProfile>: View {
 struct AllSettingsView<P: PrusaSettingsConvertible>: View {
     @Binding var profile: P
     let baseSettings: [String: String]
+    /// Only these settings (e.g. the ones a part can set); nil = all of the preset type's.
+    var allowedKeys: Set<String>? = nil
 
     @State private var search = ""
     @State private var changedOnly = false
@@ -131,7 +133,8 @@ struct AllSettingsView<P: PrusaSettingsConvertible>: View {
     }
 
     private var rows: [Row] {
-        let keys = PrusaKeys.keys(for: P.presetType).union(profile.extraSettings.keys)
+        var keys = PrusaKeys.keys(for: P.presetType).union(profile.extraSettings.keys)
+        if let allowedKeys { keys.formIntersection(allowedKeys) }
         let terms = search.lowercased().split(separator: " ")
         return keys.compactMap { SettingInfo.cached($0) }
             .filter { info in

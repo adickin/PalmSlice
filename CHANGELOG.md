@@ -2,8 +2,20 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-06
+
+- Build 1.0 (3) uploaded to App Store Connect; `CFBundleVersion` bumped to 4
+
 ## 2026-11-01
 
+- **Support and seam painting**: paint mode has Colour / Supports / Seam. Supports and Seam paint Enforce / Block (or Seam Here / No Seam) and Erase, with the brush and both fills, drawn blue / red while painting. Saved into the object's native 3MF (`supported_facets` / `seam_facets`), read back on import and shown in Parts & Tools. Paint is now offered on single-tool printers (supports and seam only), with a hint when supports are off. Bridge: `slicer_paint_begin_layer`, `SLICER_PAINT_*`, `slicer_imported_volume_painted_layers`
+- **Part Settings** (Settings button in the 3D view, or long-press a model): any setting a part can have (PrusaSlicer's per-object and per-region keys, `slicer_object_setting_keys`) for the whole part and for height ranges, over the slice profile and the part's file settings. `slicer_set_object_file_settings` can now be called more than once; overlapping height ranges are split, later settings winning
+- **Reset to Default** in the printer, slice profile and material editors for saved copies of built-ins (slice profiles and materials now remember their built-in, `builtInName`)
+- **Auto-Orient** in the rotate bar and the transform panel: tries the axes, the largest flat areas and 200 even directions, scoring overhang area, bed contact and height
+- **Haptic feedback** when a slice finishes (success) or fails (error). **Long slices keep running in the background**: every slice gets a short grace period, and on iOS 26 a slice still running after 4 s becomes a continued-processing task with the system's progress UI (`SliceActivity`, `BGTaskSchedulerPermittedIdentifiers`). A slice that ends while the app is in the background **posts a notification** with the print time and filament (or the error); notification permission is asked the first time a slice runs past 4 s
+- Fix: rotated models that aren't boxes floated above the bed when sliced (the bridge dropped them using their unrotated bounding box); objects are now put on the bed with libslic3r's `ensure_on_bed`
+- Fix: drop to bed, the overlap checks and Lay Flat used a different Euler order from SceneKit, so models rotated about several axes could sink into or float above the bed, overlaps were misjudged, and Lay Flat could tip the model the wrong way
+- DEBUG: `PALMSLICE_DEBUG_SCREEN=partSettings`
 - The app remembers the last printer, slice profile and (tool 1's) material across launches; tools 2+ already were. A remembered profile that has been deleted falls back to the default
 - **Painting camera**: in paint mode a one-finger drag that starts off the model turns the view, two fingers move it, and pinch zooms while moving
 - Fix: painting an STL model drew the paint offset from the model (below it) and the brush often painted nothing. Reloading the object's native 3MF moves its offset from the volume onto the instance; paint sessions now use instance × volume as the display frame (`PaintingTests.testBrushOnImportedSTLStaysInDisplayFrame`)

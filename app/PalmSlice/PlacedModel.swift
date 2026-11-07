@@ -16,8 +16,19 @@ struct ModelPart: Equatable {
     var isPainted: Bool = false
     /// Tools painted on the part (PalmSlice numbers).
     var paintedTools: [Int] = []
+    /// Where supports / seams are painted to go or not go.
+    var supportsPainted: Bool = false
+    var seamPainted: Bool = false
     /// Mesh of a volume that isn't a printable part, in the display STL's frame.
     var meshURL: URL? = nil
+
+    func isPainted(_ layer: PaintLayer) -> Bool {
+        switch layer {
+        case .colour:   isPainted
+        case .supports: supportsPainted
+        case .seam:     seamPainted
+        }
+    }
 }
 
 /// Colour by height: from `fromZ` (mm above the bed) up to the next band, the
@@ -42,6 +53,8 @@ struct PlacedModel: Identifiable {
     var fileSettings: ModelFileSettings? = nil
     /// Whether to slice with fileSettings (the user can switch them off).
     var useFileSettings: Bool = true
+    /// The user's own settings for this part (Part Settings), over the profiles and fileSettings.
+    var partSettings = ModelFileSettings()
     /// The source file's project-wide PrusaSlicer settings, for creating profiles.
     var projectSettings: [String: String]? = nil
     /// The object as libslic3r keeps it (volumes, their settings, painting),
@@ -55,7 +68,9 @@ struct PlacedModel: Identifiable {
     var toolBands: [ToolBand] = []
     /// Painted triangles to draw over the model (display-STL frame).
     var paint: PaintMesh? = nil
-    /// Bumped whenever `paint` changes, so the 3D view knows to redraw it.
+    /// Support or seam painting being edited, drawn instead of `paint`.
+    var annotation: PaintMesh? = nil
+    /// Bumped whenever `paint` or `annotation` changes, so the 3D view knows to redraw it.
     var paintVersion = 0
     /// Display geometry of volumes that aren't printable parts, by volume index,
     /// centred like `geometry`.
@@ -87,5 +102,5 @@ struct PlacedModel: Identifiable {
 
     /// Triangle counts of the printable parts, in display-mesh order.
     var partFacetCounts: [Int] { parts.filter { $0.kind == .part }.map(\.facetCount) }
-    var isPainted: Bool { parts.contains { $0.isPainted } }
+    var isPainted: Bool { parts.contains { $0.isPainted || $0.supportsPainted || $0.seamPainted } }
 }

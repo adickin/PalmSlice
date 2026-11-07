@@ -57,6 +57,10 @@ struct ContentView: View {
     @State private var fileSettingsModelID: UUID? = nil
     /// Model whose Parts & Tools sheet is open.
     @State private var partsModelID: UUID? = nil
+    /// Model whose Part Settings sheet is open.
+    @State private var partSettingsModelID: UUID? = nil
+    /// Auto-orient is working out the selected model's rotation.
+    @State private var isOrienting = false
     /// Volume shown in the 3D view from the Parts & Tools sheet.
     @State private var shownPart: STLSceneView.ShownPart? = nil
     /// Wipe tower position dragged on the bed this session (printer mm); nil = the default.
@@ -244,6 +248,10 @@ struct ContentView: View {
             } else if screen == "paint" {
                 selectedModelID = models.last?.id
                 startPainting()
+            } else if screen == "partSettings" {
+                partSettingsModelID = models.first?.id
+                models.indices.first.map { models[$0].partSettings.objectSettings = ["perimeters": "4"] }
+                models.indices.first.map { models[$0].partSettings.ranges = [.init(minZ: 0, maxZ: 5, settings: ["fill_density": "100%"])] }
             } else if screen == "parts" {
                 partsModelID = models.first?.id
                 shownPart = models.first.flatMap { m in
@@ -282,6 +290,14 @@ struct ContentView: View {
                                     set: { if !$0 { fileSettingsModelID = nil } })) {
             if let id = fileSettingsModelID, let binding = modelBinding(id: id) {
                 ModelFileSettingsView(model: binding)
+            }
+        }
+        .sheet(isPresented: Binding(get: { partSettingsModelID != nil },
+                                    set: { if !$0 { partSettingsModelID = nil } })) {
+            if let id = partSettingsModelID, let binding = modelBinding(id: id) {
+                PartSettingsView(model: binding,
+                                 baseSettings: basePrintSettings.merging(
+                                    sliceProfileStore.selectedProfile?.prusaSettings() ?? [:]) { _, own in own })
             }
         }
         .sheet(isPresented: Binding(get: { partsModelID != nil },
@@ -333,9 +349,7 @@ struct ContentView: View {
             Text("Please select a slice profile before slicing.")
         }
         .alert("Models Overlapping", isPresented: $showIntersectingAlert) {
-            Button("Slice Anyway", role: .destructive) {
-                Task.detached(priority: .userInitiated) { await runSlice() }
-            }
+            Button("Slice Anyway", role: .destructive) { startSlice() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Some models are intersecting. Slicing may produce unexpected results. Continue?")
@@ -836,7 +850,8 @@ struct ContentView: View {
                 // The phone layout shows the paint controls where the transform bar goes,
                 // clear of the slide-up panel.
                 if horizontalSizeClass == .regular, let controller = paintController {
-                    PaintToolbar(controller: controller, palette: toolPalette) { finishPainting() }
+                    PaintToolbar(controller: controller, palette: toolPalette, colourAvailable: showsToolColours,
+                                 supportsOff: !(sliceProfileStore.selectedProfile?.generateSupport ?? false)) { finishPainting() }
                         .padding(.horizontal, 12)
                         .padding(.bottom, 12)
                 }
@@ -877,11 +892,13 @@ struct ContentView: View {
                         onModelsChanged: { updateIntersections() },
                         onShowFileSettings: { fileSettingsModelID = $0 },
                         onShowParts: { partsModelID = $0 },
+                        onShowPartSettings: { partSettingsModelID = $0 },
                         palette: showsToolColours ? toolPalette : nil
                     )
                 }
                 if let controller = paintController {
-                    PaintToolbar(controller: controller, palette: toolPalette) { finishPainting() }
+                    PaintToolbar(controller: controller, palette: toolPalette, colourAvailable: showsToolColours,
+                                 supportsOff: !(sliceProfileStore.selectedProfile?.generateSupport ?? false)) { finishPainting() }
                         .padding(.leading, 16)
                         .padding(.trailing, 72)
                 } else if !showLayerPreview && selectedModelID != nil && selectedModel != nil {
@@ -937,11 +954,13 @@ struct ContentView: View {
                     overlayButton(icon: "move.3d",   label: "Move",   active: gizmoMode == .translate) { gizmoMode = .translate }
                     overlayButton(icon: "rotate.3d", label: "Rotate", active: gizmoMode == .rotate)    { gizmoMode = .rotate }
                     overlayButton(icon: "scale.3d",  label: "Scale",  active: gizmoMode == .scale)     { gizmoMode = .scale }
-                    if showsToolColours {
-                        Divider().frame(width: 36).padding(.vertical, 2)
-                        overlayButton(icon: "paintbrush.pointed", label: "Paint", active: paintController != nil) {
-                            if paintController == nil { startPainting() } else { finishPainting() }
-                        }
+                    overlayButton(icon: "slider.horizontal.3", label: "Settings",
+                                  active: !(selectedModel?.partSettings.isEmpty ?? true)) {
+                        partSettingsModelID = selectedModelID
+                    }
+                    Divider().frame(width: 36).padding(.vertical, 2)
+                    overlayButton(icon: "paintbrush.pointed", label: "Paint", active: paintController != nil) {
+                        if paintController == nil { startPainting() } else { finishPainting() }
                     }
                 }
             }
@@ -1010,8 +1029,14 @@ struct ContentView: View {
                 Button("Drop to Bed") { dropToBed() }
                     .buttonStyle(.bordered).controlSize(.mini)
             case .rotate:
-                Button("Reset") { writeTransform { $0.rotationDeg = .zero } }
-                    .buttonStyle(.bordered).controlSize(.mini)
+                HStack(spacing: 6) {
+                    Button { autoOrient() } label: {
+                        if isOrienting { ProgressView().controlSize(.mini) } else { Text("Auto-Orient") }
+                    }
+                    .disabled(isOrienting)
+                    Button("Reset") { writeTransform { $0.rotationDeg = .zero } }
+                }
+                .buttonStyle(.bordered).controlSize(.mini)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1161,6 +1186,22 @@ struct ContentView: View {
         updateIntersections()
     }
 
+    /// Turns the selected model the way that needs the least support.
+    private func autoOrient() {
+        guard let id = selectedModelID, let info = selectedModel?.meshInfo else { return }
+        isOrienting = true
+        Task.detached(priority: .userInitiated) {
+            let rotation = AutoOrient.rotation(for: info)
+            await MainActor.run {
+                isOrienting = false
+                guard let i = models.firstIndex(where: { $0.id == id }) else { return }
+                models[i].transform.rotationDeg = rotation
+                models[i].transform = models[i].transform.droppedToBed(meshInfo: info)
+                updateIntersections()
+            }
+        }
+    }
+
     private func layFlatInline() {
         guard let info = selectedModel?.meshInfo, let idx = selectedIndex else { return }
 
@@ -1171,20 +1212,7 @@ struct ContentView: View {
             if score > bestScore { bestScore = score; bestNormal = face.normal }
         }
 
-        let scNormal = simd_normalize(SIMD3<Float>(bestNormal.x, bestNormal.z, -bestNormal.y))
-        let target   = SIMD3<Float>(0, -1, 0)
-        let dot      = max(-1, min(1, simd_dot(scNormal, target)))
-
-        if dot > 0.9999 {
-            models[idx].transform.rotationDeg = .zero
-        } else {
-            let rotQuat: simd_quatf = dot < -0.9999
-                ? simd_quaternion(Float.pi, SIMD3<Float>(1, 0, 0))
-                : simd_quaternion(acos(dot), simd_normalize(simd_cross(scNormal, target)))
-            let node = SCNNode()
-            node.simdOrientation = rotQuat
-            models[idx].transform.rotationDeg = node.simdEulerAngles * (180 / .pi)
-        }
+        models[idx].transform.rotationDeg = AutoOrient.rotationDeg(placing: bestNormal)
         models[idx].transform = models[idx].transform.droppedToBed(meshInfo: info)
         updateIntersections()
     }
@@ -1683,11 +1711,14 @@ struct ContentView: View {
         }
         guard let controller = PaintController(model: models[i]) else { return }
         controller.tool = toolCount > 1 ? 2 : 1
+        // With one tool there's no colour to paint, only supports and seams.
+        if !showsToolColours { controller.layer = .supports }
         controller.onModelChange = { updated in
             guard let j = models.firstIndex(where: { $0.id == updated.id }) else { return }
             models[j].nativeURL = updated.nativeURL
             models[j].parts = updated.parts
             models[j].paint = updated.paint
+            models[j].annotation = updated.annotation
             models[j].paintVersion = updated.paintVersion
         }
         showLayerPreview = false
@@ -1702,6 +1733,10 @@ struct ContentView: View {
         if let j = models.firstIndex(where: { $0.id == updated.id }) {
             models[j].nativeURL = updated.nativeURL
             models[j].parts = updated.parts
+            if models[j].annotation != nil {
+                models[j].annotation = nil
+                models[j].paintVersion += 1
+            }
         }
         paintController = nil
     }
@@ -1954,14 +1989,54 @@ struct ContentView: View {
         if anyIntersecting {
             showIntersectingAlert = true
         } else {
-            Task.detached(priority: .userInitiated) { await runSlice() }
+            startSlice()
+        }
+    }
+
+    /// Slices in the background-capable way and taps out the result.
+    private func startSlice() {
+        SliceActivity.shared.begin { if let h = activeHandle { slicer_cancel(h) } }
+        Task.detached(priority: .userInitiated) {
+            await runSlice()
+            await MainActor.run {
+                let success: Bool
+                switch state {
+                case .done: success = true
+                case .failed: success = false
+                default:   // cancelled
+                    SliceActivity.shared.end(success: false)
+                    return
+                }
+                SliceActivity.shared.end(success: success, title: sliceNotificationTitle,
+                                         body: sliceNotificationBody)
+                UINotificationFeedbackGenerator().notificationOccurred(success ? .success : .error)
+            }
+        }
+    }
+
+    /// What the background notification says about the slice that just ended.
+    private var sliceNotificationTitle: String {
+        if case .done(let url, _, _) = state { return "Sliced \(url.deletingPathExtension().lastPathComponent)" }
+        return "Slice Failed"
+    }
+
+    private var sliceNotificationBody: String {
+        switch state {
+        case .done(_, let time, let filament):
+            let parts = [time, filament?.split(separator: "\n").first.map(String.init)].compactMap { $0 }
+            return parts.isEmpty ? "Ready to preview." : parts.joined(separator: " · ")
+        case .failed(let message): return message
+        default: return ""
         }
     }
 
     // MARK: - Slicing
 
     private func setPhase(_ msg: String, progress: Double = 0) async {
-        await MainActor.run { state = .slicing(phase: msg, progress: progress) }
+        await MainActor.run {
+            state = .slicing(phase: msg, progress: progress)
+            SliceActivity.shared.update(phase: msg, progress: progress)
+        }
     }
 
     private func runSlice() async {
@@ -2089,6 +2164,15 @@ struct ContentView: View {
                     return
                 }
             }
+            // The user's Part Settings, on top. Heights are as placed.
+            if !model.partSettings.isEmpty {
+                let height = model.meshInfo.map { Double($0.sizeMMZ * model.transform.scale.z) } ?? .infinity
+                if slicer_set_object_file_settings(handle, objIdx, model.partSettings.userText(partHeight: height)) != 0 {
+                    let msg = "\(model.name) Part Settings: \(String(cString: slicer_last_error(handle)))"
+                    await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+                    return
+                }
+            }
             if let msg = SliceSetup.applyToolBands(handle, object: objIdx, model: model) {
                 await MainActor.run { state = .failed(message: "\(model.name): \(msg)") ; showErrorAlert = true }
                 return
@@ -2145,6 +2229,7 @@ struct ContentView: View {
             Task { @MainActor in
                 if case .slicing(let phase, _) = state {
                     state = .slicing(phase: phase, progress: Double(pct) / 100.0)
+                    SliceActivity.shared.update(phase: phase, progress: Double(pct) / 100.0)
                 }
             }
         }

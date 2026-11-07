@@ -26,6 +26,8 @@ struct ModelFileSettings: Equatable {
     /// Whether any setting depends on height (ranges or layer heights).
     var dependsOnHeight: Bool { !ranges.isEmpty || !layerHeights.isEmpty }
 
+    init() {}
+
     init?(text: String) {
         var section: Int? = nil   // nil = object, -1 = layer heights, n = range n
         for line in text.split(separator: "\n").map(String.init) {

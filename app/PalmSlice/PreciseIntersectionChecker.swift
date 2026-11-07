@@ -102,9 +102,10 @@ func worldTransformMatrix(_ t: ModelTransform, info: STLMeshInfo) -> simd_float4
     )
 
     let r = t.rotationDeg * (.pi / 180)
-    let q = simd_quaternion(r.x, SIMD3<Float>(1, 0, 0))
+    // SceneKit's pivot rotation: X, then Y (rz), then Z (ry) — see ModelTransform.minWorldY.
+    let q = simd_quaternion(r.y, SIMD3<Float>(0, 0, 1))
           * simd_quaternion(r.z, SIMD3<Float>(0, 1, 0))
-          * simd_quaternion(r.y, SIMD3<Float>(0, 0, 1))
+          * simd_quaternion(r.x, SIMD3<Float>(1, 0, 0))
     let combined = simd_float3x3(q) * mRemap
 
     let pivotPos = SIMD3<Float>(t.positionMM.x / 100,

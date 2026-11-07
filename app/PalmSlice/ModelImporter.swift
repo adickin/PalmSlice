@@ -75,6 +75,7 @@ func importModelFile(at url: URL, outputDir: URL, mixes: [ToolMix] = []) throws 
             let kind = ModelPart.Kind(rawValue: Int(slicer_imported_volume_type(handle, Int32(i), k))) ?? .part
             var painted = [Int32](repeating: 0, count: 256)
             let n = slicer_imported_volume_paint_tools(handle, Int32(i), k, &painted, 256)
+            let layers = slicer_imported_volume_painted_layers(handle, Int32(i), k)
             return ModelPart(
                 name: String(cString: slicer_imported_volume_name(handle, Int32(i), k)),
                 kind: kind,
@@ -82,6 +83,8 @@ func importModelFile(at url: URL, outputDir: URL, mixes: [ToolMix] = []) throws 
                 facetCount: Int(slicer_imported_volume_facets(handle, Int32(i), k)),
                 isPainted: slicer_imported_volume_painted(handle, Int32(i), k) != 0,
                 paintedTools: painted.prefix(Int(n)).map(Int.init),
+                supportsPainted: layers & (1 << SLICER_PAINT_SUPPORTS) != 0,
+                seamPainted: layers & (1 << SLICER_PAINT_SEAM) != 0,
                 meshURL: kind == .part ? nil : outputDir.appendingPathComponent("\(i).v\(k).stl"))
         }
         objects.append(ConvertedModelObject(

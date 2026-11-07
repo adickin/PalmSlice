@@ -36,6 +36,9 @@ struct PrinterProfileEditorView: View {
                     profile: $draft,
                     basePresetName: draft.systemPreset ?? "None (custom printer)",
                     baseSettings: draft.systemPreset.flatMap { PresetLibrary.settings(.printer, $0) } ?? [:])
+                if mode == .edit, let template = builtInTemplate {
+                    ResetToDefaultSection(kind: "printer") { reset(to: template) }
+                }
             }
             .navigationTitle(mode == .add ? "New Printer" : "Edit Printer")
             .navigationBarTitleDisplayMode(.inline)
@@ -47,6 +50,19 @@ struct PrinterProfileEditorView: View {
             .onChange(of: draft.numberOfExtruders) { newCount in
                 syncExtruders(to: newCount)
             }
+        }
+    }
+
+    private var builtInTemplate: PrinterProfile? {
+        BuiltInProfiles.entries.first { $0.key == draft.builtInKey }.flatMap(BuiltInProfiles.profile(for:))
+    }
+
+    private func reset(to template: PrinterProfile) {
+        var p = template
+        p.id = draft.id
+        draft = p
+        materialDiameterStrings = p.extruders.map { ext in
+            ext.compatibleMaterialDiameters.map { String($0) }.joined(separator: ", ")
         }
     }
 

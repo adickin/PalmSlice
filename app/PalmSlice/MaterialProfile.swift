@@ -3,6 +3,8 @@ import Foundation
 struct MaterialProfile: Codable, Identifiable {
     var id: UUID = UUID()
     var name: String = "My Material"
+    /// The built-in this is a saved copy of (its original name), for Reset to Default.
+    var builtInName: String? = nil
 
     // MARK: - Filament
     var filamentDiameter: Double = 1.75      // mm  — filament_diameter (per-extruder array)
@@ -80,6 +82,7 @@ extension MaterialProfile {
         self.init()
         id = try v(.id, d.id)
         name = try v(.name, d.name)
+        builtInName = try c.decodeIfPresent(String.self, forKey: .builtInName)
         filamentDiameter = try v(.filamentDiameter, d.filamentDiameter)
         filamentType = try v(.filamentType, d.filamentType)
         colour = try v(.colour, d.colour)

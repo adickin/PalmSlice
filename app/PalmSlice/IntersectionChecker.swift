@@ -51,10 +51,10 @@ private func computeOBB(model: PlacedModel) -> OBB? {
     let heZ: Float = (info.sizeMMY / 200) * s.y
 
     let r = t.rotationDeg * (.pi / 180)
-    // SceneKit ZYX Euler order: Rx(r.x) * Ry(r.z) * Rz(r.y)
-    let q = simd_quaternion(r.x, SIMD3<Float>(1, 0, 0))
+    // SceneKit's pivot rotation: X, then Y (rz), then Z (ry) — see ModelTransform.minWorldY.
+    let q = simd_quaternion(r.y, SIMD3<Float>(0, 0, 1))
           * simd_quaternion(r.z, SIMD3<Float>(0, 1, 0))
-          * simd_quaternion(r.y, SIMD3<Float>(0, 0, 1))
+          * simd_quaternion(r.x, SIMD3<Float>(1, 0, 0))
 
     let axX = simd_act(q, SIMD3<Float>(1, 0, 0))
     let axY = simd_act(q, SIMD3<Float>(0, 1, 0))

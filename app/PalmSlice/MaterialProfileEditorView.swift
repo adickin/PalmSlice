@@ -29,6 +29,13 @@ struct MaterialProfileEditorView: View {
                     profile: $draft, basePresetName: baseFilament, baseSettings: baseSettings,
                     onChooseBase: { showBasePicker = true },
                     onResetBase: draft.basePreset == nil ? nil : { draft.basePreset = nil })
+                if mode == .edit, let template = BuiltInMaterialProfiles.template(named: draft.builtInName) {
+                    ResetToDefaultSection(kind: "material") {
+                        var m = template
+                        m.id = draft.id
+                        draft = m
+                    }
+                }
             }
             .task(id: "\(draft.basePreset ?? "")|\(draft.filamentType)") { await loadBase() }
             .sheet(isPresented: $showBasePicker) {

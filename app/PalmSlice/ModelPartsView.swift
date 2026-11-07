@@ -127,6 +127,11 @@ struct ModelPartsView: View {
                         }
                     }
                 }
+                if part.supportsPainted || part.seamPainted {
+                    Text([part.supportsPainted ? "Supports" : nil, part.seamPainted ? "Seam" : nil]
+                            .compactMap { $0 }.joined(separator: " · ") + " painted")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 if part.kind != .part {
                     Button { shownPart = shownPart == k ? nil : k } label: {
                         Image(systemName: shownPart == k ? "eye.fill" : "eye")

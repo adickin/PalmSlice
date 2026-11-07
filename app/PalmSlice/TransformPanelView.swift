@@ -51,6 +51,7 @@ struct TransformPanelView: View {
     /// caller can place them inside its own List — used by the iPad sidebar.
     var embedded: Bool = false
     @Environment(\.dismiss) private var dismiss
+    @State private var isOrienting = false
 
     var body: some View {
         if embedded {
@@ -136,6 +137,8 @@ struct TransformPanelView: View {
             HStack(spacing: 12) {
                 if meshInfo != nil {
                     rowButton("Lay Flat") { layFlat() }
+                    rowButton(isOrienting ? "Orienting…" : "Auto-Orient") { autoOrient() }
+                        .disabled(isOrienting)
                 }
                 rowButton("Reset") { transform.rotationDeg = .zero }
             }
@@ -290,25 +293,20 @@ struct TransformPanelView: View {
             }
         }
 
-        let scNormal = simd_normalize(SIMD3<Float>(bestNormal.x, bestNormal.z, -bestNormal.y))
-        let target   = SIMD3<Float>(0, -1, 0)
-        let dot      = max(-1, min(1, simd_dot(scNormal, target)))
-
-        let rotQuat: simd_quatf
-        if dot > 0.9999 {
-            transform.rotationDeg = .zero
-            if let info = meshInfo { transform = transform.droppedToBed(meshInfo: info) }
-            return
-        } else if dot < -0.9999 {
-            rotQuat = simd_quaternion(Float.pi, SIMD3<Float>(1, 0, 0))
-        } else {
-            rotQuat = simd_quaternion(acos(dot), simd_normalize(simd_cross(scNormal, target)))
-        }
-
-        let node = SCNNode()
-        node.simdOrientation = rotQuat
-        transform.rotationDeg = node.simdEulerAngles * (180 / .pi)
+        transform.rotationDeg = AutoOrient.rotationDeg(placing: bestNormal)
         transform = transform.droppedToBed(meshInfo: info)
+    }
+
+    /// Turns the model the way that needs the least support.
+    private func autoOrient() {
+        guard let info = meshInfo else { return }
+        isOrienting = true
+        Task {
+            let rotation = await Task.detached(priority: .userInitiated) { AutoOrient.rotation(for: info) }.value
+            isOrienting = false
+            transform.rotationDeg = rotation
+            transform = transform.droppedToBed(meshInfo: info)
+        }
     }
 
     private func fitToBed() {

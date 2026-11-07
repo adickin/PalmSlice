@@ -163,7 +163,10 @@ targets:
       properties:
         CFBundleDisplayName: PalmSlice
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "3"
+        CFBundleVersion: "4"
+        # Long slices keep running in the background (SliceActivity, iOS 26+).
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.adickin.PalmSlice.slice.*
 
         # Files app integration — shows app's Documents in the Files browser
         UIFileSharingEnabled: true

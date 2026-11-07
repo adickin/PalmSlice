@@ -8,6 +8,7 @@ struct ModelListView: View {
     var onModelsChanged: (() -> Void)? = nil
     var onShowFileSettings: ((UUID) -> Void)? = nil
     var onShowParts: ((UUID) -> Void)? = nil
+    var onShowPartSettings: ((UUID) -> Void)? = nil
     /// Shows each model's tool (multi-tool printers).
     var palette: ToolPalette? = nil
 
@@ -22,6 +23,7 @@ struct ModelListView: View {
                         onDelete: { removeModel(id: model.id) },
                         onShowFileSettings: { onShowFileSettings?(model.id) },
                         onShowParts: { onShowParts?(model.id) },
+                        onShowPartSettings: { onShowPartSettings?(model.id) },
                         palette: palette
                     )
                     .disabled(disabled)
@@ -61,6 +63,7 @@ private struct ModelCell: View {
     let onDelete: () -> Void
     let onShowFileSettings: () -> Void
     let onShowParts: () -> Void
+    let onShowPartSettings: () -> Void
     let palette: ToolPalette?
 
     var body: some View {
@@ -139,6 +142,9 @@ private struct ModelCell: View {
         .contextMenu {
             Button(action: onShowParts) {
                 Label("Parts & Tools…", systemImage: "square.stack.3d.up")
+            }
+            Button(action: onShowPartSettings) {
+                Label("Part Settings…", systemImage: "slider.horizontal.3")
             }
             if model.fileSettings != nil || model.projectSettings != nil {
                 Button(action: onShowFileSettings) {

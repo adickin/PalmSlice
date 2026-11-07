@@ -1,28 +1,41 @@
 import SwiftUI
 
-/// Paint mode controls: the tool or mix to paint (or erase), brush size, brush
-/// or fill, undo / redo, clear the part, done.
+/// Paint mode controls: what to paint (colour, supports, seam), the tool, mix
+/// or enforce / block to paint (or erase), brush size, brush or fill, undo /
+/// redo, clear the part, done.
 struct PaintToolbar: View {
     @ObservedObject var controller: PaintController
     let palette: ToolPalette
+    /// Colour painting needs several tools (or a mix) to choose from.
+    var colourAvailable = true
+    /// The slice profile's supports are off, so painted enforcers do nothing.
+    var supportsOff = false
     let onDone: () -> Void
     @State private var confirmClear = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Picker("Paint", selection: $controller.layer) {
+                ForEach(PaintLayer.allCases.filter { colourAvailable || $0 != .colour }) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    Button { controller.tool = 0 } label: {
-                        Image(systemName: "eraser")
-                            .padding(5)
-                            .overlay(RoundedRectangle(cornerRadius: 7)
-                                .strokeBorder(controller.tool == 0 ? Color.accentColor : .clear, lineWidth: 2))
+                    choice(icon: "eraser", label: "Erase", state: 0)
+                    if controller.layer == .colour {
+                        ToolChips(tool: Binding(get: { max(controller.tool, 0) }, set: { controller.tool = $0 }), palette: palette)
+                            .fixedSize()
+                    } else {
+                        let seam = controller.layer == .seam
+                        choice(icon: "plus.circle.fill", label: seam ? "Seam Here" : "Enforce",
+                               state: Int(SLICER_PAINT_ENFORCE))
+                        choice(icon: "nosign", label: seam ? "No Seam" : "Block", state: Int(SLICER_PAINT_BLOCK))
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Erase")
-                    ToolChips(tool: Binding(get: { max(controller.tool, 0) }, set: { controller.tool = $0 }), palette: palette)
-                        .fixedSize()
                 }
+            }
+            if controller.layer == .supports && supportsOff {
+                Text("Supports are off in the slice profile, so painted supports won't print until you turn them on.")
+                    .font(.caption2).foregroundStyle(.orange)
             }
             Picker("Mode", selection: $controller.mode) {
                 ForEach(PaintController.Mode.allCases) { Text($0.rawValue).tag($0) }
@@ -67,5 +80,21 @@ struct PaintToolbar: View {
         } message: {
             Text(controller.errorMessage ?? "")
         }
+    }
+
+    /// Erase, or an enforce / block state on the support and seam layers.
+    private func choice(icon: String, label: String, state: Int) -> some View {
+        Button { controller.tool = state } label: {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .foregroundStyle(state == 0 ? Color.primary : PaintLayer.annotationColour(UInt8(state)).color)
+                if state != 0 { Text(label).font(.caption.weight(.semibold)) }
+            }
+            .padding(5)
+            .overlay(RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(controller.tool == state ? Color.accentColor : .clear, lineWidth: 2))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }

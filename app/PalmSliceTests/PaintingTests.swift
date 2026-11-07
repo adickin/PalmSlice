@@ -27,6 +27,59 @@ final class PaintingTests: XCTestCase {
         XCTAssertTrue(vertices.allSatisfy { $0 > -0.001 && $0 < 20.001 })
     }
 
+    /// Support and seam painting: only enforce / block states, saved into the
+    /// native 3MF on their own layers (colour paint untouched), reported on
+    /// import, and the object still slices with supports on.
+    func testSupportAndSeamPaintingRoundTrip() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let object = try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir).objects[0]
+        let native = try XCTUnwrap(object.nativeURL)
+        guard let h = slicer_create() else { return XCTFail("slicer_create") }
+        defer { slicer_destroy(h) }
+
+        // Seam: enforce on the tower's top face.
+        XCTAssertEqual(slicer_paint_begin_layer(h, native.path, 0, SLICER_PAINT_SEAM), 0, String(cString: slicer_last_error(h)))
+        XCTAssertEqual(slicer_paint_mesh_update(h), 0)
+        XCTAssertEqual(slicer_paint_stroke_begin(h), 0)
+        XCTAssertNotEqual(slicer_paint_brush(h, 2, [3, -3, 20], nil, [0, 0, 100], 4, 3, 0), 0, "tools aren't seam states")
+        XCTAssertEqual(slicer_paint_brush(h, 2, [3, -3, 20], nil, [0, 0, 100], 4, SLICER_PAINT_ENFORCE, 0), 0)
+        XCTAssertGreaterThan(slicer_paint_mesh_update(h), 0)
+        let seamSaved = dir.appendingPathComponent("seam.3mf")
+        XCTAssertEqual(slicer_paint_end(h, seamSaved.path), 0, String(cString: slicer_last_error(h)))
+
+        // Supports: block a side of the tower, on top of the seam copy.
+        XCTAssertEqual(slicer_paint_begin_layer(h, seamSaved.path, 0, SLICER_PAINT_SUPPORTS), 0)
+        XCTAssertEqual(slicer_paint_mesh_update(h), 0, "seam paint isn't on the supports layer")
+        XCTAssertEqual(slicer_paint_stroke_begin(h), 0)
+        XCTAssertEqual(slicer_paint_fill(h, 4, [4, -10, 5], SLICER_PAINT_BLOCK, 30, 1), 0, String(cString: slicer_last_error(h)))
+        let saved = dir.appendingPathComponent("painted.3mf")
+        XCTAssertEqual(slicer_paint_end(h, saved.path), 0)
+
+        // Colour paint is a separate layer: still none.
+        XCTAssertEqual(slicer_paint_begin(h, saved.path, 0), 0)
+        XCTAssertEqual(slicer_paint_mesh_update(h), 0)
+        slicer_paint_end(h, nil)
+
+        let again = try importModelFile(at: saved, outputDir: dir.appendingPathComponent("again"))
+        let tower = try XCTUnwrap(again.objects.first?.parts.first)
+        XCTAssertTrue(tower.seamPainted)
+        XCTAssertTrue(tower.supportsPainted)
+        XCTAssertFalse(tower.isPainted)
+        XCTAssertFalse(again.objects.first?.parts[1].supportsPainted ?? true)
+
+        guard let s = slicer_create() else { return XCTFail("slicer_create") }
+        defer { slicer_destroy(s) }
+        var settings = try XCTUnwrap(object.projectSettings)
+        settings["support_material"] = "1"
+        XCTAssertEqual(slicer_apply_settings(s, SettingsText.serialize(settings)), 0)
+        let idx = slicer_add_model_object(s, saved.path, 1)
+        XCTAssertGreaterThanOrEqual(idx, 0, String(cString: slicer_last_error(s)))
+        var t = SlicerModelTransform(); t.scale_x = 1; t.scale_y = 1; t.scale_z = 1
+        XCTAssertEqual(slicer_set_object_transform(s, idx, &t), 0)
+        XCTAssertEqual(slicer_slice(s, 0, 0), 0, String(cString: slicer_last_error(s)))
+        XCTAssertEqual(slicer_export_gcode(s, dir.appendingPathComponent("painted.gcode").path), 0)
+    }
+
     func testBrushUndoSaveAndSlice() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let file = try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir)

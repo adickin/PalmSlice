@@ -414,7 +414,15 @@ struct STLSceneView: UIViewRepresentable {
 
         for node in entry.overlayNodes { node.removeFromParentNode() }
         entry.overlayNodes = []
-        if let paint = model.paint, let geometry = makePaintGeometry(paint, centreMM: entry.centreMM, palette: palette) {
+        // Support / seam painting being edited replaces the colour paint.
+        let paintGeometry = model.annotation.map {
+            makePaintGeometry($0, centreMM: entry.centreMM, colour: PaintLayer.annotationColour)
+        } ?? model.paint.map { paint in
+            makePaintGeometry(paint, centreMM: entry.centreMM) {
+                palette?.colour(Int($0)) ?? HexColour(red: 0.9, green: 0.4, blue: 0.1)
+            }
+        }
+        if let geometry = paintGeometry ?? nil {
             let node = SCNNode(geometry: geometry)
             node.name = "paint"
             entry.mesh.addChildNode(node)
@@ -1325,7 +1333,7 @@ func makeWipeTowerNode(_ tower: WipeTowerFootprint, bedCentreMM: SIMD2<Double>) 
 
 /// Painted triangles in their tools' colours, nudged off the surface along
 /// their normals so they draw over the model's own triangles.
-func makePaintGeometry(_ paint: PaintMesh, centreMM: SIMD3<Float>, palette: ToolPalette?) -> SCNGeometry? {
+func makePaintGeometry(_ paint: PaintMesh, centreMM: SIMD3<Float>, colour: (UInt8) -> HexColour) -> SCNGeometry? {
     guard !paint.isEmpty else { return nil }
     var positions: [SCNVector3] = [], normals: [SCNVector3] = [], colours: [SIMD4<Float>] = []
     positions.reserveCapacity(paint.states.count * 3)
@@ -1336,7 +1344,7 @@ func makePaintGeometry(_ paint: PaintMesh, centreMM: SIMD3<Float>, palette: Tool
         let len = simd_length(n)
         n = len > 1e-10 ? n / len : SIMD3(0, 0, 1)
         let colour = cache[state] ?? {
-            let c = palette?.colour(Int(state)) ?? HexColour(red: 0.9, green: 0.4, blue: 0.1)
+            let c = colour(state)
             let rgba = SIMD4(Float(c.red), Float(c.green), Float(c.blue), 1)
             cache[state] = rgba
             return rgba

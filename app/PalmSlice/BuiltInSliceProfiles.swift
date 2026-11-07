@@ -129,4 +129,7 @@ enum BuiltInSliceProfiles {
     )
 
     static let all: [SliceProfile] = [draft, standard, fine, thickWalls, lightweight, rcPlane]
+        .map { var p = $0; p.builtInName = p.name; return p }
+
+    static func template(named name: String?) -> SliceProfile? { all.first { $0.builtInName == name } }
 }

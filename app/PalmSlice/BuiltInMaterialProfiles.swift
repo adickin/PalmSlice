@@ -133,4 +133,7 @@ enum BuiltInMaterialProfiles {
     )
 
     static let all: [MaterialProfile] = [pla, petg, abs, tpu, esunPLALW]
+        .map { var m = $0; m.builtInName = m.name; return m }
+
+    static func template(named name: String?) -> MaterialProfile? { all.first { $0.builtInName == name } }
 }

@@ -51,6 +51,8 @@ enum SlicingMode: String, CaseIterable, Codable, Identifiable {
 struct SliceProfile: Codable, Identifiable {
     var id: UUID = UUID()
     var name: String = "My Profile"
+    /// The built-in this is a saved copy of (its original name), for Reset to Default.
+    var builtInName: String? = nil
 
     // MARK: - Layers
     var layerHeight: Double = 0.2        // mm  — PrusaSlicer: layer_height
@@ -158,6 +160,7 @@ extension SliceProfile {
         self.init()
         id = try v(.id, d.id)
         name = try v(.name, d.name)
+        builtInName = try c.decodeIfPresent(String.self, forKey: .builtInName)
         layerHeight = try v(.layerHeight, d.layerHeight)
         firstLayerHeight = try v(.firstLayerHeight, d.firstLayerHeight)
         wallCount = try v(.wallCount, d.wallCount)

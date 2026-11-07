@@ -18,6 +18,14 @@ Outstanding work only. Feature ideas and longer-term plans are in
 
 ## Completed
 
+### Support and seam painting, part settings, auto-orient (2026-11-01)
+- [x] **Support and seam painting** — Colour / Supports / Seam in paint mode: enforce, block, erase, with brush and fills; saved in the native 3MF (`supported_facets`, `seam_facets`) and read back on import; Paint is offered on single-tool printers too (`PaintingTests`)
+- [x] **Part Settings** — any print setting a part can have, for the whole part and for height ranges, over the slice profile and the file's settings (`PartSettingsTests`)
+- [x] **Reset to Default** for built-in printers, slice profiles and materials (`ResetToDefaultTests`)
+- [x] **Auto-Orient** (model manipulation Phase 6) in the rotate bar and the transform panel (`AutoOrientTests`)
+- [x] **Haptic feedback** when a slice finishes or fails; **long slices keep running in the background** (iOS 26 continued-processing task with system progress, a short grace period before that), with a **notification when a background slice finishes or fails**
+- [x] Fixes found on the way: rotated non-box models floated above the bed in the slicer; drop-to-bed, overlap checks and Lay Flat used the wrong rotation order
+
 ### Painting and multi-tool fixes from first device use (2026-11-01)
 - [x] **Paint controls** open where the transform fields go on iPhone (clear of the slide-up panel, which collapses); Paint toggles paint mode
 - [x] **Paint gestures**: one finger on the model paints, off it turns the view; two fingers pan, pinch zooms; a second finger takes back the stroke the first began; the Pencil doesn't drag models while painting
@@ -187,6 +195,7 @@ Plan: `Plans/slicing_profiles.md`
 - [x] **Build number bumped to 2** — `CFBundleVersion: "2"` in `project.yml` (1.0 (1) already uploaded)
 - [x] **App Store listing copy drafted** — `APP_STORE_LISTING.md` (name, subtitle, description, keywords, category, age rating, review notes). Screenshots still need to be captured manually
 - [x] **Upload build 1.0 (2)** — archived and uploaded via `xcodebuild -exportArchive` (`method: app-store-connect`, `destination: upload`) on 2026-10-14; includes the export sheet and OctoPrint upload. `CFBundleVersion` bumped to `"3"` for the next upload (iPad UI + Apple Pencil)
+- [x] **Upload build 1.0 (3)** — uploaded 2026-11-06 (multi-tool, U1, ColorMix, painting incl. supports/seam, part settings, auto-orient, background slicing). The API key route failed (an App Manager key can't cloud-sign; needs an Admin key or a local distribution certificate), so it went through the Xcode account. `CFBundleVersion` bumped to `"4"` for the next upload
 - [x] **basic automated tests** — new `PalmSliceTests` XCTest target (hosted by `PalmSlice`, auto-attached by xcodegen); initially 15 tests (since grown to cover presets, 3MF import, file settings and per-printer slicing) covering profile Codable round-trips, built-in profile sanity, bridge-int enum uniqueness, and `GCodeParser` layer/extrusion-type parsing — all passing on `iphonesimulator`
 
 ### Model Manipulation (Plan: `Plans/model_manipulation.md`)

@@ -39,7 +39,9 @@ final class SliceProfileStore: ObservableObject {
             save()
         }
 
-        if mergeInNewBuiltIns() {
+        let added = mergeInNewBuiltIns()
+        let linked = linkBuiltIns()
+        if added || linked {
             save()
         }
 
@@ -51,6 +53,18 @@ final class SliceProfileStore: ObservableObject {
         if selectedProfileId == nil || !profiles.contains(where: { $0.id == selectedProfileId }) {
             selectedProfileId = profiles.first?.id
         }
+    }
+
+    // Copies saved before builtInName existed: link those still named after a built-in.
+    private func linkBuiltIns() -> Bool {
+        var changed = false
+        for i in profiles.indices where profiles[i].builtInName == nil {
+            if let t = BuiltInSliceProfiles.template(named: profiles[i].name), !profiles.contains(where: { $0.builtInName == t.name }) {
+                profiles[i].builtInName = t.name
+                changed = true
+            }
+        }
+        return changed
     }
 
     private static let offeredBuiltInsKey = "sliceBuiltInsOffered"

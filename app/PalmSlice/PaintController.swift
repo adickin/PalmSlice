@@ -2,8 +2,29 @@ import Foundation
 import SceneKit
 import simd
 
+/// What's painted: tool colours, or where supports / seams must or mustn't go
+/// (PrusaSlicer's MMU, support and seam painting).
+enum PaintLayer: Int32, CaseIterable, Identifiable {
+    case colour = 0, supports, seam   // SLICER_PAINT_*
+    var id: Int32 { rawValue }
+    var title: String {
+        switch self {
+        case .colour:   "Colour"
+        case .supports: "Supports"
+        case .seam:     "Seam"
+        }
+    }
+
+    /// Display colour of an enforce / block state on the support or seam layers.
+    static func annotationColour(_ state: UInt8) -> HexColour {
+        state == UInt8(SLICER_PAINT_BLOCK) ? HexColour(red: 0.91, green: 0.27, blue: 0.24)
+                                           : HexColour(red: 0.24, green: 0.52, blue: 1.0)
+    }
+}
+
 /// Painted triangles of a model for display: 9 floats per triangle in the
-/// model's display-STL frame (mm), and the tool (PalmSlice number) of each.
+/// model's display-STL frame (mm), and the state of each: a tool (PalmSlice
+/// number) for colour, SLICER_PAINT_ENFORCE / _BLOCK for supports and seams.
 struct PaintMesh {
     var vertices: [Float] = []
     var states: [UInt8] = []
@@ -27,10 +48,10 @@ func loadPaintMesh(nativeURL: URL, parts: [ModelPart]) -> PaintMesh? {
     return mesh.isEmpty ? nil : mesh
 }
 
-/// Colour painting on the parts of one model: like PrusaSlicer's
-/// multi-material painting gizmo. Each touched part has a bridge paint
-/// session; leaving a part (or finishing) saves its painting into a new copy
-/// of the model's native 3MF.
+/// Painting on the parts of one model: colours, like PrusaSlicer's
+/// multi-material painting gizmo, or support / seam enforcers and blockers.
+/// Each touched part has a bridge paint session; leaving a part, switching
+/// layer or finishing saves its painting into a new copy of the model's native 3MF.
 @MainActor
 final class PaintController: ObservableObject {
     enum Mode: String, CaseIterable, Identifiable {
@@ -39,6 +60,11 @@ final class PaintController: ObservableObject {
     }
 
     let modelID: UUID
+    /// What strokes paint. Switching saves the part being painted.
+    @Published var layer: PaintLayer = .colour {
+        didSet { if layer != oldValue { switchLayer(from: oldValue) } }
+    }
+    /// The tool to paint (colour), or SLICER_PAINT_ENFORCE / _BLOCK; 0 erases.
     @Published var tool = 1
     @Published var mode: Mode = .brush
     /// Brush radius, mm.
@@ -51,14 +77,17 @@ final class PaintController: ObservableObject {
 
     private var model: PlacedModel
     private let handle: SlicerHandle
-    /// Volume being painted (index in the native 3MF), -1 = none.
+    /// Volume being painted (index in the native 3MF), -1 = none, and the layer its session paints.
     private var volume = -1
+    private var sessionLayer: PaintLayer = .colour
     private var undoDepth = 0, redoDepth = 0
     private var lastPoint: SIMD3<Float>?
     /// A stroke has begun and its touch hasn't ended.
     private var strokeOpen = false
     private var changed = false
     private var saveCount = 0
+    /// The tool last used on each layer.
+    private var toolByLayer: [PaintLayer: Int] = [:]
     /// Called with the updated model after each stroke (paint display) and when a part is saved.
     var onModelChange: ((PlacedModel) -> Void)?
 
@@ -84,11 +113,12 @@ final class PaintController: ObservableObject {
     private func begin(volume k: Int) -> Bool {
         if volume == k { return true }
         saveCurrent()
-        guard let url = model.nativeURL, slicer_paint_begin(handle, url.path, Int32(k)) == 0 else {
+        guard let url = model.nativeURL, slicer_paint_begin_layer(handle, url.path, Int32(k), layer.rawValue) == 0 else {
             errorMessage = String(cString: slicer_last_error(handle))
             return false
         }
         volume = k
+        sessionLayer = layer
         undoDepth = 0; redoDepth = 0
         updateUndoState()
         return true
@@ -177,22 +207,36 @@ final class PaintController: ObservableObject {
         canRedo = redoDepth > 0
     }
 
-    /// Rebuilds the model's paint display: the active part from the session,
-    /// the others from the saved object.
+    /// Rebuilds the model's display of the layer being painted: the active
+    /// part from the session, the others from the saved object.
     private func refreshDisplay() {
         var mesh = PaintMesh()
         if let url = model.nativeURL, let h = slicer_create() {
-            for (k, part) in model.parts.enumerated() where part.kind == .part && part.isPainted && k != volume {
-                guard slicer_paint_begin(h, url.path, Int32(k)) == 0 else { continue }
+            for (k, part) in model.parts.enumerated() where part.kind == .part && part.isPainted(layer) && k != volume {
+                guard slicer_paint_begin_layer(h, url.path, Int32(k), layer.rawValue) == 0 else { continue }
                 append(h, to: &mesh)
                 slicer_paint_end(h, nil)
             }
             slicer_destroy(h)
         }
         if volume >= 0 { append(handle, to: &mesh) }
-        model.paint = mesh.isEmpty ? nil : mesh
+        if layer == .colour {
+            model.paint = mesh.isEmpty ? nil : mesh
+            model.annotation = nil
+        } else {
+            model.annotation = mesh   // empty still hides the colour paint
+        }
         model.paintVersion += 1
         onModelChange?(model)
+    }
+
+    private func switchLayer(from old: PaintLayer) {
+        saveCurrent()
+        toolByLayer[old] = tool
+        tool = toolByLayer[layer] ?? (layer == .colour ? 1 : Int(SLICER_PAINT_ENFORCE))
+        undoDepth = 0; redoDepth = 0
+        updateUndoState()
+        refreshDisplay()
     }
 
     private func append(_ h: SlicerHandle, to mesh: inout PaintMesh) {
@@ -218,8 +262,13 @@ final class PaintController: ObservableObject {
         }
         model.nativeURL = saved
         if volume < model.parts.count {
-            model.parts[volume].isPainted = n > 0
-            model.parts[volume].paintedTools = used.prefix(n).map(Int.init)
+            switch sessionLayer {
+            case .colour:
+                model.parts[volume].isPainted = n > 0
+                model.parts[volume].paintedTools = used.prefix(n).map(Int.init)
+            case .supports: model.parts[volume].supportsPainted = n > 0
+            case .seam:     model.parts[volume].seamPainted = n > 0
+            }
         }
         changed = false
         onModelChange?(model)
@@ -228,6 +277,7 @@ final class PaintController: ObservableObject {
     /// Ends painting; the returned model has the saved paint.
     func finish() -> PlacedModel {
         saveCurrent()
+        model.annotation = nil
         return model
     }
 }

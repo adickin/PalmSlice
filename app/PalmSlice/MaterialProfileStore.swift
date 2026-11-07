@@ -72,7 +72,8 @@ final class MaterialProfileStore: ObservableObject {
         let added = mergeInNewBuiltIns()
         let updated = updateUneditedLWPLA()
         let typed = assignBuiltInFilamentTypes()
-        if added || updated || typed {
+        let linked = linkBuiltIns()
+        if added || updated || typed || linked {
             save()
         }
 
@@ -86,6 +87,18 @@ final class MaterialProfileStore: ObservableObject {
         }
         toolMaterialIDs = (UserDefaults.standard.stringArray(forKey: Self.toolMaterialsKey) ?? [])
             .compactMap(UUID.init)
+    }
+
+    // Copies saved before builtInName existed: link those still named after a built-in.
+    private func linkBuiltIns() -> Bool {
+        var changed = false
+        for i in profiles.indices where profiles[i].builtInName == nil {
+            if let t = BuiltInMaterialProfiles.template(named: profiles[i].name), !profiles.contains(where: { $0.builtInName == t.name }) {
+                profiles[i].builtInName = t.name
+                changed = true
+            }
+        }
+        return changed
     }
 
     private static let offeredBuiltInsKey = "materialBuiltInsOffered"

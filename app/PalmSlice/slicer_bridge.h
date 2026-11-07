@@ -280,6 +280,8 @@ int         slicer_imported_volume_type(SlicerHandle handle, int index, int volu
 int         slicer_imported_volume_extruder(SlicerHandle handle, int index, int volume); // 0 = the object's
 int         slicer_imported_volume_facets(SlicerHandle handle, int index, int volume);   // triangles in <i>.stl
 int         slicer_imported_volume_painted(SlicerHandle handle, int index, int volume);  // 1 if colour-painted
+// Bit (1 << SLICER_PAINT_*) set for each layer painted on the volume.
+int         slicer_imported_volume_painted_layers(SlicerHandle handle, int index, int volume);
 // Tools (PalmSlice numbers) painted on the volume: writes up to `max` into
 // `out` and returns how many there are.
 int         slicer_imported_volume_paint_tools(SlicerHandle handle, int index, int volume, int* out, int max);
@@ -326,8 +328,13 @@ const char* slicer_imported_project_settings(SlicerHandle handle);
 // Applies object settings in the slicer_imported_object_settings format to an
 // object added with slicer_add_stl. Height ranges and layer heights are in mm
 // above the bed, so they only fit the object in its imported orientation.
+// Can be called again (e.g. the file's settings, then the user's): later
+// settings win, and overlapping height ranges are split so they stay separate.
 // Returns 0 on success, negative on error (nothing applied).
 int slicer_set_object_file_settings(SlicerHandle handle, int object_index, const char* text);
+// Keys an object or height range can set (PrusaSlicer's per-object and
+// per-region settings), one per line.
+const char* slicer_object_setting_keys(void);
 
 // Colour by height: tool bands for an added object, as "<from_z> <to_z> <tool>"
 // lines (mm above the bed, PalmSlice tool numbers, 0 = the object's tool).
@@ -345,8 +352,19 @@ int slicer_set_object_tool_ranges(SlicerHandle handle, int object_index, const c
 // index within the volume (display triangle index minus the earlier parts'
 // counts). States are PalmSlice tool numbers; 0 erases (the part's own tool).
 
+// What a paint session paints: tool colours (states are tool numbers) or, like
+// PrusaSlicer's support and seam painting gizmos, where supports / seams must
+// or mustn't go (states SLICER_PAINT_ENFORCE / SLICER_PAINT_BLOCK).
+#define SLICER_PAINT_COLOUR   0
+#define SLICER_PAINT_SUPPORTS 1
+#define SLICER_PAINT_SEAM     2
+#define SLICER_PAINT_ENFORCE  1
+#define SLICER_PAINT_BLOCK    2
+
 // Starts painting volume `volume` of the object in `path` (an <i>.3mf).
 int slicer_paint_begin(SlicerHandle handle, const char* path, int volume);
+// The same for one of the SLICER_PAINT_* layers (slicer_paint_begin = colour).
+int slicer_paint_begin_layer(SlicerHandle handle, const char* path, int volume, int layer);
 // Call at the start of each stroke or fill: saves an undo step.
 int slicer_paint_stroke_begin(SlicerHandle handle);
 // Brush at point (3 floats) on facet; `previous` (or NULL) is the last brush

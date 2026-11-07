@@ -40,6 +40,13 @@ struct SliceProfileEditorView: View {
                     profile: $draft, basePresetName: basePrint, baseSettings: baseSettings,
                     onChooseBase: { showBasePicker = true },
                     onResetBase: draft.basePreset == nil ? nil : { draft.basePreset = nil })
+                if mode == .edit, let template = BuiltInSliceProfiles.template(named: draft.builtInName) {
+                    ResetToDefaultSection(kind: "slice profile") {
+                        var p = template
+                        p.id = draft.id
+                        draft = p
+                    }
+                }
                 helpButtonSection
             }
             .task(id: draft.basePreset) { await loadBase() }

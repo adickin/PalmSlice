@@ -51,6 +51,7 @@ struct PaintSession {
     Slic3r::Model model;                                   // the one object
     Slic3r::ModelVolume* volume = nullptr;
     Slic3r::Transform3d trafo = Slic3r::Transform3d::Identity();  // volume mesh → display frame
+    int layer = SLICER_PAINT_COLOUR;
     std::unique_ptr<Slic3r::TriangleSelector> selector;
     std::vector<Slic3r::TriangleSelector::TriangleSplittingData> undo, redo;
     std::vector<float> vertices;                           // display mesh, 9 floats per triangle
@@ -82,6 +83,7 @@ struct SlicerContext {
         int extruder = 0;      // PalmSlice tool number, 0 = the object's
         int facets = 0;        // triangles in the object's STL (parts only)
         bool painted = false;
+        int painted_layers = 0;         // bit (1 << SLICER_PAINT_*) per painted layer
         std::vector<int> paint_tools;   // PalmSlice tool numbers painted on it
     };
     struct ImportedObject {
@@ -612,6 +614,9 @@ int slicer_set_model_transform(SlicerHandle handle,
                 inst->set_rotation(Slic3r::Vec3d(rx_stl, ry_stl, rz_stl));
                 inst->set_offset(Slic3r::Vec3d(inst_x, inst_y, inst_z));
             }
+            // The box corners above reach below a rotated mesh that isn't a
+            // box; put the mesh itself on the bed.
+            obj->ensure_on_bed();
         }
         return 0;
     } catch (const std::exception& e) {
@@ -684,6 +689,9 @@ static int apply_transform_to_object(SlicerContext* ctx,
         inst->set_rotation(Slic3r::Vec3d(rx_stl, ry_stl, rz_stl));
         inst->set_offset(Slic3r::Vec3d(inst_x, inst_y, inst_z));
     }
+    // The box corners above reach below a rotated mesh that isn't a box;
+    // put the mesh itself on the bed.
+    obj->ensure_on_bed();
     return 0;
 }
 
@@ -1014,6 +1022,9 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
                     v.type     = static_cast<int>(vol->type());
                     v.extruder = config_tool(vol->config);
                     v.painted  = vol->is_mm_painted();
+                    v.painted_layers = (v.painted ? 1 << SLICER_PAINT_COLOUR : 0)
+                        | (vol->is_fdm_support_painted() ? 1 << SLICER_PAINT_SUPPORTS : 0)
+                        | (vol->is_seam_painted() ? 1 << SLICER_PAINT_SEAM : 0);
                     if (v.painted) {
                         const auto& used = vol->mm_segmentation_facets.get_data().used_states;
                         for (size_t s = 1; s < used.size(); ++s)
@@ -1111,6 +1122,11 @@ int slicer_imported_volume_facets(SlicerHandle handle, int index, int volume) {
 int slicer_imported_volume_painted(SlicerHandle handle, int index, int volume) {
     auto v = imported_volume(CTX(handle), index, volume);
     return v && v->painted ? 1 : 0;
+}
+
+int slicer_imported_volume_painted_layers(SlicerHandle handle, int index, int volume) {
+    auto v = imported_volume(CTX(handle), index, volume);
+    return v ? v->painted_layers : 0;
 }
 
 int slicer_imported_volume_paint_tools(SlicerHandle handle, int index, int volume, int* out, int max) {
@@ -1282,15 +1298,46 @@ int slicer_set_object_file_settings(SlicerHandle handle, int object_index, const
     for (const std::string& key : object_config.keys())
         obj->config.set_key_value(key, object_config.option(key)->clone());
     remap_config_tools(obj->config, tools);
-    for (auto& [range, config] : ranges) {
-        Slic3r::ModelConfig mc;
-        mc.assign_config(std::move(config));
-        remap_config_tools(mc, tools);
-        obj->layer_config_ranges[range] = std::move(mc);
+    if (!ranges.empty()) {
+        // On top of any ranges set before (e.g. the file's, then the user's):
+        // split old and new at every boundary; new settings win where they overlap.
+        std::vector<double> cuts;
+        for (const auto& [range, config] : obj->layer_config_ranges) { cuts.push_back(range.first); cuts.push_back(range.second); }
+        for (const auto& [range, config] : ranges) { cuts.push_back(range.first); cuts.push_back(range.second); }
+        std::sort(cuts.begin(), cuts.end());
+        cuts.erase(std::unique(cuts.begin(), cuts.end(), [](double a, double b) { return std::abs(a - b) < EPSILON; }), cuts.end());
+        Slic3r::t_layer_config_ranges pieces;
+        for (size_t i = 0; i + 1 < cuts.size(); ++i) {
+            const double lo = cuts[i], hi = cuts[i + 1], mid = (lo + hi) / 2;
+            Slic3r::ModelConfig mc;
+            bool covered = false;
+            for (const auto& [range, rc] : obj->layer_config_ranges)
+                if (range.first <= mid && mid < range.second) { mc.assign_config(rc.get()); covered = true; }
+            for (const auto& [range, config] : ranges)
+                if (range.first <= mid && mid < range.second) {
+                    Slic3r::ModelConfig added;
+                    added.assign_config(config);
+                    remap_config_tools(added, tools);
+                    mc.assign_config(added.get());
+                    covered = true;
+                }
+            if (covered) pieces[{lo, hi}] = std::move(mc);
+        }
+        obj->layer_config_ranges = std::move(pieces);
     }
     ensure_range_layer_heights(ctx, *obj);
     if (!heights.empty()) obj->layer_height_profile.set(std::move(heights));
     return 0;
+}
+
+const char* slicer_object_setting_keys(void) {
+    static const std::string keys = [] {
+        std::string out;
+        for (const std::string& k : Slic3r::PrintObjectConfig().keys()) out += k + "\n";
+        for (const std::string& k : Slic3r::PrintRegionConfig().keys()) out += k + "\n";
+        return out;
+    }();
+    return keys.c_str();
 }
 
 int slicer_set_object_tool_ranges(SlicerHandle handle, int object_index, const char* spec) {
@@ -1362,8 +1409,27 @@ static void push_undo(PaintSession& s) {
     s.redo.clear();
 }
 
+// The volume's painting for the session's layer.
+static Slic3r::FacetsAnnotation& paint_facets(PaintSession& s) {
+    switch (s.layer) {
+    case SLICER_PAINT_SUPPORTS: return s.volume->supported_facets;
+    case SLICER_PAINT_SEAM:     return s.volume->seam_facets;
+    default:                    return s.volume->mm_segmentation_facets;
+    }
+}
+
+// States a stroke can paint: tools for colour, enforce / block otherwise.
+static int paint_state_count(const PaintSession& s) {
+    return s.layer == SLICER_PAINT_COLOUR ? int(Slic3r::TRIANGLE_STATE_TYPE_COUNT) : SLICER_PAINT_BLOCK + 1;
+}
+
 int slicer_paint_begin(SlicerHandle handle, const char* path, int volume) {
+    return slicer_paint_begin_layer(handle, path, volume, SLICER_PAINT_COLOUR);
+}
+
+int slicer_paint_begin_layer(SlicerHandle handle, const char* path, int volume, int layer) {
     auto ctx = CTX(handle);
+    if (layer < SLICER_PAINT_COLOUR || layer > SLICER_PAINT_SEAM) return set_err(ctx, "unknown paint layer");
     try {
         auto s = std::make_unique<PaintSession>();
         Slic3r::DynamicPrintConfig unused;
@@ -1379,8 +1445,9 @@ int slicer_paint_begin(SlicerHandle handle, const char* path, int volume) {
         // the instance, so the display frame is instance × volume.
         s->trafo = obj->instances.empty() ? s->volume->get_matrix()
                                           : obj->instances.front()->get_matrix() * s->volume->get_matrix();
+        s->layer = layer;
         s->selector = std::make_unique<Slic3r::TriangleSelector>(s->volume->mesh());
-        s->selector->deserialize(s->volume->mm_segmentation_facets.get_data());
+        s->selector->deserialize(paint_facets(*s).get_data());
         ctx->paint = std::move(s);
         return 0;
     } catch (const std::exception& e) {
@@ -1402,7 +1469,7 @@ int slicer_paint_brush(SlicerHandle handle, int facet, const float* point, const
     auto s = paint_session(ctx);
     if (!s || !point || !camera) return -1;
     if (facet < 0 || facet >= int(s->volume->mesh().facets_count())) return set_err(ctx, "facet out of range");
-    if (state < 0 || state >= int(Slic3r::TRIANGLE_STATE_TYPE_COUNT)) return set_err(ctx, "state out of range");
+    if (state < 0 || state >= paint_state_count(*s)) return set_err(ctx, "state out of range");
     try {
         using TS = Slic3r::TriangleSelector;
         const Slic3r::Transform3d trafo = s->trafo;
@@ -1426,7 +1493,7 @@ int slicer_paint_fill(SlicerHandle handle, int facet, const float* point, int st
     auto s = paint_session(ctx);
     if (!s || !point) return -1;
     if (facet < 0 || facet >= int(s->volume->mesh().facets_count())) return set_err(ctx, "facet out of range");
-    if (state < 0 || state >= int(Slic3r::TRIANGLE_STATE_TYPE_COUNT)) return set_err(ctx, "state out of range");
+    if (state < 0 || state >= paint_state_count(*s)) return set_err(ctx, "state out of range");
     try {
         using TS = Slic3r::TriangleSelector;
         const Slic3r::Vec3f hit = to_volume(*s, point[0], point[1], point[2]);
@@ -1530,7 +1597,7 @@ int slicer_paint_end(SlicerHandle handle, const char* save_path) {
         int result = 0;
         if (save_path) {
             s->selector->garbage_collect();
-            s->volume->mm_segmentation_facets.set(*s->selector);
+            paint_facets(*s).set(*s->selector);
             if (!Slic3r::store_3mf(save_path, &s->model, nullptr, false))
                 result = set_err(ctx, "Could not save the painting");
         }

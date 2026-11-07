@@ -18,10 +18,11 @@ struct ModelTransform: Equatable {
     func minWorldY(meshInfo: STLMeshInfo) -> Float {
         let s = scale
         let r = rotationDeg * (.pi / 180)
-        // Pivot eulerAngles = (rx, rz, ry) in SceneKit ZYX order → Rx(rx)*Ry(rz)*Rz(ry)
-        let q = simd_quaternion(r.x, SIMD3<Float>(1,0,0))
+        // Pivot eulerAngles = (rx, rz, ry); SceneKit applies X, then Y, then Z:
+        // Rz(ry) * Ry(rz) * Rx(rx) (AutoOrientTests checks this against SCNNode).
+        let q = simd_quaternion(r.y, SIMD3<Float>(0,0,1))
               * simd_quaternion(r.z, SIMD3<Float>(0,1,0))
-              * simd_quaternion(r.y, SIMD3<Float>(0,0,1))
+              * simd_quaternion(r.x, SIMD3<Float>(1,0,0))
 
         // The mesh node centers geometry in X/Z and places its bottom at pivot Y=0.
         // SCNGeometry vertices are scaled by 1/100 in buildGeometry (mm → SceneKit units).
