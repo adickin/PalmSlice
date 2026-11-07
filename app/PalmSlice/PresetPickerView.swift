@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Searchable list of PrusaSlicer system presets of one type. Print and
+/// Searchable list of OrcaSlicer system presets of one type. Print and
 /// filament presets are limited to those compatible with `printerPreset`
 /// (or PresetLibrary.fallbackPrinter for custom printers); printer presets
 /// list the whole library.
@@ -15,8 +15,8 @@ struct PresetPickerView: View {
 
     private var title: String {
         switch type {
-        case .print: return "Default Slice Settings"
-        case .filament: return "Default Filaments"
+        case .print: return "OrcaSlicer Qualities"
+        case .filament: return "OrcaSlicer Filaments"
         case .printer: return "Printer Library"
         }
     }
@@ -89,48 +89,41 @@ extension PresetLibrary {
     }
 }
 
-// MARK: - New profiles from PrusaSlicer presets
+// MARK: - New profiles from OrcaSlicer presets
 
 extension SliceProfile {
-    /// A slice profile starting from a PrusaSlicer print preset: the typed
-    /// fields take the preset's values and the preset becomes the base layer.
+    /// A new user quality starting from an OrcaSlicer quality: the typed
+    /// fields show the preset; saving keeps only what's changed from it.
     static func from(printPreset: String, name: String? = nil) -> SliceProfile {
         var p = SliceProfile()
-        p.name = name ?? printPreset
-        p.basePreset = printPreset
-        if let settings = PresetLibrary.settings(.print, printPreset) { p.updateTyped(fromPrusa: settings) }
-        p.extraSettings = p.extraSettings.filter { SliceProfile.typedKeys.contains($0.key) }
+        p.name = name ?? "My " + PresetLibrary.shortName(printPreset)
+        p.resolve(over: PresetLibrary.settings(.print, printPreset) ?? [:])
         return p
     }
 
-    /// A new profile showing what slicing would use for `printer` right now:
-    /// the printer's default PrusaSlicer print preset (not pinned as base).
+    /// A new user quality starting from the printer's default quality.
     static func newProfile(for printer: PrinterProfile?) -> SliceProfile {
-        guard let base = PresetLibrary.base(printerPreset: printer?.systemPreset, filamentType: "PLA")
+        guard let quality = PresetLibrary.defaultQuality(forPrinter: printer?.systemPreset)
         else { return SliceProfile() }
-        var p = from(printPreset: base.print, name: "My Profile")
-        p.basePreset = nil
-        return p
+        return from(printPreset: quality, name: "My Quality")
     }
 }
 
 extension MaterialProfile {
-    /// A material starting from a PrusaSlicer filament preset.
+    /// A new user material starting from an OrcaSlicer filament, which stays
+    /// its base (where the printer can use it).
     static func from(filamentPreset: String, name: String? = nil) -> MaterialProfile {
-        var m = MaterialProfile()
-        m.name = name ?? filamentPreset
-        m.basePreset = filamentPreset
-        if let settings = PresetLibrary.settings(.filament, filamentPreset) { m.updateTyped(fromPrusa: settings) }
-        m.extraSettings = m.extraSettings.filter { MaterialProfile.typedKeys.contains($0.key) }
+        var m = system(filamentPreset)
+        m.id = UUID()
+        m.isSystem = false
+        m.name = name ?? "My " + PresetLibrary.shortName(filamentPreset)
         return m
     }
 
-    /// A new PLA material with the values PrusaSlicer uses for `printer`.
+    /// A new user material starting from the printer's default filament.
     static func newProfile(for printer: PrinterProfile?) -> MaterialProfile {
-        guard let base = PresetLibrary.base(printerPreset: printer?.systemPreset, filamentType: "PLA")
+        guard let filament = PresetLibrary.featuredFilaments(forPrinter: printer?.systemPreset).first
         else { return MaterialProfile() }
-        var m = from(filamentPreset: base.filament, name: "My Material")
-        m.basePreset = nil
-        return m
+        return from(filamentPreset: filament, name: "My Material")
     }
 }

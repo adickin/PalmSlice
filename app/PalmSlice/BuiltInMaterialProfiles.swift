@@ -1,5 +1,8 @@
 import Foundation
 
+/// Complete material profiles. Only eSUN PLA-LW is offered in the app (as
+/// its changes over the printer's PLA, see `all`); everyday materials come
+/// from OrcaSlicer. PLA / PETG / ABS / TPU remain as fixed reference profiles.
 enum BuiltInMaterialProfiles {
     static let pla = MaterialProfile(
         name: "PLA",
@@ -132,8 +135,18 @@ enum BuiltInMaterialProfiles {
         minPrintSpeed: 10.0
     )
 
-    static let all: [MaterialProfile] = [pla, petg, abs, tpu, esunPLALW]
-        .map { var m = $0; m.builtInName = m.name; return m }
+    /// Seeded into the material list: changes only, over the printer's
+    /// filament of their type.
+    static let all: [MaterialProfile] = [esunPLALW].map { full in
+        var m = MaterialProfile()
+        m.name = full.name
+        m.builtInName = full.name
+        m.colour = full.colour
+        m.filamentType = full.filamentType
+        m.extraSettings = full.slicerSettings()
+        m.isResolved = false
+        return m
+    }
 
     static func template(named name: String?) -> MaterialProfile? { all.first { $0.builtInName == name } }
 }

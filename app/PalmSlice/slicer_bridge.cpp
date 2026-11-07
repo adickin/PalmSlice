@@ -1,9 +1,9 @@
 // slicer_bridge.cpp
 // C wrapper implementation over libslic3r.
 //
-// Targets: PrusaSlicer 2.9.6 libslic3r API (pinned via PRUSA_TAG in scripts/common.sh).
-// If the build fails due to missing symbols, check the PrusaSlicer version:
-//   cd ~/ios-sources/PrusaSlicer && git log --oneline -5
+// Targets: OrcaSlicer 2.4.2 libslic3r API (pinned via ORCA_TAG in scripts/common.sh).
+// If the build fails due to missing symbols, check the OrcaSlicer version:
+//   cd ~/ios-sources/OrcaSlicer && git log --oneline -5
 // and adjust the include paths or method names accordingly.
 
 #include "slicer_bridge.h"
@@ -12,11 +12,15 @@
 #include <stdexcept>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
+#include <strings.h>
 #include <functional>
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <array>
 
 // ── libslic3r core ────────────────────────────────────────────────────────────
 #include <libslic3r/libslic3r.h>
@@ -24,25 +28,24 @@
 #include <libslic3r/Print.hpp>
 #include <libslic3r/PrintConfig.hpp>
 #include <libslic3r/Format/STL.hpp>
+#include <libslic3r/Format/bbs_3mf.hpp>
 #include <libslic3r/Format/3mf.hpp>
-#include <libslic3r/Format/AMF.hpp>
-#include <libslic3r/Format/OBJ.hpp>
 #include <libslic3r/Semver.hpp>
 #include <libslic3r/TriangleMesh.hpp>
 #include <libslic3r/Preset.hpp>
 #include <libslic3r/PresetBundle.hpp>
 #include <libslic3r/Utils.hpp>
 #include <libslic3r/TriangleSelector.hpp>
-#include <libslic3r/Feature/FullSpectrum/VirtualExtruder.hpp>
-#include <prusa_fdm_mixer/prusa_fdm_mixer.hpp>
-#include <libslic3r/GCode/Thumbnails.hpp>
+#include <libslic3r/GCode/ThumbnailData.hpp>
+#include <libslic3r/GCode/GCodeProcessor.hpp>
+#include <libslic3r/FlushVolCalc.hpp>
+#include <libslic3r/Flow.hpp>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <filesystem>
-// GCode export lives inside Print::export_gcode in recent PrusaSlicer builds.
-// If your version has a separate GCode.hpp, add: #include <libslic3r/GCode.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 
 // ── Paint session ─────────────────────────────────────────────────────────────
 // Colour painting on one printable volume of an imported object (its native
@@ -101,11 +104,10 @@ struct SlicerContext {
     // Colliding paths found by the last export (slicer_path_conflict).
     std::string path_conflict;
 
-    // The session's mixes (ColorMix virtual extruders), with PalmSlice tool
-    // numbers as IDs (SLICER_MIX_BASE + n). Converted to libslic3r's numbering
-    // (physical count + n) when the objects are added and sliced.
-    Slic3r::FullSpectrum::VirtualExtruders mixes;
-    std::string mixes_json;
+    // Wipe (prime) tower placement from slicer_set_wipe_tower_position; until
+    // then the printer preset's. OrcaSlicer keeps it in the config (per plate).
+    bool  wipe_tower_placed = false;
+    float wipe_tower_x = 0.f, wipe_tower_y = 0.f, wipe_tower_rotation = 0.f;
 
     std::unique_ptr<PaintSession> paint;
 
@@ -119,82 +121,18 @@ struct SlicerContext {
     std::vector<std::vector<int>> volume_maps;
 
     SlicerContext() {
-        // Start from factory defaults so we have a valid config baseline.
-        // FullPrintConfig::defaults() returns the canonical defaults object.
+        // Start from libslic3r's defaults so we have a valid config baseline;
+        // presets and profiles are applied on top before every slice.
         config.apply(Slic3r::FullPrintConfig::defaults());
 
-        // Override a minimal set for a usable FFF print.
-        // These match a generic 0.4mm nozzle, 1.75mm PLA printer.
-        config.set_key_value("layer_height",
-            new Slic3r::ConfigOptionFloat(0.2));
-        config.set_key_value("first_layer_height",
-            new Slic3r::ConfigOptionFloatOrPercent(0.25, false));
-        config.set_key_value("perimeters",
-            new Slic3r::ConfigOptionInt(3));
-        config.set_key_value("fill_density",
-            new Slic3r::ConfigOptionPercent(20));
-        config.set_key_value("fill_pattern",
-            new Slic3r::ConfigOptionEnum<Slic3r::InfillPattern>(Slic3r::ipGyroid));
-
-        // Nozzle / filament — must be arrays (one entry per extruder)
-        config.set_key_value("nozzle_diameter",
-            new Slic3r::ConfigOptionFloats({0.4}));
-        config.set_key_value("filament_diameter",
-            new Slic3r::ConfigOptionFloats({1.75}));
-        config.set_key_value("temperature",
-            new Slic3r::ConfigOptionInts({210}));
-        config.set_key_value("first_layer_temperature",
-            new Slic3r::ConfigOptionInts({215}));
-        config.set_key_value("bed_temperature",
-            new Slic3r::ConfigOptionInts({60}));
-        config.set_key_value("first_layer_bed_temperature",
-            new Slic3r::ConfigOptionInts({65}));
-
-        // Retraction
-        config.set_key_value("retract_length",
-            new Slic3r::ConfigOptionFloats({5.0}));
-        config.set_key_value("retract_speed",
-            new Slic3r::ConfigOptionFloats({45.0}));
-        config.set_key_value("retract_restart_extra",
-            new Slic3r::ConfigOptionFloats({0.0}));
-
-        // Fan
-        config.set_key_value("fan_always_on",
-            new Slic3r::ConfigOptionBools({true}));
-        config.set_key_value("min_fan_speed",
-            new Slic3r::ConfigOptionInts({35}));
-        config.set_key_value("max_fan_speed",
-            new Slic3r::ConfigOptionInts({100}));
-
-        // Bed size (220×220×250 mm — generic Ender-class)
-        config.set_key_value("bed_size",
-            new Slic3r::ConfigOptionPoint(Slic3r::Vec2d(220, 220)));
-        config.set_key_value("print_center",
-            new Slic3r::ConfigOptionPoint(Slic3r::Vec2d(110, 110)));
-        config.set_key_value("max_print_height",
-            new Slic3r::ConfigOptionFloat(250));
-
-        // Speeds
-        config.set_key_value("perimeter_speed",
-            new Slic3r::ConfigOptionFloat(45));
-        config.set_key_value("infill_speed",
-            new Slic3r::ConfigOptionFloat(80));
-        config.set_key_value("first_layer_speed",
-            new Slic3r::ConfigOptionFloatOrPercent(25, false));
-        config.set_key_value("travel_speed",
-            new Slic3r::ConfigOptionFloat(130));
-
-        // Extrusion multiplier
-        config.set_key_value("extrusion_multiplier",
-            new Slic3r::ConfigOptionFloats({1.0}));
-
-        // Gcode flavour (RepRap / Marlin)
-        config.set_key_value("gcode_flavor",
-            new Slic3r::ConfigOptionEnum<Slic3r::GCodeFlavor>(Slic3r::gcfMarlinLegacy));
-
-        // No support structures for v1
-        config.set_key_value("support_material",
-            new Slic3r::ConfigOptionBool(false));
+        // A generic 220×220×250 mm, 0.4 mm nozzle, 1.75 mm filament printer.
+        config.set_key_value("printable_area",
+            new Slic3r::ConfigOptionPoints({{0, 0}, {220, 0}, {220, 220}, {0, 220}}));
+        config.set_key_value("printable_height", new Slic3r::ConfigOptionFloat(250));
+        config.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats({0.4}));
+        config.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats({1.75}));
+        config.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(0.2));
+        config.set_key_value("enable_support", new Slic3r::ConfigOptionBool(false));
     }
 };
 
@@ -213,13 +151,11 @@ static int set_err(SlicerContext* ctx, const char* msg) {
     return -1;
 }
 
-static Slic3r::FullSpectrum::VirtualExtruders slicer_mixes(const SlicerContext* ctx);
-
 // Bed size / origin used to centre models (slicer_load_stl, slicer_add_stl),
-// derived from the config's bed_shape bounding box. Called whenever settings
-// that may include bed_shape are applied.
+// derived from the config's printable_area bounding box. Called whenever
+// settings that may include printable_area are applied.
 static void sync_bed_from_config(SlicerContext* ctx) {
-    auto* shape = ctx->config.opt<Slic3r::ConfigOptionPoints>("bed_shape");
+    auto* shape = ctx->config.opt<Slic3r::ConfigOptionPoints>("printable_area");
     if (!shape || shape->values.size() < 3) return;
     double min_x = shape->values[0].x(), max_x = min_x;
     double min_y = shape->values[0].y(), max_y = min_y;
@@ -232,11 +168,117 @@ static void sync_bed_from_config(SlicerContext* ctx) {
     ctx->origin_at_center = min_x < 0 && min_y < 0;
 }
 
+// "#RRGGBB" → r, g, b (grey if unparseable).
+static void parse_hex_colour(const std::string& hex, unsigned char rgb[3]) {
+    unsigned int r = 128, g = 128, b = 128;
+    if (hex.size() >= 7 && hex[0] == '#') std::sscanf(hex.c_str() + 1, "%02x%02x%02x", &r, &g, &b);
+    rgb[0] = static_cast<unsigned char>(r); rgb[1] = static_cast<unsigned char>(g); rgb[2] = static_cast<unsigned char>(b);
+}
+
+// Sizes the per-filament and per-extruder settings, the filament → extruder
+// map and the purge volumes to the printer's extruders and the session's
+// filaments (PalmSlice tools), the way OrcaSlicer's GUI keeps them consistent
+// (PresetBundle::full_fff_config; Plater's purge volumes from filament colours).
+static void normalize_tools(Slic3r::DynamicPrintConfig& cfg) {
+    auto* nozzles = cfg.option<Slic3r::ConfigOptionFloats>("nozzle_diameter");
+    auto* diameters = cfg.option<Slic3r::ConfigOptionFloats>("filament_diameter");
+    const size_t extruders = nozzles ? std::max<size_t>(1, nozzles->values.size()) : 1;
+    // A tool changer has a filament per nozzle; a multi-material single nozzle
+    // has as many filaments as are configured.
+    const size_t filaments = std::max(extruders, diameters ? diameters->values.size() : size_t(1));
+
+    if (extruders > 1) cfg.set_num_extruders(unsigned(extruders));
+    // Per-filament vectors grow by repeating tool 1's value: the filament
+    // preset's keys (print_config_def.filament_option_keys() is never filled)
+    // plus the colour, which OrcaSlicer keeps in the project instead.
+    auto grow = [&](const std::string& key) {
+        if (auto* opt = dynamic_cast<Slic3r::ConfigOptionVectorBase*>(cfg.option(key, false)))
+            if (!opt->empty() && opt->size() < filaments) opt->resize(filaments);
+    };
+    for (const std::string& key : Slic3r::Preset::filament_options()) grow(key);
+    grow("filament_colour");
+
+    // 0 = automatic width everywhere except OrcaSlicer's colour-painting
+    // segmentation, which reads the outer wall width as is (vendor presets
+    // always set it; bare configs and PrusaSlicer projects may not).
+    if (auto* outer = cfg.option<Slic3r::ConfigOptionFloatOrPercent>("outer_wall_line_width");
+        outer && outer->value == 0) {
+        const auto* line = cfg.option<Slic3r::ConfigOptionFloatOrPercent>("line_width");
+        const double nozzle = nozzles && !nozzles->values.empty() ? nozzles->values.front() : 0.4;
+        const double width = line && line->value > 0 ? line->get_abs_value(nozzle)
+                                                     : Slic3r::Flow::auto_extrusion_width(Slic3r::frExternalPerimeter, float(nozzle));
+        cfg.set_key_value("outer_wall_line_width", new Slic3r::ConfigOptionFloatOrPercent(width, false));
+    }
+
+    // Filament settings with extruder variants (nozzle temperatures, …) are
+    // looked up through filament_self_index: one variant per filament here.
+    // (PresetBundle::full_fff_config builds it the same way.)
+    if (auto* variants = cfg.option<Slic3r::ConfigOptionStrings>("filament_extruder_variant");
+        variants && variants->values.size() == filaments) {
+        auto& self = cfg.option<Slic3r::ConfigOptionInts>("filament_self_index", true)->values;
+        self.resize(filaments);
+        std::iota(self.begin(), self.end(), 1);
+    }
+
+    auto* map = cfg.option<Slic3r::ConfigOptionInts>("filament_map", true);
+    map->values.resize(filaments, 1);
+    for (int& e : map->values) e = std::clamp(e, 1, int(extruders));
+
+    if (filaments < 2) return;
+    auto* multiplier = cfg.option<Slic3r::ConfigOptionFloats>("flush_multiplier", true);
+    if (multiplier->values.empty()) multiplier->values.push_back(1.);
+    multiplier->values.resize(extruders, multiplier->values.front());
+    auto* matrix = cfg.option<Slic3r::ConfigOptionFloats>("flush_volumes_matrix", true);
+    if (matrix->values.size() == filaments * filaments * extruders) return;
+
+    const auto* colours = cfg.option<Slic3r::ConfigOptionStrings>("filament_colour");
+    const auto* datasets = cfg.option<Slic3r::ConfigOptionIntsNullable>("nozzle_flush_dataset");
+    const auto* volumes = cfg.option<Slic3r::ConfigOptionFloatsNullable>("nozzle_volume");
+    std::vector<std::array<unsigned char, 3>> rgb(filaments);
+    for (size_t i = 0; i < filaments; ++i)
+        parse_hex_colour(colours && i < colours->values.size() ? colours->values[i] : "", rgb[i].data());
+    matrix->values.assign(filaments * filaments * extruders, 0.);
+    for (size_t h = 0; h < extruders; ++h) {
+        const int dataset = datasets && h < datasets->values.size() && !datasets->is_nil(h) ? datasets->values[h] : 0;
+        const int min_volume = volumes && h < volumes->values.size() && !volumes->is_nil(h) ? int(volumes->values[h]) : 0;
+        Slic3r::FlushVolCalculator calculator(min_volume, Slic3r::g_max_flush_volume, dataset);
+        for (size_t from = 0; from < filaments; ++from)
+            for (size_t to = 0; to < filaments; ++to)
+                if (from != to)
+                    matrix->values[h * filaments * filaments + from * filaments + to] = calculator.calc_flush_vol(
+                        255, rgb[from][0], rgb[from][1], rgb[from][2], 255, rgb[to][0], rgb[to][1], rgb[to][2]);
+    }
+}
+
+static void clamp_model_tools(Slic3r::Model& model, int filaments);
+
+// OrcaSlicer drops a variable layer height profile whose first layer isn't
+// exactly the first layer height (PrintObject::update_layer_height_profile),
+// so an imported PrusaSlicer profile would be ignored whenever the printer's
+// first layer differs. Start each profile on the first layer height in use.
+static void fit_layer_height_profiles(Slic3r::Model& model, const Slic3r::DynamicPrintConfig& cfg) {
+    for (Slic3r::ModelObject* obj : model.objects) {
+        std::vector<coordf_t> heights = obj->layer_height_profile.get();
+        if (heights.size() < 4) continue;
+        const Slic3r::ConfigOption* own = obj->config.option("initial_layer_print_height");
+        const double first = own ? own->getFloat() : cfg.opt_float("initial_layer_print_height");
+        if (first > 0 && std::abs(heights[1] - first) > EPSILON) {
+            heights[1] = first;
+            obj->layer_height_profile.set(std::move(heights));
+        }
+    }
+}
+
 // ── Public C API ─────────────────────────────────────────────────────────────
 extern "C" {
 
 SlicerHandle slicer_create(void) {
     try {
+        // OrcaSlicer's 3MF writer stages files in temporary_dir(); the app's
+        // sandbox only allows its own tmp directory.
+        if (Slic3r::temporary_dir().empty())
+            if (const char* tmp = std::getenv("TMPDIR"))
+                Slic3r::set_temporary_dir(tmp);
         return new SlicerContext();
     } catch (const std::exception& e) {
         return nullptr;
@@ -307,7 +349,7 @@ int slicer_slice_with_progress(SlicerHandle handle,
                 ctx->config.set_key_value("layer_height",
                     new Slic3r::ConfigOptionFloat(static_cast<double>(layer_height)));
             if (infill_percent >= 0)
-                ctx->config.set_key_value("fill_density",
+                ctx->config.set_key_value("sparse_infill_density",
                     new Slic3r::ConfigOptionPercent(infill_percent));
         }
 
@@ -323,15 +365,29 @@ int slicer_slice_with_progress(SlicerHandle handle,
         }
 
         Slic3r::DynamicPrintConfig cfg_copy = ctx->config;
-        // Vendor presets can enable desktop-only output features: binary
-        // G-code (Prusa MK4/XL/MINI), post-processing scripts (can't run on
-        // iOS) and embedded thumbnails (need the desktop 3D renderer).
-        // PalmSlice always writes plain-text G-code it can parse and preview.
-        cfg_copy.set_key_value("binary_gcode", new Slic3r::ConfigOptionBool(false));
+        // Vendor presets can enable desktop-only output features: post-processing
+        // scripts (can't run on iOS) and embedded thumbnails (need the desktop
+        // 3D renderer, or the app's images via slicer_set_thumbnail).
         cfg_copy.set_key_value("post_process", new Slic3r::ConfigOptionStrings());
+        // The output path is always given; a project's filename template may
+        // use PrusaSlicer placeholders OrcaSlicer can't evaluate.
+        cfg_copy.set_key_value("filename_format", new Slic3r::ConfigOptionString("{input_filename_base}.gcode"));
         if (!ctx->thumbnails_enabled)
             cfg_copy.set_key_value("thumbnails", new Slic3r::ConfigOptionString(""));
-        ctx->model.virtual_extruders = slicer_mixes(ctx);
+        if (ctx->wipe_tower_placed) {
+            cfg_copy.set_key_value("wipe_tower_x", new Slic3r::ConfigOptionFloats({ctx->wipe_tower_x}));
+            cfg_copy.set_key_value("wipe_tower_y", new Slic3r::ConfigOptionFloats({ctx->wipe_tower_y}));
+            cfg_copy.set_key_value("wipe_tower_rotation_angle", new Slic3r::ConfigOptionFloat(ctx->wipe_tower_rotation));
+        }
+        // Bambu Lab printers get BambuStudio-style G-code (OrcaSlicer's GUI
+        // sets this from the vendor; same test as the G-code processor's).
+        ctx->print.is_BBL_printer() = cfg_copy.has("printer_model") &&
+            boost::starts_with(cfg_copy.opt_string("printer_model"), "Bambu Lab");
+        normalize_tools(cfg_copy);
+        clamp_model_tools(ctx->model, cfg_copy.option<Slic3r::ConfigOptionFloats>("filament_diameter")->values.size());
+        fit_layer_height_profiles(ctx->model, cfg_copy);
+        // One plate, at the bed origin.
+        ctx->print.set_plate_origin(Slic3r::Vec3d::Zero());
         ctx->print.apply(ctx->model, std::move(cfg_copy));
 
         ctx->print.process();
@@ -350,8 +406,10 @@ int slicer_slice_with_progress(SlicerHandle handle,
 
 int slicer_set_wipe_tower_position(SlicerHandle handle, float x, float y, float rotation_deg) {
     auto ctx = CTX(handle);
-    ctx->model.wipe_tower().position = Slic3r::Vec2d(x, y);
-    ctx->model.wipe_tower().rotation = rotation_deg;
+    ctx->wipe_tower_placed = true;
+    ctx->wipe_tower_x = x;
+    ctx->wipe_tower_y = y;
+    ctx->wipe_tower_rotation = rotation_deg;
     return 0;
 }
 
@@ -373,10 +431,6 @@ void slicer_cancel(SlicerHandle handle) {
 int slicer_export_gcode(SlicerHandle handle, const char* output_path) {
     auto ctx = CTX(handle);
     try {
-        // export_gcode signature (PrusaSlicer 2.7+):
-        //   void Print::export_gcode(const std::string& path_template,
-        //                            GCodeProcessorResult* result,
-        //                            ThumbnailsGeneratorCallback thumbnail_cb)
         // Thumbnails: hand libslic3r the app's image for each requested size.
         Slic3r::ThumbnailsGeneratorCallback thumbnail_cb = nullptr;
         if (ctx->thumbnails_enabled && !ctx->thumbnails.empty())
@@ -387,8 +441,8 @@ int slicer_export_gcode(SlicerHandle handle, const char* output_path) {
                         if (t.width == unsigned(size.x()) && t.height == unsigned(size.y())) out.push_back(t);
                 return out;
             };
-        // Print::export_gcode writes a path conflict into the result without
-        // checking it for null, so it needs a real one.
+        // Print::export_gcode fills the result (path conflicts, the G-code
+        // processor's statistics) without checking it for null.
         Slic3r::GCodeProcessorResult result;
         ctx->path_conflict.clear();
         ctx->print.export_gcode(std::string(output_path), &result, thumbnail_cb);
@@ -404,17 +458,51 @@ const char* slicer_path_conflict(SlicerHandle handle) {
     return CTX(handle)->path_conflict.c_str();
 }
 
+// Writes `model` (with `config` as the project settings, if given) as an
+// OrcaSlicer 3MF.
+static bool store_orca_3mf(const char* path, Slic3r::Model& model, Slic3r::DynamicPrintConfig* config,
+                           Slic3r::ThumbnailData* thumbnail = nullptr) {
+    Slic3r::StoreParams params;
+    params.path = path;
+    params.model = &model;
+    params.config = config;
+    params.strategy = Slic3r::SaveStrategy(int(Slic3r::SaveStrategy::Zip64) | int(Slic3r::SaveStrategy::Silence));
+    if (thumbnail) params.thumbnail_data.push_back(thumbnail);
+    return Slic3r::store_bbs_3mf(params);
+}
+
+// Reads an OrcaSlicer / BambuStudio / PrusaSlicer 3MF (geometry, per-object
+// settings, painting). `config` receives the file's project settings.
+// PrusaSlicer settings are renamed to OrcaSlicer's as they're read
+// (PrusaSettingsImport in the iOS patch).
+static bool load_orca_3mf(const char* path, Slic3r::Model& model, Slic3r::DynamicPrintConfig& config) {
+    Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
+    // PrusaSlicer 3MFs keep parts / modifiers in Slic3r_PE_model.config,
+    // which only OrcaSlicer's PrusaSlicer reader understands.
+    if (Slic3r::PrusaFileParser().check_3mf_from_prusa(path))
+        return Slic3r::load_3mf(path, config, subst, &model, /*check_version=*/false);
+    Slic3r::PlateDataPtrs plates;
+    std::vector<Slic3r::Preset*> project_presets;
+    bool is_bbl = false, is_orca = false;
+    Slic3r::Semver version;
+    const auto strategy = Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::LoadConfig;
+    const bool ok = Slic3r::load_bbs_3mf(path, &config, &subst, &model, &plates, &project_presets,
+                                         &is_bbl, &is_orca, &version, nullptr, strategy);
+    Slic3r::release_PlateData_list(plates);
+    for (Slic3r::Preset* p : project_presets) delete p;
+    return ok;
+}
+
 int slicer_export_project_3mf(SlicerHandle handle, const char* path) {
     auto ctx = CTX(handle);
     try {
-        // Objects, parts, painting and tools are already in libslic3r's numbering;
-        // the mixes go with them, so desktop PrusaSlicer opens the same setup.
+        // Objects, parts, painting and tools are already in libslic3r's
+        // numbering, so desktop OrcaSlicer opens the same setup.
         Slic3r::Model model = ctx->model;
-        model.virtual_extruders = slicer_mixes(ctx);
-        const Slic3r::ThumbnailData* thumbnail = nullptr;
-        for (const auto& t : ctx->thumbnails)
+        Slic3r::ThumbnailData* thumbnail = nullptr;
+        for (auto& t : ctx->thumbnails)
             if (!thumbnail || t.width > thumbnail->width) thumbnail = &t;
-        if (!Slic3r::store_3mf(path, &model, &ctx->config, false, thumbnail))
+        if (!store_orca_3mf(path, model, &ctx->config, thumbnail))
             return set_err(ctx, "Could not write the project");
         return 0;
     } catch (const std::exception& e) {
@@ -774,47 +862,38 @@ static std::string object_file_settings(const Slic3r::ModelObject& obj) {
     return out;
 }
 
-// ── Tools and mixes ──────────────────────────────────────────────────────────
-namespace FS = Slic3r::FullSpectrum;
+// ── Tools ────────────────────────────────────────────────────────────────────
+// PalmSlice tool numbers are OrcaSlicer filament numbers (1-based). Mixes
+// (SLICER_MIX_BASE + n) need PrusaSlicer's Full Spectrum virtual extruders,
+// which OrcaSlicer doesn't have: they fall back to the object's filament.
 using ToolRemap = std::map<int, int>;
 
+// Painted states OrcaSlicer can store: none + 16 filaments.
+static constexpr int k_paint_states = int(Slic3r::EnforcerBlockerType::ExtruderMax) + 1;
+
+// Filaments the printer is set up for (one per tool): one per nozzle on a
+// tool changer, or as many as are configured for a single nozzle.
 static int physical_count(const SlicerContext* ctx) {
     auto* nd = ctx->config.option<Slic3r::ConfigOptionFloats>("nozzle_diameter");
-    return nd ? std::max<int>(1, static_cast<int>(nd->values.size())) : 1;
+    auto* fd = ctx->config.option<Slic3r::ConfigOptionFloats>("filament_diameter");
+    return std::max({1, nd ? int(nd->values.size()) : 1, fd ? int(fd->values.size()) : 1});
 }
 
-// PalmSlice tool number → libslic3r's (mixes follow the physical tools).
-static int to_slicer_tool(const SlicerContext* ctx, int tool) {
-    return tool > SLICER_MIX_BASE ? physical_count(ctx) + (tool - SLICER_MIX_BASE) : tool;
+static int to_slicer_tool(const SlicerContext*, int tool) {
+    return tool > SLICER_MIX_BASE ? 0 : tool;
 }
 
-// PalmSlice → libslic3r numbers for every mix number. A mix that isn't in
-// the session falls back to 0 (the object's tool).
-static ToolRemap mixes_to_slicer(const SlicerContext* ctx) {
+// Every mix number → 0 (the object's filament).
+static ToolRemap mixes_to_slicer(const SlicerContext*) {
     ToolRemap remap;
-    for (int id = SLICER_MIX_BASE + 1; id < int(Slic3r::TRIANGLE_STATE_TYPE_COUNT); ++id) remap[id] = 0;
-    for (const auto& m : ctx->mixes) remap[int(m.id)] = to_slicer_tool(ctx, int(m.id));
+    for (int id = SLICER_MIX_BASE + 1; id < 2 * SLICER_MIX_BASE; ++id) remap[id] = 0;
     return remap;
 }
 
-// The session's mixes in libslic3r numbering, for Print::apply.
-static FS::VirtualExtruders slicer_mixes(const SlicerContext* ctx) {
-    FS::VirtualExtruders out = ctx->mixes;
-    for (auto& m : out) m.id = static_cast<unsigned>(to_slicer_tool(ctx, int(m.id)));
-    return out;
-}
-
-// The same mix, ignoring its number and display colour.
-static bool same_mix(const FS::VirtualExtruder& a, const FS::VirtualExtruder& b) {
-    return a.components == b.components && a.gradient == b.gradient;
-}
-
-static void update_mixes_json(SlicerContext* ctx) {
-    ctx->mixes_json = FS::serialize_virtual_extruders_to_json({}, ctx->mixes);
-}
-
+// Settings holding a filament number (the *_filament_id ones: 0 = inherit).
 static const char* const k_tool_keys[] = {
-    "extruder", "perimeter_extruder", "infill_extruder", "solid_infill_extruder" };
+    "extruder", "outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
+    "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id" };
 
 static void remap_config_tools(Slic3r::ModelConfig& cfg, const ToolRemap& remap) {
     for (const char* key : k_tool_keys)
@@ -824,55 +903,35 @@ static void remap_config_tools(Slic3r::ModelConfig& cfg, const ToolRemap& remap)
         }
 }
 
-static void remap_paint(Slic3r::ModelVolume& vol, const ToolRemap& remap) {
-    if (!vol.is_mm_painted()) return;
-    const std::vector<bool>& used = vol.mm_segmentation_facets.get_data().used_states;
-    std::map<Slic3r::TriangleStateType, Slic3r::TriangleStateType> states;
-    for (const auto& [from, to] : remap)
-        if (from != to && from < int(used.size()) && used[from] && to < int(Slic3r::TRIANGLE_STATE_TYPE_COUNT))
-            states[Slic3r::TriangleStateType(from)] = Slic3r::TriangleStateType(to);
-    if (states.empty()) return;
-    Slic3r::TriangleSelector selector(vol.mesh());
-    selector.deserialize(vol.mm_segmentation_facets.get_data(), false);
-    selector.remap_states(states);
-    vol.mm_segmentation_facets.set(selector);
-}
-
-// Renumbers every tool an object stores: its settings, height ranges,
-// volumes' settings and painted areas. All entries apply at once.
-static void remap_object_tools(Slic3r::ModelObject& obj, const ToolRemap& remap) {
-    if (remap.empty()) return;
-    remap_config_tools(obj.config, remap);
-    for (auto& [range, config] : obj.layer_config_ranges) remap_config_tools(config, remap);
-    for (Slic3r::ModelVolume* vol : obj.volumes) {
-        remap_config_tools(vol->config, remap);
-        remap_paint(*vol, remap);
-    }
-}
-
-// Adds a file's mixes (libslic3r numbering) to the session's, reusing an
-// identical mix's number. Returns file number → PalmSlice number.
-static ToolRemap merge_file_mixes(SlicerContext* ctx, const FS::VirtualExtruders& file_mixes) {
+// Tools above the printer's filament count (e.g. a PrusaSlicer mix in an
+// imported file) fall back to the object's filament: OrcaSlicer would index
+// past its per-filament settings. Covers settings, height ranges, parts and
+// painted areas.
+static void clamp_model_tools(Slic3r::Model& model, int filaments) {
     ToolRemap remap;
-    for (const FS::VirtualExtruder& mix : file_mixes) {
-        auto it = std::find_if(ctx->mixes.begin(), ctx->mixes.end(),
-                               [&](const FS::VirtualExtruder& m) { return same_mix(m, mix); });
-        unsigned id;
-        if (it != ctx->mixes.end()) {
-            id = it->id;
-        } else {
-            id = SLICER_MIX_BASE;
-            for (const auto& m : ctx->mixes) id = std::max(id, m.id);
-            ++id;
-            if (id >= Slic3r::TRIANGLE_STATE_TYPE_COUNT) continue;  // too many mixes
-            FS::VirtualExtruder added = mix;
-            added.id = id;
-            ctx->mixes.push_back(added);
-        }
-        remap[int(mix.id)] = int(id);
+    for (int t = filaments + 1; t < 2 * SLICER_MIX_BASE; ++t) remap[t] = 0;
+    Slic3r::EnforcerBlockerStateMap states;
+    bool repaint = false;
+    for (size_t i = 0; i < states.size(); ++i) {
+        states[i] = int(i) > filaments ? Slic3r::EnforcerBlockerType::NONE : Slic3r::EnforcerBlockerType(i);
+        repaint |= int(i) > filaments;
     }
-    update_mixes_json(ctx);
-    return remap;
+    for (Slic3r::ModelObject* obj : model.objects) {
+        remap_config_tools(obj->config, remap);
+        for (auto& [range, config] : obj->layer_config_ranges) remap_config_tools(config, remap);
+        for (Slic3r::ModelVolume* vol : obj->volumes) {
+            remap_config_tools(vol->config, remap);
+            if (!repaint || !vol->is_mm_painted()) continue;
+            const auto& used = vol->mmu_segmentation_facets.get_data().used_states;
+            bool beyond = false;
+            for (size_t st = size_t(filaments) + 1; st < used.size(); ++st) beyond |= bool(used[st]);
+            if (!beyond) continue;
+            Slic3r::TriangleSelector selector(vol->mesh());
+            selector.deserialize(vol->mmu_segmentation_facets.get_data(), false);
+            selector.remap_triangle_state(states);
+            vol->mmu_segmentation_facets.set(selector);
+        }
+    }
 }
 
 // libslic3r reads layer_height from every height range (PrusaSlicer always
@@ -892,62 +951,21 @@ static int config_tool(const Slic3r::ModelConfig& cfg) {
 
 extern "C" {
 
-int slicer_set_virtual_extruders(SlicerHandle handle, const char* json) {
-    auto ctx = CTX(handle);
-    try {
-        FS::VirtualExtruders mixes;
-        if (json && *json) {
-            FS::FullSpectrumConfig parsed = FS::deserialize_virtual_extruders_from_json(json);
-            for (const auto& m : FS::normalize_virtual_extruders(parsed.virtual_extruders))
-                if (m.id > SLICER_MIX_BASE) mixes.push_back(m);
-        }
-        ctx->mixes = std::move(mixes);
-        update_mixes_json(ctx);
-        return 0;
-    } catch (const std::exception& e) {
-        return set_err(ctx, e);
-    }
+// Mixes aren't supported on the OrcaSlicer backend: accepted and ignored.
+int slicer_set_virtual_extruders(SlicerHandle, const char*) {
+    return 0;
 }
 
-const char* slicer_get_virtual_extruders(SlicerHandle handle) {
-    auto ctx = CTX(handle);
-    if (ctx->mixes_json.empty()) update_mixes_json(ctx);
-    return ctx->mixes_json.c_str();
+const char* slicer_get_virtual_extruders(SlicerHandle) {
+    return "{\"version\":1,\"physical_extruders\":[],\"virtual_extruders\":[]}";
 }
 
-int slicer_mix_color(const char* parts, char* out_hex, int len) {
-    if (!parts || !out_hex || len < 8) return -1;
-    try {
-        std::vector<prusa_fdm_mixer::Part> mix;
-        std::istringstream in(parts);
-        std::string item;
-        while (std::getline(in, item, ';')) {
-            size_t colon = item.find(':');
-            if (colon == std::string::npos) return -1;
-            const double ratio = std::stod(item.substr(colon + 1));
-            if (ratio > 0) mix.push_back({item.substr(0, colon), ratio});
-        }
-        if (mix.empty()) return -1;
-        double total = 0;
-        for (const auto& part : mix) total += part.ratio;
-        for (auto& part : mix) part.ratio /= total;
-        const std::string hex = mix.size() == 1 ? mix.front().hex : prusa_fdm_mixer::mix(mix);
-        std::snprintf(out_hex, size_t(len), "%s", hex.c_str());
-        return 0;
-    } catch (const std::exception&) {
-        return -1;
-    }
+int slicer_mix_color(const char*, char*, int) {
+    return -1;
 }
 
-int slicer_color_delta_e(const char* hex_a, const char* hex_b, double* out) {
-    if (!hex_a || !hex_b || !out) return -1;
-    try {
-        using namespace prusa_fdm_mixer;
-        *out = delta_e_2000(rgb_to_lab(hex_to_rgb(hex_a)), rgb_to_lab(hex_to_rgb(hex_b)));
-        return 0;
-    } catch (const std::exception&) {
-        return -1;
-    }
+int slicer_color_delta_e(const char*, const char*, double*) {
+    return -1;
 }
 
 int slicer_import_model_file(SlicerHandle handle, const char* path, const char* out_dir) {
@@ -955,36 +973,18 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
     try {
         ctx->imported.clear();
         ctx->imported_project.clear();
-        // Dispatch on extension ourselves rather than via FileReader::load_model,
-        // which also links the STEP loader (needs OpenCASCADE, not built for iOS).
-        std::string p(path);
-        std::string ext = p.substr(p.find_last_of('.') + 1);
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
+        // Model::read_from_file dispatches on the extension: 3MF (OrcaSlicer,
+        // BambuStudio, PrusaSlicer), STL, OBJ, AMF, DRC, and via ModelIO PLY / USD.
         Slic3r::Model model;
         Slic3r::DynamicPrintConfig file_config;  // the file's project settings
-        Slic3r::ConfigSubstitutionContext substitutions(
-            Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
-        bool ok = false;
-        if (ext == "3mf") {
-            boost::optional<Slic3r::Semver> generator_version;
-            ok = Slic3r::load_3mf(path, file_config, substitutions, &model,
-                                  /*check_version=*/false, generator_version);
-        } else if (ext == "amf") {
-            ok = Slic3r::load_amf(path, &file_config, &substitutions, &model,
-                                  /*check_version=*/false);
-        } else if (ext == "obj") {
-            ok = Slic3r::load_obj(path, &model);
-        } else if (ext == "stl") {
-            ok = Slic3r::load_stl(path, &model);
+        if (std::string(path).size() > 4 &&
+            strcasecmp(path + std::strlen(path) - 4, ".3mf") == 0) {
+            if (!load_orca_3mf(path, model, file_config))
+                return set_err(ctx, "Could not read .3mf file");
         } else {
-            return set_err(ctx, "Unsupported file type (expected .3mf, .obj, .amf or .stl)");
+            model = Slic3r::Model::read_from_file(path, &file_config);
         }
-        if (!ok) return set_err(ctx, ("Could not read ." + ext + " file").c_str());
         model.add_default_instances();
-
-        // The file's mixes join the session's; its tools get PalmSlice numbers.
-        const ToolRemap mix_remap = merge_file_mixes(ctx, model.virtual_extruders);
 
         // One single-instance object per object instance, with the instance's
         // rotation / scale / mirroring folded into the volumes. Translation is
@@ -1011,7 +1011,6 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
                 for (Slic3r::ModelVolume* vol : o->volumes)
                     vol->set_transformation(Slic3r::Geometry::Transformation(inst_matrix * vol->get_matrix()));
                 o->instances.front()->set_transformation(Slic3r::Geometry::Transformation());
-                remap_object_tools(*o, mix_remap);
 
                 auto& info = n->info;
                 info.extruder = config_tool(o->config);
@@ -1026,7 +1025,7 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
                         | (vol->is_fdm_support_painted() ? 1 << SLICER_PAINT_SUPPORTS : 0)
                         | (vol->is_seam_painted() ? 1 << SLICER_PAINT_SEAM : 0);
                     if (v.painted) {
-                        const auto& used = vol->mm_segmentation_facets.get_data().used_states;
+                        const auto& used = vol->mmu_segmentation_facets.get_data().used_states;
                         for (size_t s = 1; s < used.size(); ++s)
                             if (used[s]) v.paint_tools.push_back(static_cast<int>(s));
                     }
@@ -1057,7 +1056,7 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
             const std::string base = std::string(out_dir) + "/" + std::to_string(i);
             if (!n.parts.write_binary((base + ".stl").c_str()))
                 return set_err(ctx, "Could not write the imported mesh");
-            if (!Slic3r::store_3mf((base + ".3mf").c_str(), &n.model, nullptr, false))
+            if (!store_orca_3mf((base + ".3mf").c_str(), n.model, nullptr))
                 return set_err(ctx, "Could not write the imported object");
             const Slic3r::ModelObject* o = n.model.objects.front();
             for (size_t k = 0; k < o->volumes.size(); ++k) {
@@ -1142,9 +1141,7 @@ int slicer_add_model_object(SlicerHandle handle, const char* path, int keep_volu
     try {
         Slic3r::Model temp;
         Slic3r::DynamicPrintConfig unused;
-        Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
-        boost::optional<Slic3r::Semver> version;
-        if (!Slic3r::load_3mf(path, unused, subst, &temp, false, version))
+        if (!load_orca_3mf(path, temp, unused))
             return set_err(ctx, "Could not read the imported object");
         if (temp.objects.size() != 1) return set_err(ctx, "Imported object file must hold one object");
         temp.add_default_instances();
@@ -1172,7 +1169,8 @@ int slicer_add_model_object(SlicerHandle handle, const char* path, int keep_volu
                 }
             }
         }
-        remap_object_tools(*src, mixes_to_slicer(ctx));
+        for (Slic3r::ModelVolume* vol : src->volumes) remap_config_tools(vol->config, mixes_to_slicer(ctx));
+        remap_config_tools(src->config, mixes_to_slicer(ctx));
 
         double cx = ctx->origin_at_center ? 0.0 : ctx->bed_x / 2.0;
         double cy = ctx->origin_at_center ? 0.0 : ctx->bed_y / 2.0;
@@ -1199,7 +1197,7 @@ int slicer_set_object_extruder(SlicerHandle handle, int object_index, int tool) 
     auto ctx = CTX(handle);
     if (object_index < 0 || object_index >= static_cast<int>(ctx->model.objects.size()))
         return set_err(ctx, "object index out of range");
-    if (tool < 0 || tool >= static_cast<int>(Slic3r::TRIANGLE_STATE_TYPE_COUNT) - SLICER_MIX_BASE)
+    if (tool < 0 || tool >= 2 * SLICER_MIX_BASE)
         return set_err(ctx, "tool out of range");
     set_config_tool(ctx, ctx->model.objects[object_index]->config, tool);
     return 0;
@@ -1209,7 +1207,7 @@ int slicer_set_volume_extruder(SlicerHandle handle, int object_index, int volume
     auto ctx = CTX(handle);
     if (object_index < 0 || object_index >= static_cast<int>(ctx->model.objects.size()))
         return set_err(ctx, "object index out of range");
-    if (tool < 0 || tool >= static_cast<int>(Slic3r::TRIANGLE_STATE_TYPE_COUNT) - SLICER_MIX_BASE)
+    if (tool < 0 || tool >= 2 * SLICER_MIX_BASE)
         return set_err(ctx, "tool out of range");
     Slic3r::ModelObject* obj = ctx->model.objects[object_index];
     int k = volume;
@@ -1414,13 +1412,13 @@ static Slic3r::FacetsAnnotation& paint_facets(PaintSession& s) {
     switch (s.layer) {
     case SLICER_PAINT_SUPPORTS: return s.volume->supported_facets;
     case SLICER_PAINT_SEAM:     return s.volume->seam_facets;
-    default:                    return s.volume->mm_segmentation_facets;
+    default:                    return s.volume->mmu_segmentation_facets;
     }
 }
 
 // States a stroke can paint: tools for colour, enforce / block otherwise.
 static int paint_state_count(const PaintSession& s) {
-    return s.layer == SLICER_PAINT_COLOUR ? int(Slic3r::TRIANGLE_STATE_TYPE_COUNT) : SLICER_PAINT_BLOCK + 1;
+    return s.layer == SLICER_PAINT_COLOUR ? k_paint_states : SLICER_PAINT_BLOCK + 1;
 }
 
 int slicer_paint_begin(SlicerHandle handle, const char* path, int volume) {
@@ -1433,9 +1431,7 @@ int slicer_paint_begin_layer(SlicerHandle handle, const char* path, int volume, 
     try {
         auto s = std::make_unique<PaintSession>();
         Slic3r::DynamicPrintConfig unused;
-        Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
-        boost::optional<Slic3r::Semver> version;
-        if (!Slic3r::load_3mf(path, unused, subst, &s->model, false, version) || s->model.objects.size() != 1)
+        if (!load_orca_3mf(path, s->model, unused) || s->model.objects.size() != 1)
             return set_err(ctx, "Could not read the object to paint");
         Slic3r::ModelObject* obj = s->model.objects.front();
         if (volume < 0 || volume >= int(obj->volumes.size()) || !obj->volumes[volume]->is_model_part())
@@ -1481,7 +1477,7 @@ int slicer_paint_brush(SlicerHandle handle, int facet, const float* point, const
         auto cursor = previous
             ? TS::DoublePointCursor::cursor_factory(to_volume(*s, previous[0], previous[1], previous[2]), center, cam, radius, type, trafo, TS::ClippingPlane())
             : TS::SinglePointCursor::cursor_factory(center, cam, radius, type, trafo, TS::ClippingPlane());
-        s->selector->select_patch(facet, std::move(cursor), Slic3r::TriangleStateType(state), no_translate, true);
+        s->selector->select_patch(facet, std::move(cursor), Slic3r::EnforcerBlockerType(state), no_translate, true);
         return 0;
     } catch (const std::exception& e) {
         return set_err(ctx, e);
@@ -1500,10 +1496,10 @@ int slicer_paint_fill(SlicerHandle handle, int facet, const float* point, int st
         Slic3r::Transform3d no_translate = s->trafo;
         no_translate.translation() = Slic3r::Vec3d::Zero();
         if (smart)
-            s->selector->seed_fill_select_triangles(hit, facet, no_translate, TS::ClippingPlane(), angle_deg, 0.02f);
+            s->selector->seed_fill_select_triangles(hit, facet, no_translate, TS::ClippingPlane(), angle_deg);
         else
-            s->selector->bucket_fill_select_triangles(hit, facet, TS::ClippingPlane(), angle_deg, 0.02f, TS::BucketFillPropagate::YES);
-        s->selector->seed_fill_apply_on_triangles(Slic3r::TriangleStateType(state));
+            s->selector->bucket_fill_select_triangles(hit, facet, TS::ClippingPlane(), angle_deg, /*propagate=*/true);
+        s->selector->seed_fill_apply_on_triangles(Slic3r::EnforcerBlockerType(state));
         return 0;
     } catch (const std::exception& e) {
         return set_err(ctx, e);
@@ -1547,17 +1543,19 @@ int slicer_paint_mesh_update(SlicerHandle handle) {
     auto s = paint_session(ctx);
     if (!s) return -1;
     try {
-        const Slic3r::indexed_triangle_set_with_color its = s->selector->get_all_facets_strict_with_colors();
         const Slic3r::Transform3d trafo = s->trafo;
         s->vertices.clear();
         s->states.clear();
-        for (size_t i = 0; i < its.indices.size(); ++i) {
-            if (its.colors[i] == 0) continue;   // unpainted: the part's own tool, drawn by its mesh
-            for (int k = 0; k < 3; ++k) {
-                const Slic3r::Vec3d v = trafo * its.vertices[its.indices[i][k]].cast<double>();
-                s->vertices.insert(s->vertices.end(), {float(v.x()), float(v.y()), float(v.z())});
+        // Unpainted triangles (state 0) are the part's own tool, drawn by its mesh.
+        for (int state = 1; state < paint_state_count(*s); ++state) {
+            const indexed_triangle_set its = s->selector->get_facets_strict(Slic3r::EnforcerBlockerType(state));
+            for (const auto& tri : its.indices) {
+                for (int k = 0; k < 3; ++k) {
+                    const Slic3r::Vec3d v = trafo * its.vertices[tri[k]].cast<double>();
+                    s->vertices.insert(s->vertices.end(), {float(v.x()), float(v.y()), float(v.z())});
+                }
+                s->states.push_back(static_cast<unsigned char>(state));
             }
-            s->states.push_back(its.colors[i]);
         }
         return int(s->states.size());
     } catch (const std::exception& e) {
@@ -1598,7 +1596,7 @@ int slicer_paint_end(SlicerHandle handle, const char* save_path) {
         if (save_path) {
             s->selector->garbage_collect();
             paint_facets(*s).set(*s->selector);
-            if (!Slic3r::store_3mf(save_path, &s->model, nullptr, false))
+            if (!store_orca_3mf(save_path, s->model, nullptr))
                 result = set_err(ctx, "Could not save the painting");
         }
         ctx->paint.reset();
@@ -1609,7 +1607,7 @@ int slicer_paint_end(SlicerHandle handle, const char* save_path) {
     }
 }
 
-// ── PrusaSlicer system presets ───────────────────────────────────────────────
+// ── OrcaSlicer system presets ────────────────────────────────────────────────
 } // extern "C"
 
 namespace {
@@ -1617,10 +1615,11 @@ namespace {
 // Process-wide: loaded once, then only read. g_presets_mutex guards both the
 // swap in slicer_presets_load and every read.
 //
-// One PresetBundle per vendor file. PrusaSlicer itself merges them into one
-// bundle (PresetBundle::load_system_presets, which is private), but a print or
-// filament preset is only ever compatible with printers of its own vendor, so
-// keeping them separate loses nothing.
+// One PresetBundle per vendor, the first being OrcaFilamentLibrary (the
+// generic filaments other vendors' filaments inherit from). OrcaSlicer merges
+// them into one bundle (PresetBundle::load_system_presets_from_json, which is
+// private); kept separate, compatibility is still checked across vendors the
+// way OrcaSlicer does.
 struct PresetRef {
     std::string           name;
     Slic3r::PresetBundle* bundle;
@@ -1655,12 +1654,14 @@ const Slic3r::Preset* find_system_preset(int type, const char* name,
     return p;
 }
 
-// Settings PrusaSlicer stores in a preset but which aren't print settings:
+// Settings OrcaSlicer stores in a preset but which aren't print settings:
 // preset bookkeeping (inheritance / compatibility).
 bool is_preset_bookkeeping_key(const std::string& key) {
     return key == "inherits" || key == "compatible_printers" ||
            key == "compatible_printers_condition" || key == "compatible_prints" ||
-           key == "compatible_prints_condition" || key == "renamed_from";
+           key == "compatible_prints_condition" || key == "renamed_from" ||
+           key == "inherits_group" || key == "different_settings_to_system" ||
+           key == "print_compatible_printers";
 }
 
 std::string serialize_config(const Slic3r::DynamicPrintConfig& cfg) {
@@ -1676,33 +1677,37 @@ std::string serialize_config(const Slic3r::DynamicPrintConfig& cfg) {
 
 extern "C" {
 
-int slicer_presets_load(const char* profiles_dir) {
+int slicer_presets_load(const char* resources_dir) {
     std::lock_guard<std::mutex> lock(g_presets_mutex);
     g_presets_error.clear();
     g_bundles.clear();
     for (auto& refs : g_preset_refs) refs.clear();
-    if (!profiles_dir) { g_presets_error = "null profiles dir"; return -1; }
+    if (!resources_dir) { g_presets_error = "null resources dir"; return -1; }
     try {
+        // libslic3r also reads resources_dir()/info and /flush while slicing.
         // Nothing is written to data_dir: system presets are never saved.
-        Slic3r::set_data_dir(profiles_dir);
-        // std::filesystem, not boost: the bridge's Boost headers don't match
-        // the prebuilt libboost_filesystem ABI (directory entries come back
-        // with empty paths), while libslic3r's own Boost use is consistent.
-        std::vector<std::string> files;
-        const std::filesystem::path vendor_dir = std::filesystem::path(profiles_dir) / "vendor";
+        Slic3r::set_resources_dir(resources_dir);
+        Slic3r::set_data_dir(resources_dir);
+        const std::filesystem::path vendor_dir = std::filesystem::path(resources_dir) / "profiles";
+        std::vector<std::string> vendors;
         for (const auto& entry : std::filesystem::directory_iterator(vendor_dir))
-            if (entry.path().extension() == ".ini")
-                files.push_back(entry.path().string());
-        std::sort(files.begin(), files.end());
+            if (entry.path().extension() == ".json")
+                vendors.push_back(entry.path().stem().string());
+        std::sort(vendors.begin(), vendors.end());
+        // The filament library first: other vendors' filaments inherit from it.
+        const std::string library = Slic3r::PresetBundle::ORCA_FILAMENT_LIBRARY;
+        auto lib_it = std::find(vendors.begin(), vendors.end(), library);
+        if (lib_it != vendors.end()) std::rotate(vendors.begin(), lib_it, lib_it + 1);
 
-        for (const std::string& file : files) {
+        const Slic3r::PresetBundle* base = nullptr;
+        for (const std::string& vendor : vendors) {
             auto bundle = std::make_unique<Slic3r::PresetBundle>();
             try {
-                bundle->load_configbundle(file, Slic3r::PresetBundle::LoadSystem,
-                    Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
+                bundle->load_vendor_configs_from_json(vendor_dir.string(), vendor, Slic3r::PresetBundle::LoadSystem,
+                    Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent, vendor == library ? nullptr : base);
             } catch (const std::exception& e) {
                 // One bad vendor file shouldn't take the others down.
-                g_presets_error += std::filesystem::path(file).filename().string() + ": " + e.what() + "\n";
+                g_presets_error += vendor + ": " + e.what() + "\n";
                 continue;
             }
             for (int type = 0; type < 3; ++type) {
@@ -1713,12 +1718,13 @@ int slicer_presets_load(const char* profiles_dir) {
                         g_preset_refs[type].push_back({p.name, bundle.get()});
                 }
             }
+            if (vendor == library) base = bundle.get();
             g_bundles.push_back(std::move(bundle));
         }
         for (auto& refs : g_preset_refs) {
             std::stable_sort(refs.begin(), refs.end(),
                 [](const PresetRef& a, const PresetRef& b) { return a.name < b.name; });
-            // A name used by two vendors: keep the first (alphabetical file order).
+            // A name used by two vendors: keep the first (the library, then alphabetical).
             refs.erase(std::unique(refs.begin(), refs.end(),
                 [](const PresetRef& a, const PresetRef& b) { return a.name == b.name; }), refs.end());
         }
@@ -1772,7 +1778,7 @@ int slicer_preset_is_compatible(int type, const char* name, const char* printer_
     const Slic3r::Preset* printer = find_system_preset(SLICER_PRESET_PRINTER, printer_name, &printer_bundle);
     if (!p || !printer) return -1;
     if (type == SLICER_PRESET_PRINTER) return 1;
-    if (bundle != printer_bundle) return 0;   // different vendor
+    // Across vendors too, like OrcaSlicer (e.g. the library's generic filaments).
     return Slic3r::is_compatible_with_printer(
                collection(*bundle, type)->get_preset_with_vendor_profile(*p),
                printer_bundle->printers.get_preset_with_vendor_profile(*printer)) ? 1 : 0;
@@ -1782,13 +1788,13 @@ int slicer_apply_preset(SlicerHandle handle, int type, const char* name) {
     auto ctx = CTX(handle);
     std::lock_guard<std::mutex> lock(g_presets_mutex);
     const Slic3r::Preset* p = find_system_preset(type, name);
-    if (!p) return set_err(ctx, (std::string("unknown PrusaSlicer preset: ") + (name ? name : "(null)")).c_str());
+    if (!p) return set_err(ctx, (std::string("unknown OrcaSlicer preset: ") + (name ? name : "(null)")).c_str());
     try {
         for (const std::string& key : p->config.keys()) {
             if (is_preset_bookkeeping_key(key)) continue;
             ctx->config.set_key_value(key, p->config.option(key)->clone());
         }
-        // Recorded in the G-code footer like PrusaSlicer does.
+        // Recorded in the G-code footer like OrcaSlicer does.
         switch (type) {
             case SLICER_PRESET_PRINT:
                 ctx->config.set_key_value("print_settings_id", new Slic3r::ConfigOptionString(p->name));
@@ -1799,6 +1805,18 @@ int slicer_apply_preset(SlicerHandle handle, int type, const char* name) {
                 break;
             case SLICER_PRESET_PRINTER:
                 ctx->config.set_key_value("printer_settings_id", new Slic3r::ConfigOptionString(p->name));
+                // Bed temperatures are per plate type; start on the printer's
+                // default plate like OrcaSlicer does: smooth PEI unless the
+                // printer names one ("Textured PEI Plate", or a BedType number).
+                ctx->config.set_key_value("curr_bed_type", new Slic3r::ConfigOptionEnum<Slic3r::BedType>(Slic3r::btPEI));
+                if (p->config.has("default_bed_type")) {
+                    const std::string bed = p->config.opt_string("default_bed_type");
+                    Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
+                    if (!bed.empty() && std::isdigit(static_cast<unsigned char>(bed[0])))
+                        ctx->config.set_key_value("curr_bed_type", new Slic3r::ConfigOptionEnum<Slic3r::BedType>(Slic3r::BedType(std::atoi(bed.c_str()))));
+                    else if (!bed.empty())
+                        ctx->config.set_deserialize("curr_bed_type", bed, subst);
+                }
                 sync_bed_from_config(ctx);
                 break;
         }
@@ -1844,6 +1862,34 @@ int slicer_apply_settings(SlicerHandle handle, const char* ini_text) {
     // Layer height / infill now come from settings, not slicer_slice's legacy parameters.
     ctx->slice_config_applied = true;
     return 0;
+}
+
+const char* slicer_normalize_settings(const char* ini_text) {
+    Slic3r::DynamicPrintConfig parsed;
+    std::istringstream in(ini_text ? ini_text : "");
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos || line[start] == '#' || line[start] == ';') continue;
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(start, eq - start);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        std::string value = line.substr(eq + 1);
+        if (!value.empty() && value.front() == ' ') value.erase(0, 1);
+        if (is_preset_bookkeeping_key(key)) continue;
+        try {
+            // Renames PrusaSlicer keys (PrintConfigDef::handle_legacy) and
+            // silently drops unknown ones.
+            Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
+            parsed.set_deserialize(key, value, subst);
+        } catch (const std::exception&) {
+            // A value libslic3r can't parse: dropped.
+        }
+    }
+    t_string_result = serialize_config(parsed);
+    return t_string_result.c_str();
 }
 
 // Sets element `tool` (0-based) of a per-extruder option from the first
@@ -1907,7 +1953,7 @@ int slicer_apply_tool_preset(SlicerHandle handle, int tool, const char* name) {
     if (tool < 1 || tool >= SLICER_MIX_BASE) return set_err(ctx, "tool out of range");
     std::lock_guard<std::mutex> lock(g_presets_mutex);
     const Slic3r::Preset* p = find_system_preset(SLICER_PRESET_FILAMENT, name);
-    if (!p) return set_err(ctx, (std::string("unknown PrusaSlicer preset: ") + (name ? name : "(null)")).c_str());
+    if (!p) return set_err(ctx, (std::string("unknown OrcaSlicer preset: ") + (name ? name : "(null)")).c_str());
     try {
         Slic3r::DynamicPrintConfig staged = ctx->config;
         const size_t n = physical_count(ctx), t = size_t(tool - 1);
@@ -1970,34 +2016,38 @@ const char* slicer_setting_info(const char* key) {
         << "category = " << Slic3r::escape_string_cstyle(def->category) << "\n"
         << "sidetext = " << Slic3r::escape_string_cstyle(def->sidetext) << "\n"
         << "tooltip = " << Slic3r::escape_string_cstyle(def->tooltip) << "\n";
-    if (def->enum_def && def->enum_def->has_values())
-        out << "enum_values = " << Slic3r::escape_string_cstyle(join(def->enum_def->values())) << "\n"
-            << "enum_labels = " << Slic3r::escape_string_cstyle(join(def->enum_def->labels())) << "\n";
+    if (!def->enum_values.empty())
+        out << "enum_values = " << Slic3r::escape_string_cstyle(join(def->enum_values)) << "\n"
+            << "enum_labels = " << Slic3r::escape_string_cstyle(join(def->enum_labels.empty() ? def->enum_values : def->enum_labels)) << "\n";
     t_string_result = out.str();
     return t_string_result.c_str();
 }
 
-// Test reference: slice a PrusaSlicer 3MF project the way PrusaSlicer's
-// command line does (the model with all its stored settings, the file's
-// project settings over libslic3r defaults), without going through PalmSlice's
-// import / profile path.
+// Test reference: slice a 3MF project the way OrcaSlicer's command line does
+// (the model with all its stored settings, the file's project settings over
+// libslic3r defaults), without going through PalmSlice's import / profile path.
 int slicer_reference_slice_3mf(const char* path, const char* out_gcode, char* error, int error_len) {
     try {
         Slic3r::Model model;
         Slic3r::DynamicPrintConfig config;
         config.apply(Slic3r::FullPrintConfig::defaults());
-        Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
-        boost::optional<Slic3r::Semver> version;
-        if (!Slic3r::load_3mf(path, config, subst, &model, false, version))
-            throw std::runtime_error("load_3mf failed");
+        if (!load_orca_3mf(path, model, config))
+            throw std::runtime_error("load_bbs_3mf failed");
         model.add_default_instances();
-        config.set_key_value("binary_gcode", new Slic3r::ConfigOptionBool(false));
         config.set_key_value("thumbnails", new Slic3r::ConfigOptionString(""));
+        config.set_key_value("filename_format", new Slic3r::ConfigOptionString("{input_filename_base}.gcode"));
         Slic3r::Print print;
         print.set_status_silent();
+        print.is_BBL_printer() = config.has("printer_model") &&
+            boost::starts_with(config.opt_string("printer_model"), "Bambu Lab");
+        normalize_tools(config);
+        clamp_model_tools(model, config.option<Slic3r::ConfigOptionFloats>("filament_diameter")->values.size());
+        fit_layer_height_profiles(model, config);
+        print.set_plate_origin(Slic3r::Vec3d::Zero());
         print.apply(model, config);
         print.process();
-        print.export_gcode(out_gcode, nullptr, nullptr);
+        Slic3r::GCodeProcessorResult result;
+        print.export_gcode(out_gcode, &result, nullptr);
         return 0;
     } catch (const std::exception& e) {
         if (error && error_len > 0) std::snprintf(error, error_len, "%s", e.what());

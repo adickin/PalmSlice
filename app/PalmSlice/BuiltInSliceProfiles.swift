@@ -1,101 +1,38 @@
 import Foundation
 
+/// PalmSlice's own qualities: only what they deliberately change, applied over
+/// the printer's OrcaSlicer quality nearest their layer height. Everyday
+/// qualities (Draft, Standard, Fine…) come from OrcaSlicer for each printer.
 enum BuiltInSliceProfiles {
-    static let draft = SliceProfile(
-        name: "Draft (0.3 mm)",
-        layerHeight: 0.3,
-        firstLayerHeight: 0.3,
-        wallCount: 2,
-        topLayers: 3,
-        bottomLayers: 3,
-        infillDensity: 15,
-        infillPattern: .grid,
-        printSpeed: 80,
-        infillSpeed: 100,
-        travelSpeed: 150,
-        firstLayerSpeed: 30
-    )
-
-    static let standard = SliceProfile(
-        name: "Standard (0.2 mm)",
-        layerHeight: 0.2,
-        firstLayerHeight: 0.2,
-        wallCount: 3,
-        topLayers: 4,
-        bottomLayers: 4,
-        infillDensity: 20,
-        infillPattern: .gyroid,
-        printSpeed: 60,
-        infillSpeed: 80,
-        travelSpeed: 120,
-        firstLayerSpeed: 30
-    )
-
-    static let fine = SliceProfile(
-        name: "Fine (0.1 mm)",
-        layerHeight: 0.1,
-        firstLayerHeight: 0.1,
-        wallCount: 4,
-        topLayers: 6,
-        bottomLayers: 6,
-        infillDensity: 20,
-        infillPattern: .gyroid,
-        printSpeed: 40,
-        infillSpeed: 60,
-        travelSpeed: 120,
-        firstLayerSpeed: 20
-    )
-
-    // Thicker walls and top/bottom shells for parts that need to be strong or
-    // watertight rather than fast/economical. Top/Bottom thickness is set
-    // directly in mm (layer counts below are kept in sync with it) — ironing
-    // is on since 6 solid top layers otherwise show visible infill ridges.
-    static let thickWalls = SliceProfile(
-        name: "Thick Walls (0.2 mm)",
-        layerHeight: 0.2,
-        firstLayerHeight: 0.2,
-        wallCount: 6,
-        horizontalExpansion: 0.0,
-        topLayers: 6,
-        bottomLayers: 6,
-        topThickness: 1.2,
-        bottomThickness: 1.2,
-        infillDensity: 20,
-        infillPattern: .gyroid,
-        printSpeed: 50,
-        infillSpeed: 70,
-        travelSpeed: 120,
-        firstLayerSpeed: 25,
-        solidInfillSpeed: 20,
-        topSolidInfillSpeed: 15,
-        ironingEnabled: true,
-        ironingType: .topSurfaces,
-        ironingFlowrate: 15,
-        ironingSpeed: 15,
-        ironingSpacing: 0.1
-    )
+    private static func changes(_ name: String, _ settings: [String: String]) -> SliceProfile {
+        var p = SliceProfile()
+        p.name = name
+        p.builtInName = name
+        p.extraSettings = settings
+        p.isResolved = false
+        return p
+    }
 
     // Pairs with the "eSUN PLA-LW (Lightweight)" material. Foaming PLA is used for
     // light, thin-walled parts, so: 2 walls, thin shells, sparse infill. eSUN says
     // not to slow the first layer (its flow already matches the foamed layers),
     // so first-layer speed equals print speed; fast travel limits oozing, since
     // retraction is barely effective with foaming filament.
-    static let lightweight = SliceProfile(
-        name: "Lightweight LW-PLA (0.2 mm)",
-        layerHeight: 0.2,
-        firstLayerHeight: 0.2,
-        wallCount: 2,
-        topLayers: 3,
-        bottomLayers: 3,
-        infillDensity: 10,
-        infillPattern: .gyroid,
-        printSpeed: 45,
-        infillSpeed: 45,
-        travelSpeed: 150,
-        firstLayerSpeed: 45,
-        solidInfillSpeed: 30,
-        topSolidInfillSpeed: 25
-    )
+    static let lightweight = changes("Lightweight LW-PLA (0.2 mm)", [
+        "layer_height": "0.2",
+        "wall_loops": "2",
+        "top_shell_layers": "3",
+        "bottom_shell_layers": "3",
+        "sparse_infill_density": "10%",
+        "sparse_infill_pattern": "gyroid",
+        "outer_wall_speed": "45",
+        "inner_wall_speed": "45",
+        "sparse_infill_speed": "45",
+        "initial_layer_speed": "45",
+        "internal_solid_infill_speed": "30",
+        "top_surface_speed": "25",
+        "travel_speed": "150",
+    ])
 
     // 3DLabPrint RC plane parts, with the settings from 3dlabprint.com/faq/prusaslicer
     // (LW-PLA values). Their models build skins, ribs and spars into the geometry,
@@ -104,32 +41,30 @@ enum BuiltInSliceProfiles {
     // required for that geometry to slice correctly. First layer is 50% of wall
     // speed, as specified there. Not for ordinary models: they would print as
     // hollow single-wall shells.
-    static let rcPlane = SliceProfile(
-        name: "3DLabPrint RC Plane (LW-PLA 0.3 mm)",
-        layerHeight: 0.3,
-        firstLayerHeight: 0.3,
-        wallCount: 1,
-        wallGenerator: .classic,
-        externalPerimetersFirst: true,
-        topLayers: 0,
-        bottomLayers: 0,
-        infillDensity: 0,
-        infillPattern: .gyroid,
-        slicingMode: .evenOdd,
-        gapClosingRadius: 0,
-        extrusionWidth: 0.42,
-        firstLayerExtrusionWidth: 0.44,
-        printSpeed: 40,
-        infillSpeed: 40,
-        travelSpeed: 150,
-        firstLayerSpeed: 20,
-        solidInfillSpeed: 30,
-        topSolidInfillSpeed: 25,
-        skirtLoops: 1
-    )
+    static let rcPlane = changes("3DLabPrint RC Plane (LW-PLA 0.3 mm)", [
+        "layer_height": "0.3",
+        "initial_layer_print_height": "0.3",
+        "wall_loops": "1",
+        "wall_generator": "classic",
+        "wall_sequence": "outer wall/inner wall",
+        "top_shell_layers": "0",
+        "bottom_shell_layers": "0",
+        "top_shell_thickness": "0",
+        "bottom_shell_thickness": "0",
+        "sparse_infill_density": "0%",
+        "slicing_mode": "even_odd",
+        "slice_closing_radius": "0",
+        "line_width": "0.42",
+        "initial_layer_line_width": "0.44",
+        "outer_wall_speed": "40",
+        "inner_wall_speed": "40",
+        "sparse_infill_speed": "40",
+        "initial_layer_speed": "20",
+        "travel_speed": "150",
+        "skirt_loops": "1",
+    ])
 
-    static let all: [SliceProfile] = [draft, standard, fine, thickWalls, lightweight, rcPlane]
-        .map { var p = $0; p.builtInName = p.name; return p }
+    static let all: [SliceProfile] = [lightweight, rcPlane]
 
     static func template(named name: String?) -> SliceProfile? { all.first { $0.builtInName == name } }
 }

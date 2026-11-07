@@ -27,14 +27,14 @@ struct WipeTowerFootprint: Equatable {
                      toolsUsed: Int, modelHeight: Double, slicedDepth: Double?,
                      position: SIMD2<Double>) -> WipeTowerFootprint? {
         func value(_ key: String) -> String? { settings[key] ?? base[key] }
-        func number(_ key: String, _ fallback: Double) -> Double { value(key).flatMap(PrusaValue.parseFloat) ?? fallback }
-        guard toolCount > 1, toolsUsed > 1, value("wipe_tower").flatMap(PrusaValue.parseBool) ?? true else { return nil }
-        let width = number("wipe_tower_width", 60)
+        func number(_ key: String, _ fallback: Double) -> Double { value(key).flatMap(SlicerValue.parseFloat) ?? fallback }
+        guard toolCount > 1, toolsUsed > 1, value("enable_prime_tower").flatMap(SlicerValue.parseBool) ?? true else { return nil }
+        let width = number("prime_tower_width", 60)
         // Before slicing, PrusaSlicer's early estimate: 900 mm² per tool change.
         let depth = slicedDepth ?? max(5, 900 / max(width, 1) * Double(toolsUsed - 1))
         return WipeTowerFootprint(
             x: position.x, y: position.y, width: width, depth: depth, rotationDeg: 0,
-            brim: number("wipe_tower_brim_width", 2), height: max(modelHeight, 1),
+            brim: number("prime_tower_brim_width", 2), height: max(modelHeight, 1),
             isEstimate: slicedDepth == nil)
     }
 }

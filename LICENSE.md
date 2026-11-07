@@ -17,9 +17,11 @@ GNU Affero General Public License for more details.
 ## Why AGPL-3.0?
 
 This project embeds **libslic3r**, the core slicing library from
-[PrusaSlicer](https://github.com/prusa3d/PrusaSlicer), which is licensed
-under the GNU Affero General Public License v3.0. As a derivative work,
-PalmSlice is required to be distributed under the same license.
+[OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) (itself derived from
+BambuStudio and [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer)), and
+OrcaSlicer's printer / filament profiles, all licensed under the GNU Affero
+General Public License v3.0. As a derivative work, PalmSlice is required to
+be distributed under the same license.
 
 The AGPL-3.0 extends the GPL to cover network use: if you run a modified
 version of this software as a service (even without distributing binaries),
@@ -34,7 +36,7 @@ https://www.gnu.org/licenses/agpl-3.0.en.html
 
 | Library | License |
 |---------|---------|
-| [PrusaSlicer / libslic3r](https://github.com/prusa3d/PrusaSlicer) | AGPL-3.0 |
+| [OrcaSlicer / libslic3r](https://github.com/SoftFever/OrcaSlicer) (from BambuStudio and PrusaSlicer), incl. its profiles | AGPL-3.0 |
 | [Boost](https://www.boost.org/) | Boost Software License 1.0 |
 | [oneTBB](https://github.com/oneapi-src/oneTBB) | Apache-2.0 |
 | [CGAL](https://www.cgal.org/) | GPL-3.0 / LGPL-3.0 (header-only parts: LGPL) |
@@ -44,8 +46,11 @@ https://www.gnu.org/licenses/agpl-3.0.en.html
 | [Clipper2](https://github.com/AngusJohnson/Clipper2) | Boost Software License 1.0 |
 | [cereal](https://github.com/USCiLab/cereal) | BSD-3-Clause |
 | [Qhull](http://www.qhull.org/) | Qhull license (permissive) |
-| [LibBGCode](https://github.com/prusa3d/libbgcode) | AGPL-3.0 |
-| [heatshrink](https://github.com/atomicobject/heatshrink) | ISC |
+| [MCUT](https://github.com/cutdigital/mcut) | GPL-3.0 (dual-licensed) |
+| [libigl](https://libigl.github.io/) | MPL-2.0 |
+| [libnoise](https://github.com/SoftFever/Orca-deps-libnoise) | LGPL-2.1 |
+| [Draco](https://github.com/google/draco) | Apache-2.0 |
+| [libjpeg-turbo](https://libjpeg-turbo.org/) | IJG / BSD-3-Clause / zlib |
 | [nlohmann/json](https://github.com/nlohmann/json) | MIT |
 | [NanoSVG](https://github.com/fltk/nanosvg) | zlib |
 | [NLopt](https://github.com/stevengj/nlopt) | LGPL-2.1+ |

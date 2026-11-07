@@ -35,12 +35,12 @@ struct MaterialProfile: Codable, Identifiable {
     // that overrides only some values keeps "nil" for the rest in extraSettings
     // until the field is edited.
     var setsRetraction: Bool = true
-    var retractionEnabled: Bool = true { didSet { extraSettings["filament_retract_length"] = nil } }
-    var retractionLength: Double = 5.0 { didSet { extraSettings["filament_retract_length"] = nil } }  // mm — filament_retract_length (0 = no retract)
-    var retractionSpeed: Double = 45.0 { didSet { extraSettings["filament_retract_speed"] = nil } }  // mm/s — filament_retract_speed
+    var retractionEnabled: Bool = true { didSet { extraSettings["filament_retraction_length"] = nil } }
+    var retractionLength: Double = 5.0 { didSet { extraSettings["filament_retraction_length"] = nil } }  // mm — filament_retraction_length (0 = no retract)
+    var retractionSpeed: Double = 45.0 { didSet { extraSettings["filament_retraction_speed"] = nil } }  // mm/s — filament_retraction_speed
     var retractionRestartExtra: Double = 0.0 { didSet { extraSettings["filament_retract_restart_extra"] = nil } }  // mm — filament_retract_restart_extra: extra pushed after deretraction
-    var zHop: Double = 0.0 { didSet { extraSettings["filament_retract_lift"] = nil } }  // mm — filament_retract_lift
-    var minTravelForRetraction: Double = 1.0 { didSet { extraSettings["filament_retract_before_travel"] = nil } }  // mm — filament_retract_before_travel
+    var zHop: Double = 0.0 { didSet { extraSettings["filament_z_hop"] = nil } }  // mm — filament_z_hop
+    var minTravelForRetraction: Double = 1.0 { didSet { extraSettings["filament_retraction_minimum_travel"] = nil } }  // mm — filament_retraction_minimum_travel
 
     // MARK: - Cooling / Fan
     var coolingEnabled: Bool = true          // bool — cooling (per-extruder)
@@ -52,12 +52,41 @@ struct MaterialProfile: Codable, Identifiable {
     var slowdownBelowLayerTime: Int = 5      // sec — slowdown_below_layer_time: slow down if layer prints in under N sec
     var minPrintSpeed: Double = 10.0         // mm/s — min_print_speed: floor speed when cooling slowdown is active
 
-    // MARK: - PrusaSlicer
-    // The PrusaSlicer filament preset this profile starts from. nil = a
-    // preset matching filamentType for the printer (see PresetLibrary.base).
+    // MARK: - OrcaSlicer
+    // A material is either an OrcaSlicer filament (isSystem, basePreset = the
+    // filament preset) or the user's own: changes (extraSettings) over
+    // basePreset when that suits the printer, otherwise over the printer's
+    // filament of filamentType. The typed fields show the result
+    // (resolve(over:)); only extraSettings is stored as the material's changes.
     var basePreset: String? = nil
-    // Any other PrusaSlicer filament setting, in .ini value format (see ProfileSettings.swift).
+    var isSystem = false
+    /// true: the typed fields hold the full intended values. false: only
+    /// extraSettings — the changes — means anything (stored user materials).
+    var isResolved = true
     var extraSettings: [String: String] = [:]
+
+    /// The material's type for picking the printer's filament: its own change,
+    /// or the typed field.
+    var ownFilamentType: String {
+        extraSettings["filament_type"].flatMap { SettingsText.splitStrings($0).first }.flatMap { $0.isEmpty ? nil : $0 }
+            ?? filamentType
+    }
+
+    /// An OrcaSlicer filament, as a material list entry.
+    static func system(_ preset: String) -> MaterialProfile {
+        var m = MaterialProfile()
+        m.id = PresetLibrary.stableID(.filament, preset)
+        m.name = PresetLibrary.shortName(preset)
+        m.basePreset = preset
+        m.isSystem = true
+        let settings = PresetLibrary.settings(.filament, preset) ?? [:]
+        m.resolve(over: settings)
+        if settings["filament_colour"] == nil,
+           let c = settings["default_filament_colour"].flatMap({ SettingsText.splitStrings($0).first }), HexColour(c) != nil {
+            m.colour = c
+        }
+        return m
+    }
 
     // MARK: - Summary (shown in picker row subtitle)
     var pickerSubtitle: String {
@@ -107,6 +136,8 @@ extension MaterialProfile {
         slowdownBelowLayerTime = try v(.slowdownBelowLayerTime, d.slowdownBelowLayerTime)
         minPrintSpeed = try v(.minPrintSpeed, d.minPrintSpeed)
         basePreset = try c.decodeIfPresent(String.self, forKey: .basePreset)
+        isSystem = try c.decodeIfPresent(Bool.self, forKey: .isSystem) ?? false
+        isResolved = try c.decodeIfPresent(Bool.self, forKey: .isResolved) ?? false
         extraSettings = try v(.extraSettings, d.extraSettings)
     }
 }

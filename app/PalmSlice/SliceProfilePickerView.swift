@@ -6,37 +6,37 @@ struct SliceProfilePickerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var newProfile: SliceProfile? = nil
-    @State private var showPresetPicker = false
     @State private var showIniImport = false
     @State private var profileToEdit: SliceProfile? = nil
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(sliceProfileStore.profiles) { profile in
-                    SliceProfileRowView(
-                        profile: profile,
-                        isSelected: sliceProfileStore.selectedProfileId == profile.id,
-                        onSelect: { sliceProfileStore.select(id: profile.id) },
-                        onOpen:   { profileToEdit = profile },
-                        onDelete: { sliceProfileStore.delete(id: profile.id) },
-                        canDelete: sliceProfileStore.profiles.count > 1
-                    )
+                Section {
+                    ForEach(sliceProfileStore.systemProfiles) { row($0) }
+                } header: {
+                    Text("OrcaSlicer · \(profileStore.selectedProfile?.name ?? "this printer")")
+                }
+                Section {
+                    ForEach(sliceProfileStore.customProfiles) { row($0) }
+                } header: {
+                    Text("My Qualities")
+                } footer: {
+                    Text("Your qualities keep only what you change and apply it over this printer's OrcaSlicer quality nearest their layer height, so they work on every printer.")
                 }
             }
             .iniImporter(SliceProfile.self, isPresented: $showIniImport) { imported in
                 for profile in imported { sliceProfileStore.add(profile) }
                 if let last = imported.last { sliceProfileStore.select(id: last.id) }
             }
-            .navigationTitle("Slice Profile")
+            .navigationTitle("Quality")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(
                 leading: Button("Done") { dismiss() },
                 trailing: Menu {
-                    Button("New Profile") {
+                    Button("New Quality") {
                         newProfile = .newProfile(for: profileStore.selectedProfile)
                     }
-                    Button("From Default Slice Settings…") { showPresetPicker = true }
                     Button("Import .ini…") { showIniImport = true }
                 } label: {
                     Image(systemName: "plus")
@@ -45,18 +45,21 @@ struct SliceProfilePickerView: View {
             .sheet(item: $newProfile) { draft in
                 SliceProfileEditorView(mode: .add, profile: draft)
             }
-            .sheet(isPresented: $showPresetPicker) {
-                PresetPickerView(type: .print, printerPreset: profileStore.selectedProfile?.systemPreset) { name in
-                    // Let this sheet finish dismissing before presenting the editor.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        newProfile = .from(printPreset: name)
-                    }
-                }
-            }
             .sheet(item: $profileToEdit) { profile in
                 SliceProfileEditorView(mode: .edit, profile: profile)
             }
         }
+    }
+
+    private func row(_ profile: SliceProfile) -> some View {
+        SliceProfileRowView(
+            profile: profile,
+            isSelected: sliceProfileStore.selectedProfileId == profile.id,
+            onSelect: { sliceProfileStore.select(id: profile.id) },
+            onOpen:   { profileToEdit = profile },
+            onDelete: { sliceProfileStore.delete(id: profile.id) },
+            canDelete: !profile.isSystem
+        )
     }
 }
 

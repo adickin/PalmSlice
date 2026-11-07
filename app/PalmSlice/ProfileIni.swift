@@ -1,32 +1,34 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// A profile type that can be imported from / exported to a PrusaSlicer .ini.
-protocol PrusaIniProfile: PrusaSettingsConvertible, Identifiable {
+/// A profile type that can be imported from / exported to a .ini (OrcaSlicer
+/// or PrusaSlicer settings; PrusaSlicer ones are renamed on import).
+protocol IniProfile: SlicerSettingsConvertible, Identifiable {
     init()
     var name: String { get set }
-    /// The PrusaSlicer system preset the profile is layered on.
+    /// The OrcaSlicer system preset the profile is layered on.
     var iniBasePreset: String? { get set }
-    /// Section prefix in PrusaSlicer config bundles ("print", "filament", "printer").
+    /// Section prefix in config bundles ("print", "filament", "printer").
     static var iniSection: String { get }
 }
 
-extension SliceProfile: PrusaIniProfile {
+extension SliceProfile: IniProfile {
     var iniBasePreset: String? { get { basePreset } set { basePreset = newValue } }
     static var iniSection: String { "print" }
 }
 
-extension MaterialProfile: PrusaIniProfile {
+extension MaterialProfile: IniProfile {
     var iniBasePreset: String? { get { basePreset } set { basePreset = newValue } }
     static var iniSection: String { "filament" }
 }
 
-extension PrinterProfile: PrusaIniProfile {
+extension PrinterProfile: IniProfile {
     var iniBasePreset: String? { get { systemPreset } set { systemPreset = newValue } }
     static var iniSection: String { "printer" }
 }
 
-/// Reading and writing PrusaSlicer .ini files.
+/// Reading and writing .ini files: OrcaSlicer configs, and PrusaSlicer
+/// configs / config bundles, whose settings are renamed to OrcaSlicer's.
 enum ProfileIni {
     static let contentTypes: [UTType] =
         [UTType(filenameExtension: "ini"), .plainText, .data].compactMap { $0 }
@@ -58,16 +60,16 @@ enum ProfileIni {
         return out.filter { !$0.settings.isEmpty }
     }
 
-    /// Profiles of type P in a PrusaSlicer .ini: every [print:…] (or
+    /// Profiles of type P in a .ini: every [print:…] (or
     /// filament / printer) preset of a config bundle, with inheritance
     /// resolved, or the one profile in a flat exported config.
-    static func profiles<P: PrusaIniProfile>(_ type: P.Type, from text: String, fileName: String) -> [P] {
+    static func profiles<P: IniProfile>(_ type: P.Type, from text: String, fileName: String) -> [P] {
         let all = sections(text)
         let bundle = all.filter { $0.type == P.iniSection && $0.name != nil }
         if bundle.isEmpty {
             guard let flat = all.first(where: { $0.type == nil }) else { return [] }
             var p = P()
-            p.importPrusaSettings(flat.settings)
+            p.importSlicerSettings(OrcaMigration.normalize(flat.settings))
             let id = flat.settings["\(P.iniSection)_settings_id"].flatMap { SettingsText.splitStrings($0).first }
             p.name = id.flatMap { $0.isEmpty ? nil : $0 }
                 ?? (fileName as NSString).deletingPathExtension
@@ -92,7 +94,9 @@ enum ProfileIni {
                     system = system ?? parent
                 }
             }
-            merged.merge(own) { _, new in new }
+            // Each layer is renamed to OrcaSlicer keys before merging, so a
+            // PrusaSlicer key overrides the OrcaSlicer one it inherits.
+            merged.merge(OrcaMigration.normalize(own)) { _, new in new }
             return (merged, system)
         }
 
@@ -102,26 +106,26 @@ enum ProfileIni {
             let resolved = resolve(name)
             var p = P()
             p.iniBasePreset = resolved.system
-            p.importPrusaSettings(resolved.settings)
+            p.importSlicerSettings(resolved.settings)
             p.name = name
             return p
         }
     }
 
-    /// A profile's complete settings as a PrusaSlicer .ini: its base preset's
+    /// A profile's complete settings as an OrcaSlicer .ini: its base preset's
     /// values with the profile's own on top, so it stands alone.
-    static func text<P: PrusaIniProfile>(_ profile: P, baseSettings: [String: String]) -> String {
-        var settings = baseSettings.merging(profile.prusaSettings()) { _, own in own }
-        for key in PrusaKeys.ignored { settings[key] = nil }
+    static func text<P: IniProfile>(_ profile: P, baseSettings: [String: String]) -> String {
+        var settings = baseSettings.merging(profile.slicerSettings()) { _, own in own }
+        for key in SlicerKeys.ignored { settings[key] = nil }
         let stamp = ISO8601DateFormatter().string(from: Date())
         return "# \(profile.name) — exported from PalmSlice \(stamp)\n"
-            + "# PrusaSlicer \(P.iniSection) settings: load with File > Import > Import Config.\n"
+            + "# OrcaSlicer \(P.iniSection) settings: load with File > Import > Import Configs.\n"
             + SettingsText.serialize(settings)
     }
 }
 
-/// A PrusaSlicer .ini handed to the share sheet.
-struct PrusaIniFile: Transferable {
+/// A .ini handed to the share sheet.
+struct IniProfileFile: Transferable {
     let fileName: String
     let text: String
 
@@ -138,7 +142,7 @@ struct PrusaIniFile: Transferable {
 }
 
 /// "+" menu item + file importer that adds profiles from a PrusaSlicer .ini.
-struct IniImportModifier<P: PrusaIniProfile>: ViewModifier {
+struct IniImportModifier<P: IniProfile>: ViewModifier {
     @Binding var isPresented: Bool
     let add: ([P]) -> Void
     @State private var message: String? = nil
@@ -177,7 +181,7 @@ struct IniImportModifier<P: PrusaIniProfile>: ViewModifier {
 }
 
 extension View {
-    func iniImporter<P: PrusaIniProfile>(_ type: P.Type, isPresented: Binding<Bool>,
+    func iniImporter<P: IniProfile>(_ type: P.Type, isPresented: Binding<Bool>,
                                          add: @escaping ([P]) -> Void) -> some View {
         modifier(IniImportModifier<P>(isPresented: isPresented, add: add))
     }

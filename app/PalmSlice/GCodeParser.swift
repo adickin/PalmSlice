@@ -33,7 +33,7 @@ struct GCodeLayer {
 
 // MARK: - Parser
 
-/// Parses a PrusaSlicer G-code file into an array of layers, each containing typed moves.
+/// Parses an OrcaSlicer (or PrusaSlicer) G-code file into an array of layers, each containing typed moves.
 /// Only extrusion moves are included (travel moves are filtered out for visual clarity).
 func parseGCode(url: URL) -> [GCodeLayer] {
     guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
@@ -152,24 +152,30 @@ func parseGCode(url: URL) -> [GCodeLayer] {
 
 // MARK: - Type mapping
 
+/// OrcaSlicer's ;TYPE: names (ExtrusionEntity.cpp role_to_string); the
+/// PrusaSlicer names are kept for G-code sliced by PalmSlice's PrusaSlicer backend.
 private func extrusionType(from name: String) -> ExtrusionType {
     switch name.lowercased().trimmingCharacters(in: .whitespaces) {
-    case "external perimeter":         return .externalPerimeter
-    case "perimeter":                  return .perimeter
-    case "infill":                     return .infill
-    case "solid infill":               return .solidInfill
-    case "top solid infill":           return .topSolidInfill
-    case "bridge infill":              return .bridgeInfill
-    case "support material":           return .support
-    case "support material interface": return .supportInterface
-    case "wipe tower":                 return .wipeTower
-    default:                           return .other
+    case "outer wall", "overhang wall",
+         "external perimeter", "overhang perimeter":     return .externalPerimeter
+    case "inner wall", "perimeter":                       return .perimeter
+    case "sparse infill", "infill":                       return .infill
+    case "internal solid infill", "bottom surface", "gap infill",
+         "solid infill", "gap fill":                      return .solidInfill
+    case "top surface", "ironing", "top solid infill":    return .topSolidInfill
+    case "bridge", "internal bridge", "bridge infill":    return .bridgeInfill
+    case "support", "support transition",
+         "support material":                              return .support
+    case "support interface",
+         "support material interface":                    return .supportInterface
+    case "prime tower", "wipe tower":                     return .wipeTower
+    default:                                              return .other
     }
 }
 
 // MARK: - Summary
 
-/// Totals from a PrusaSlicer G-code file's footer, and its tool changes.
+/// Totals from an OrcaSlicer G-code file's footer, and its tool changes.
 struct GCodeSummary: Equatable {
     var printTime: String?
     /// Filament used per tool, grams (one entry on single-tool printers).

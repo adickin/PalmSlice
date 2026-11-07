@@ -12,7 +12,7 @@ final class PresetLibraryTests: XCTestCase {
         XCTAssertFalse(PresetLibrary.names(.filament).isEmpty)
     }
 
-    // A custom printer (no PrusaSlicer preset) gets the fallback printer's
+    // A custom printer (no OrcaSlicer preset) gets the fallback printer's
     // print/filament presets but never its printer preset.
     func testCustomPrinterBaseSkipsPrinterPreset() throws {
         let base = try XCTUnwrap(PresetLibrary.base(printerPreset: nil, filamentType: "PLA"))
@@ -21,7 +21,7 @@ final class PresetLibraryTests: XCTestCase {
     }
 
     func testEnderBaseUsesCrealityDefaults() throws {
-        let ender = "Creality Ender-3 S1 (0.4 mm nozzle)"
+        let ender = "Creality Ender-3 S1 0.4 nozzle"
         let base = try XCTUnwrap(PresetLibrary.base(printerPreset: ender, filamentType: "PETG"))
         XCTAssertEqual(base.printer, ender)
         XCTAssertEqual(base.print, PresetLibrary.defaults(forPrinter: ender).print)

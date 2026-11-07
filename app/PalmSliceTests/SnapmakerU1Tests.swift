@@ -1,35 +1,12 @@
 import XCTest
 @testable import PalmSlice
 
-/// The Snapmaker U1 from PalmSlice's own vendor bundle (profiles/PalmSlice.ini).
+/// The Snapmaker U1, from OrcaSlicer's Snapmaker profiles.
 final class SnapmakerU1Tests: XCTestCase {
     private let fixtures = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().appendingPathComponent("Fixtures")
-    private let bundle = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("profiles/PalmSlice.ini")
-
     private func u1() throws -> PrinterProfile {
         try XCTUnwrap(BuiltInProfiles.all.first { $0.builtInKey == "snapmaker-u1" })
-    }
-
-    // Unknown keys are dropped silently when vendor bundles load, so check
-    // every key in the bundle is a PrusaSlicer setting.
-    func testBundleUsesOnlyPrusaSlicerKeys() throws {
-        let text = try String(contentsOf: bundle, encoding: .utf8)
-        var section = ""
-        var unknown: [String] = []
-        for line in text.split(separator: "\n") {
-            if line.hasPrefix("[") { section = String(line); continue }
-            guard !line.hasPrefix("#"), let eq = line.range(of: " = "),
-                  section.hasPrefix("[printer:") || section.hasPrefix("[print:") || section.hasPrefix("[filament:")
-            else { continue }
-            let key = String(line[..<eq.lowerBound])
-            if ["compatible_printers_condition", "inherits", "default_print_profile", "default_filament_profile",
-                "printer_model", "printer_variant", "filament_vendor"].contains(key) { continue }
-            if slicer_setting_info(key) == nil { unknown.append("\(section) \(key)") }
-        }
-        XCTAssertEqual(unknown, [])
     }
 
     func testU1IsABuiltInFourToolPrinter() throws {
@@ -37,7 +14,7 @@ final class SnapmakerU1Tests: XCTestCase {
         XCTAssertEqual(printer.numberOfExtruders, 4)
         XCTAssertEqual(printer.bedX, 270, accuracy: 0.01)
         XCTAssertFalse(printer.verified)
-        XCTAssertEqual(printer.gcodeFlavor.prusaName, "klipper")
+        XCTAssertEqual(printer.gcodeFlavor.slicerName, "klipper")
         XCTAssertNotNil(PresetLibrary.base(printerPreset: printer.systemPreset, filamentType: "PLA"))
     }
 
@@ -74,21 +51,21 @@ final class SnapmakerU1Tests: XCTestCase {
     func testFourToolSliceHasNoUnresolvedPlaceholders() throws {
         let gcode = try sliceOnU1()
         // Only the G-code body: the config footer lists the templates themselves.
-        let body = gcode.components(separatedBy: "; prusaslicer_config = begin").first ?? gcode
+        let body = gcode.components(separatedBy: "; CONFIG_BLOCK_START").first ?? gcode
         for line in body.split(separator: "\n") where !line.hasPrefix(";") && !line.hasPrefix("EXCLUDE_OBJECT_DEFINE") {
             XCTAssertFalse(line.contains("{") || line.contains("}") || line.contains("["), "unresolved: \(line)")
         }
         XCTAssertFalse(body.contains("Parsing error"))
-        // Tools 1–3 are used: those are fed and calibrated, tool 4 isn't.
-        for i in 0..<3 { XCTAssertTrue(body.contains("SM_PRINT_AUTO_FEED EXTRUDER=\(i)\n"), "tool \(i + 1) not fed") }
-        XCTAssertFalse(body.contains("SM_PRINT_AUTO_FEED EXTRUDER=3"))
+        // OrcaSlicer's U1 start G-code feeds and calibrates all four tools.
+        for i in 0..<4 { XCTAssertTrue(body.contains("SM_PRINT_AUTO_FEED EXTRUDER=\(i)\n"), "tool \(i + 1) not fed") }
         XCTAssertTrue(body.contains("PRINT_START"))
         XCTAssertTrue(body.contains("SM_PRINT_PREEXTRUDE_FILAMENT INDEX=1"))
         XCTAssertTrue(body.contains("SET_PRINT_STATS_INFO TOTAL_LAYER="))
         XCTAssertTrue(body.contains("EXCLUDE_OBJECT_DEFINE"))
         XCTAssertTrue(body.contains("BED_MESH_CALIBRATE mesh_min="))
         // PETG in tool 2 heats to its own temperature at the tool change.
-        XCTAssertTrue(body.contains("M109 S\(BuiltInMaterialProfiles.petg.otherLayersTemp) T1"))
+        let petg = BuiltInMaterialProfiles.petg
+        XCTAssertTrue(body.contains("M109 S\(petg.otherLayersTemp) T1") || body.contains("M109 S\(petg.firstLayerTemp) T1"))
         XCTAssertTrue(gcode.contains("; filament_colour = "))
     }
 

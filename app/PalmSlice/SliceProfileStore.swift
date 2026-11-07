@@ -1,122 +1,134 @@
 import Foundation
 
+/// The slice qualities offered for the selected printer: its OrcaSlicer
+/// qualities (regenerated whenever the printer changes) followed by the
+/// user's own, which are stored as changes only and work on every printer.
 @MainActor
 final class SliceProfileStore: ObservableObject {
-    @Published var profiles: [SliceProfile] = []
+    /// The list for the current printer: OrcaSlicer qualities, then the
+    /// user's own (shown resolved for this printer).
+    @Published private(set) var profiles: [SliceProfile] = []
     /// Remembered across launches.
     @Published var selectedProfileId: UUID? {
         didSet { UserDefaults.standard.set(selectedProfileId?.uuidString, forKey: Self.selectedKey) }
     }
     private static let selectedKey = "lastSliceProfileID"
 
+    /// The user's own qualities (changes only), persisted.
+    private var custom: [SliceProfile] = []
+    /// The OrcaSlicer printer preset the list was built for.
+    private(set) var printerPreset: String?
+
     var selectedProfile: SliceProfile? {
         profiles.first { $0.id == selectedProfileId }
     }
 
+    var systemProfiles: [SliceProfile] { profiles.filter(\.isSystem) }
+    var customProfiles: [SliceProfile] { profiles.filter { !$0.isSystem } }
+
+    // Saved qualities were reset when defaults moved to OrcaSlicer (Nov 2026);
+    // the old slice_profiles.json is left in place, unread.
     private var storeURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("slice_profiles.json")
+            .appendingPathComponent("slice_qualities.json")
     }
-
-    // Bump when BuiltInSliceProfiles changes in a breaking way.
-    private static let seedVersion = 4
-    private static let seedVersionKey = "sliceProfileSeedVersion"
 
     // MARK: Load / Save
 
-    func load() {
-        let savedVersion = UserDefaults.standard.integer(forKey: Self.seedVersionKey)
-        let versionMatch = savedVersion >= Self.seedVersion
-
-        if versionMatch,
-           let data = try? Data(contentsOf: storeURL),
-           let decoded = try? JSONDecoder().decode([SliceProfile].self, from: data),
-           !decoded.isEmpty {
-            profiles = decoded
+    func load(printerPreset: String? = nil) {
+        self.printerPreset = printerPreset
+        if let data = try? Data(contentsOf: storeURL),
+           let decoded = try? JSONDecoder().decode([SliceProfile].self, from: data) {
+            custom = decoded
         } else {
-            profiles = BuiltInSliceProfiles.all
-            UserDefaults.standard.set(Self.seedVersion, forKey: Self.seedVersionKey)
+            custom = BuiltInSliceProfiles.all
             save()
         }
-
-        let added = mergeInNewBuiltIns()
-        let linked = linkBuiltIns()
-        if added || linked {
-            save()
+        if selectedProfileId == nil {
+            selectedProfileId = UserDefaults.standard.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:))
         }
+        rebuild()
+    }
 
-        if selectedProfileId == nil,
-           let saved = UserDefaults.standard.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:)),
-           profiles.contains(where: { $0.id == saved }) {
-            selectedProfileId = saved
-        }
+    /// Rebuilds the list for a printer. A selected OrcaSlicer quality the new
+    /// printer doesn't have switches to the printer's default quality; the
+    /// user's own qualities stay selected.
+    func setPrinter(_ printerPreset: String?) {
+        guard printerPreset != self.printerPreset || profiles.isEmpty else { return }
+        self.printerPreset = printerPreset
+        rebuild()
+    }
+
+    private func rebuild() {
+        let qualities = PresetLibrary.qualities(forPrinter: printerPreset)
+        var list = qualities.map(SliceProfile.system)
+        list += custom.map(resolved)
+        profiles = list
         if selectedProfileId == nil || !profiles.contains(where: { $0.id == selectedProfileId }) {
-            selectedProfileId = profiles.first?.id
+            let d = PresetLibrary.defaultQuality(forPrinter: printerPreset)
+            selectedProfileId = d.map { PresetLibrary.stableID(.print, $0) } ?? profiles.first?.id
         }
     }
 
-    // Copies saved before builtInName existed: link those still named after a built-in.
-    private func linkBuiltIns() -> Bool {
-        var changed = false
-        for i in profiles.indices where profiles[i].builtInName == nil {
-            if let t = BuiltInSliceProfiles.template(named: profiles[i].name), !profiles.contains(where: { $0.builtInName == t.name }) {
-                profiles[i].builtInName = t.name
-                changed = true
-            }
-        }
-        return changed
+    /// The OrcaSlicer quality a profile is shown and sliced over on this printer.
+    func base(of profile: SliceProfile) -> String? {
+        profile.isSystem ? profile.basePreset
+            : PresetLibrary.quality(forPrinter: printerPreset, layerHeight: profile.ownLayerHeight)
     }
 
-    private static let offeredBuiltInsKey = "sliceBuiltInsOffered"
-    // Built-ins that every install seeded (seed version 4) before offeredBuiltInsKey existed.
-    private static let originalBuiltInNames = ["Draft (0.3 mm)", "Standard (0.2 mm)",
-                                               "Fine (0.1 mm)", "Thick Walls (0.2 mm)"]
-
-    // Appends built-in slice profiles added since this install last loaded, so app
-    // updates deliver new templates to existing users. Each built-in is offered
-    // only once (tracked by name), so one the user deleted doesn't come back.
-    @discardableResult
-    private func mergeInNewBuiltIns() -> Bool {
-        let defaults = UserDefaults.standard
-        var offered = Set(defaults.stringArray(forKey: Self.offeredBuiltInsKey)
-                          ?? Self.originalBuiltInNames)
-        var added = false
-        for template in BuiltInSliceProfiles.all where !offered.contains(template.name) {
-            if !profiles.contains(where: { $0.name == template.name }) {
-                profiles.append(template)
-                added = true
-            }
-            offered.insert(template.name)
-        }
-        defaults.set(offered.sorted(), forKey: Self.offeredBuiltInsKey)
-        return added
+    /// A user quality with its typed fields showing the result on this printer.
+    func resolved(_ profile: SliceProfile) -> SliceProfile {
+        guard !profile.isSystem else { return profile }
+        guard !profile.isResolved else { return profile }
+        var p = profile
+        p.resolve(over: base(of: p).flatMap { PresetLibrary.settings(.print, $0) } ?? [:])
+        p.isResolved = true
+        return p
     }
 
     func save() {
-        guard let data = try? JSONEncoder().encode(profiles) else { return }
+        guard let data = try? JSONEncoder().encode(custom) else { return }
         try? data.write(to: storeURL, options: .atomic)
     }
 
     // MARK: Mutations
 
+    /// Adds a user quality. `profile` may be a full set of settings (e.g. from
+    /// an .ini or a 3MF); only what differs from this printer's matching
+    /// OrcaSlicer quality is kept.
     func add(_ profile: SliceProfile) {
-        profiles.append(profile)
+        custom.append(changesOnly(profile))
         save()
+        rebuild()
     }
 
     func update(_ profile: SliceProfile) {
-        guard let idx = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
-        profiles[idx] = profile
+        guard !profile.isSystem, let idx = custom.firstIndex(where: { $0.id == profile.id }) else { return }
+        custom[idx] = changesOnly(profile)
         save()
+        rebuild()
+    }
+
+    /// The profile as stored: only what it changes over its base here.
+    func changesOnly(_ profile: SliceProfile) -> SliceProfile {
+        guard profile.isResolved else { return profile }
+        var p = profile
+        p.isSystem = false
+        p.basePreset = nil
+        let layer = p.slicerSettings()["layer_height"].flatMap(SlicerValue.parseFloat)
+        let base = PresetLibrary.quality(forPrinter: printerPreset, layerHeight: layer)
+        p.keepChanges(from: base.flatMap { PresetLibrary.settings(.print, $0) } ?? [:])
+        // The layer height picks the base quality on every printer, so keep it.
+        if let layer { p.extraSettings["layer_height"] = SlicerValue.float(layer) }
+        p.isResolved = false
+        return p
     }
 
     func delete(id: UUID) {
-        guard profiles.count > 1 else { return }
-        profiles.removeAll { $0.id == id }
-        if selectedProfileId == id {
-            selectedProfileId = profiles.first?.id
-        }
+        guard custom.contains(where: { $0.id == id }) else { return }
+        custom.removeAll { $0.id == id }
         save()
+        rebuild()
     }
 
     func select(id: UUID) {

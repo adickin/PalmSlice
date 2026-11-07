@@ -1,7 +1,8 @@
 import XCTest
 @testable import PalmSlice
 
-/// PrusaSlicer settings stored on objects in 3MF files, using 3DLabPrint's
+/// PrusaSlicer settings stored on objects in 3MF files (read as OrcaSlicer
+/// settings), using 3DLabPrint's
 /// Piper J-3 Cub project files (skipped when they aren't on this machine).
 final class FileSettingsTests: XCTestCase {
     private let cub = URL(fileURLWithPath: "/Users/adickin/ios-sources/test-data/PS_3MF")
@@ -25,8 +26,8 @@ final class FileSettingsTests: XCTestCase {
         XCTAssertEqual(fs.ranges.count, 2)
         XCTAssertEqual(fs.ranges[0].minZ, 0)
         XCTAssertEqual(fs.ranges[0].maxZ, 2)
-        XCTAssertEqual(fs.ranges[0].settings["bottom_solid_layers"], "4")
-        XCTAssertEqual(fs.ranges[1].settings["top_solid_layers"], "3")
+        XCTAssertEqual(fs.ranges[0].settings["bottom_shell_layers"], "4")
+        XCTAssertEqual(fs.ranges[1].settings["top_shell_layers"], "3")
         XCTAssertEqual(aileron.projectSettings?["slicing_mode"], "even_odd")
         XCTAssertEqual(aileron.projectSettings?["print_settings_id"], "0.3 mm 3DLabPrint")
 
@@ -35,8 +36,8 @@ final class FileSettingsTests: XCTestCase {
         XCTAssertEqual(heights.lowerBound, 0.07, accuracy: 0.001)
 
         let mount = try convert(try cubFile("accessories/CUB motor mount 16x19.3mf"))
-        XCTAssertEqual(mount.fileSettings?.objectSettings["fill_density"], "100%")
-        XCTAssertEqual(mount.fileSettings?.objectSettings["perimeters"], "5")
+        XCTAssertEqual(mount.fileSettings?.objectSettings["sparse_infill_density"], "100%")
+        XCTAssertEqual(mount.fileSettings?.objectSettings["wall_loops"], "5")
     }
 
     // Height ranges add the aileron's solid end caps; without them it's an
@@ -89,8 +90,9 @@ final class FileSettingsTests: XCTestCase {
     }
 }
 
-/// End to end: a Cub part imported the PalmSlice way (mesh + profiles created
-/// from the file + per-part file settings) slices like the 3MF project itself.
+/// End to end: a Cub part imported the PalmSlice way (profiles created from
+/// the file + per-part file settings) slices like the 3MF project itself
+/// read by OrcaSlicer.
 final class ProjectParityTests: XCTestCase {
     func testCubPartsMatchPrusaSlicerProject() throws {
         let root = URL(fileURLWithPath: "/Users/adickin/ios-sources/test-data/PS_3MF")
@@ -110,12 +112,18 @@ final class ProjectParityTests: XCTestCase {
             // PalmSlice: import, profiles from the file, part settings.
             let object = try XCTUnwrap(try convertModelFile(at: file, outputDir: tmp).first)
             let project = try XCTUnwrap(object.projectSettings)
-            var printer = PrinterProfile(); printer.importPrusaSettings(project)
-            var material = MaterialProfile(); material.importPrusaSettings(project)
-            var slice = SliceProfile(); slice.importPrusaSettings(project)
+            var printer = PrinterProfile(); printer.importSlicerSettings(project)
+            var material = MaterialProfile(); material.importSlicerSettings(project)
+            var slice = SliceProfile(); slice.importSlicerSettings(project)
             guard let h = slicer_create() else { return XCTFail("slicer_create") }
             defer { slicer_destroy(h) }
-            try SliceSetup.configure(h, printer: printer, material: material, slice: slice)
+            // Without an OrcaSlicer vendor preset underneath: settings a
+            // PrusaSlicer project can't hold (OrcaSlicer-only ones) would
+            // otherwise take the preset's values instead of the defaults the
+            // reference uses.
+            try SliceSetup.apply(printer, label: "printer", to: h)
+            try SliceSetup.apply(material, label: "material", to: h)
+            try SliceSetup.apply(slice, label: "slice", to: h)
             // The app's path: the native object, then its file settings.
             let idx = slicer_add_model_object(h, try XCTUnwrap(object.nativeURL).path, 1)
             XCTAssertGreaterThanOrEqual(idx, 0, String(cString: slicer_last_error(h)))
@@ -146,7 +154,7 @@ final class ProjectParityTests: XCTestCase {
 final class FileProfilesTests: XCTestCase {
     private let project = [
         "print_settings_id": "0.3 mm 3DLabPrint", "filament_settings_id": "\"PolyLight LW-PLA\"",
-        "layer_height": "0.3", "perimeters": "1", "temperature": "245", "skirts": "1", "brim_width": "0",
+        "layer_height": "0.3", "wall_loops": "1", "nozzle_temperature": "245", "skirt_loops": "1", "brim_width": "0",
     ]
 
     func testCandidatesSplitPrintAndFilament() {

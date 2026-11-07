@@ -63,12 +63,12 @@ struct ModelFileSettings: Equatable {
         var out = SettingsText.serialize(objectSettings)
         guard includeHeights else { return out }
         for r in ranges {
-            out += "[range \(PrusaValue.float(r.minZ * heightScale)) \(PrusaValue.float(r.maxZ * heightScale))]\n"
+            out += "[range \(SlicerValue.float(r.minZ * heightScale)) \(SlicerValue.float(r.maxZ * heightScale))]\n"
             out += SettingsText.serialize(r.settings)
         }
         if !layerHeights.isEmpty {
             out += "[layer_heights]\n"
-            out += layerHeights.flatMap { [PrusaValue.float($0.z * heightScale), PrusaValue.float($0.height)] }
+            out += layerHeights.flatMap { [SlicerValue.float($0.z * heightScale), SlicerValue.float($0.height)] }
                 .joined(separator: ";") + "\n"
         }
         return out

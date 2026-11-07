@@ -6,6 +6,10 @@ import XCTest
 /// "blend" is assigned virtual tool 6 (T1:T2 1:1); "gradient" is painted with
 /// virtual tool 7 (T3 → T4 over the painted height).
 final class ColorMixTests: XCTestCase {
+    override func setUpWithError() throws {
+        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
+    }
+
     private let fixtures = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().appendingPathComponent("Fixtures")
 

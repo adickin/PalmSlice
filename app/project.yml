@@ -5,7 +5,8 @@
 # Prerequisites:
 #   • Run build.sh (or at least up through 11_xcframework.sh) so that
 #     libslic3r.xcframework exists at app/libslic3r.xcframework
-#   • All deps installed in ~/ios-sysroot-sim
+#   • All deps installed in ~/ios-sysroot-sim (OrcaSlicer's under ~/ios-sysroot-sim/orca)
+#   • OrcaSlicer profiles copied to PalmSlice/OrcaResources (scripts/15_orca_profiles.sh)
 #   • Copy app/project.local.yml.example to app/project.local.yml and fill in your team ID
 
 include:
@@ -36,11 +37,11 @@ targets:
       - path: PalmSlice
         excludes:
           - "**/.DS_Store"
-          - "PrusaSlicerProfiles"
-          - "PrusaSlicerProfiles/**"
-      # PrusaSlicer vendor profile bundles (scripts/12_vendor_profiles.sh).
-      # A folder reference keeps the vendor/ layout PresetBundle expects.
-      - path: PalmSlice/PrusaSlicerProfiles
+          - "OrcaResources"
+          - "OrcaResources/**"
+      # OrcaSlicer vendor profiles + slicing data (scripts/15_orca_profiles.sh).
+      # A folder reference keeps the profiles/<vendor> layout PresetBundle expects.
+      - path: PalmSlice/OrcaResources
         type: folder
         buildPhase: resources
 
@@ -51,7 +52,9 @@ targets:
       - framework: libslic3r.xcframework
         embed: false    # static lib inside XCF — no embed needed
       - sdk: libc++.tbd
+      - sdk: libiconv.tbd
       - sdk: SceneKit.framework
+      - sdk: ModelIO.framework   # libslic3r imports PLY / USD through ModelIO
 
     # ── Build settings ──────────────────────────────────────────
     settings:
@@ -68,42 +71,64 @@ targets:
         "IOS_SYSROOT[sdk=iphonesimulator*]": "$(HOME)/ios-sysroot-sim"
         "IOS_SYSROOT[sdk=iphoneos*]": "$(HOME)/ios-sysroot-dev"
 
-        # Search paths — use $(IOS_SYSROOT) so they resolve per SDK
+        # libslic3r's public defines (they change struct layouts, so they must
+        # match scripts/14_orca_libslic3r.sh). BOOST_*_USE_PTHREADS match how
+        # scripts/07_boost.sh built Boost; without them Boost.Log / Filesystem
+        # objects are laid out differently from the prebuilt libraries.
+        GCC_PREPROCESSOR_DEFINITIONS: >-
+          $(inherited)
+          SLIC3R_IOS
+          BOOST_AC_USE_PTHREADS
+          BOOST_SP_USE_PTHREADS
+          USE_TBB
+          TBB_USE_CAPTURED_EXCEPTION=0
+          LIBNEST2D_GEOMETRIES_libslic3r
+          LIBNEST2D_OPTIMIZER_nlopt
+          LIBNEST2D_STATIC
+          LIBNEST2D_THREADING_tbb
+
+        # Search paths — use $(IOS_SYSROOT) so they resolve per SDK. OrcaSlicer's
+        # headers come first: $(IOS_SYSROOT)/include may still hold an old
+        # PrusaSlicer libslic3r/ that would otherwise shadow them.
+        ORCA_PREFIX: "$(IOS_SYSROOT)/orca"
         HEADER_SEARCH_PATHS: >-
           $(inherited)
+          $(ORCA_PREFIX)/include
+          $(ORCA_PREFIX)/include/libslic3r
+          $(ORCA_PREFIX)/include/orca_deps
+          $(ORCA_PREFIX)/include/orca_deps/admesh
+          $(ORCA_PREFIX)/include/orca_deps/clipper
+          $(ORCA_PREFIX)/include/orca_deps/clipper2/Clipper2Lib/include
+          $(ORCA_PREFIX)/include/orca_deps/glu-libtess/include
+          $(ORCA_PREFIX)/include/orca_deps/libigl
+          $(ORCA_PREFIX)/include/orca_deps/libnest2d/include
+          $(ORCA_PREFIX)/include/orca_deps/miniz
+          $(ORCA_PREFIX)/include/orca_deps/semver
+          $(ORCA_PREFIX)/include/eigen3
           $(IOS_SYSROOT)/include
-          $(IOS_SYSROOT)/include/eigen3
-          $(IOS_SYSROOT)/include/LibBGCode
-          $(HOME)/ios-sources/PrusaSlicer/src
-          $(HOME)/ios-sources/PrusaSlicer/src/libslic3r
-          $(HOME)/ios-sources/PrusaSlicer/bundled_deps
 
         LIBRARY_SEARCH_PATHS: >-
           $(inherited)
+          $(ORCA_PREFIX)/lib
           $(IOS_SYSROOT)/lib
 
-        # Link all static deps explicitly via $(IOS_SYSROOT).
+        # Link all static deps explicitly. OrcaSlicer's bundled deps (clipper,
+        # admesh, ...) come from $(ORCA_PREFIX), never $(IOS_SYSROOT)/lib.
         OTHER_LDFLAGS: >-
           $(inherited)
-          $(IOS_SYSROOT)/lib/libslic3r_cgal.a
-          $(IOS_SYSROOT)/lib/libslic3r-arrange.a
-          $(IOS_SYSROOT)/lib/libslic3r-arrange-wrapper.a
-          $(IOS_SYSROOT)/lib/libadmesh.a
-          $(IOS_SYSROOT)/lib/liblocalesutils.a
-          $(IOS_SYSROOT)/lib/libminiz_static.a
-          $(IOS_SYSROOT)/lib/libqoi.a
-          $(IOS_SYSROOT)/lib/libglu-libtess.a
-          $(IOS_SYSROOT)/lib/libsemver.a
-          $(IOS_SYSROOT)/lib/libclipper.a
-          $(IOS_SYSROOT)/lib/libprusa_fdm_mixer.a
-          $(IOS_SYSROOT)/lib/libsla_time_estimate.a
-          $(IOS_SYSROOT)/lib/libClipper2.a
-          $(IOS_SYSROOT)/lib/libClipper2Z.a
-          $(IOS_SYSROOT)/lib/libbgcode_core.a
-          $(IOS_SYSROOT)/lib/libbgcode_binarize.a
-          $(IOS_SYSROOT)/lib/libbgcode_convert.a
-          $(IOS_SYSROOT)/lib/libheatshrink.a
-          $(IOS_SYSROOT)/lib/libheatshrink_dynalloc.a
+          $(ORCA_PREFIX)/lib/libslic3r_cgal.a
+          $(ORCA_PREFIX)/lib/libadmesh.a
+          $(ORCA_PREFIX)/lib/libclipper.a
+          $(ORCA_PREFIX)/lib/libClipper2.a
+          $(ORCA_PREFIX)/lib/libglu-libtess.a
+          $(ORCA_PREFIX)/lib/libmcut.a
+          $(ORCA_PREFIX)/lib/libminiz_static.a
+          $(ORCA_PREFIX)/lib/libqoi.a
+          $(ORCA_PREFIX)/lib/libsemver.a
+          $(ORCA_PREFIX)/lib/libnlopt.a
+          $(ORCA_PREFIX)/lib/libdraco.a
+          $(ORCA_PREFIX)/lib/libjpeg.a
+          $(ORCA_PREFIX)/lib/liblibnoise_static.a
           $(IOS_SYSROOT)/lib/libqhullstatic_r.a
           $(IOS_SYSROOT)/lib/libqhullcpp.a
           $(IOS_SYSROOT)/lib/libmpfr.a
@@ -121,7 +146,6 @@ targets:
           $(IOS_SYSROOT)/lib/libboost_regex.a
           $(IOS_SYSROOT)/lib/libboost_system.a
           $(IOS_SYSROOT)/lib/libboost_thread.a
-          $(IOS_SYSROOT)/lib/libboost_locale.a
           $(IOS_SYSROOT)/lib/libtbb.a
           $(IOS_SYSROOT)/lib/libtbbmalloc.a
           $(IOS_SYSROOT)/lib/libexpat.a
@@ -163,7 +187,7 @@ targets:
       properties:
         CFBundleDisplayName: PalmSlice
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "4"
+        CFBundleVersion: "5"
         # Long slices keep running in the background (SliceActivity, iOS 26+).
         BGTaskSchedulerPermittedIdentifiers:
           - com.adickin.PalmSlice.slice.*

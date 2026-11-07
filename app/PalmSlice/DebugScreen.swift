@@ -4,7 +4,8 @@ import SwiftUI
 /// Screens the DEBUG-only PALMSLICE_DEBUG_SCREEN launch variable can open,
 /// so the simulator can be scripted to screenshot them.
 enum DebugScreen: String, Identifiable {
-    case sliceEditor, sliceAllSettings, materialEditor, printerEditor, printerLibrary, printPresets
+    case sliceEditor, sliceAllSettings, materialEditor, printerEditor, printerLibrary, printPresets,
+         qualityPicker, materialPicker
 
     var id: String { rawValue }
 
@@ -32,6 +33,10 @@ private struct DebugScreenHost: View {
                                             material: nil, slice: slice)?.print ?? "") ?? [:])
             }
             .onAppear { slice = sliceProfileStore.selectedProfile ?? SliceProfile() }
+        case .qualityPicker:
+            SliceProfilePickerView()
+        case .materialPicker:
+            MaterialProfilePickerView()
         case .materialEditor:
             MaterialProfileEditorView(mode: .edit, profile: materialProfileStore.selectedProfile ?? MaterialProfile())
         case .printerEditor:

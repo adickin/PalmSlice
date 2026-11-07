@@ -96,7 +96,7 @@ struct PlacedModel: Identifiable {
         let bands = toolBands.sorted { $0.fromZ < $1.fromZ }
         return bands.enumerated().map { i, band in
             let top = i + 1 < bands.count ? bands[i + 1].fromZ : 100_000
-            return "\(PrusaValue.float(band.fromZ)) \(PrusaValue.float(top)) \(band.tool)\n"
+            return "\(SlicerValue.float(band.fromZ)) \(SlicerValue.float(top)) \(band.tool)\n"
         }.joined()
     }
 

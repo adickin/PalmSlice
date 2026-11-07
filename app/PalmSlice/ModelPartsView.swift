@@ -86,7 +86,7 @@ struct ModelPartsView: View {
                 } header: {
                     Text("Colour by Height")
                 } footer: {
-                    Text("From each height up, the model prints with that tool or mix. You can also add one at the current layer in the sliced preview.")
+                    Text("From each height up, the model prints with that tool. You can also add one at the current layer in the sliced preview.")
                 }
                 if !model.parts.isEmpty {
                     Section {

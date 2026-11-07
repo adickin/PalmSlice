@@ -442,11 +442,19 @@ int slicer_preset_is_compatible(int type, const char* name, const char* printer_
 // Returns 0 on success, negative if the preset is unknown.
 int slicer_apply_preset(SlicerHandle handle, int type, const char* name);
 
-// Apply settings given as PrusaSlicer .ini text ("key = value" lines; blank
+// Apply settings given as .ini text ("key = value" lines; blank
 // lines and lines starting with '#' or ';' are ignored). Every line is
 // validated by libslic3r; on any bad key or value nothing is applied and the
-// error names the offending line. Returns 0 on success, negative on error.
+// error names the offending line. PrusaSlicer keys are accepted and renamed
+// to OrcaSlicer's (see slicer_normalize_settings). Returns 0 on success,
+// negative on error.
 int slicer_apply_settings(SlicerHandle handle, const char* ini_text);
+
+// .ini text with PrusaSlicer settings renamed to OrcaSlicer's (values
+// converted where the two differ) and settings neither knows dropped; OrcaSlicer
+// settings pass through unchanged. One "key = value" line per setting, sorted.
+// Unparseable values are dropped too. Valid until the next call on this thread.
+const char* slicer_normalize_settings(const char* ini_text);
 
 // Per-tool filament settings. Sets element `tool - 1` (tool is 1-based,
 // physical) of each per-extruder setting in the .ini text, or in a filament
@@ -457,24 +465,24 @@ int slicer_apply_settings(SlicerHandle handle, const char* ini_text);
 int slicer_apply_tool_settings(SlicerHandle handle, int tool, const char* ini_text);
 int slicer_apply_tool_preset(SlicerHandle handle, int tool, const char* name);
 
-// Current value of a setting in the context, serialized as PrusaSlicer writes
+// Current value of a setting in the context, serialized as OrcaSlicer writes
 // it; NULL if the key is unknown. Valid until the next call on this thread.
 const char* slicer_get_setting(SlicerHandle handle, const char* key);
 
-// Describes a PrusaSlicer setting for display, as "field = value" lines
+// Describes an OrcaSlicer setting for display, as "field = value" lines
 // (values C-escaped like .ini values):
 //   kind       float | int | percent | float_or_percent | bool | enum |
 //              string | point | points
 //   vector     1 if per-extruder (value is a comma-separated list)
 //   nullable   1 if "nil" (= inherit) is allowed
 //   multiline  1 for G-code and other multi-line text
-//   mode       0 simple, 1 advanced, 2 expert (PrusaSlicer's UI levels)
+//   mode       0 simple, 1 advanced, 2 develop (OrcaSlicer's UI levels)
 //   label, full_label, category, sidetext (units), tooltip
 //   enum_values, enum_labels   ";"-joined, for enums
 // NULL for an unknown key. Valid until the next call on this thread.
 const char* slicer_setting_info(const char* key);
 
-// Tests only: slices a PrusaSlicer 3MF project the way PrusaSlicer's command
+// Tests only: slices a 3MF project the way OrcaSlicer's command
 // line would (model + every setting stored in the file), as a reference for
 // PalmSlice's own import path. Returns 0 on success; on error writes a message
 // into `error`.

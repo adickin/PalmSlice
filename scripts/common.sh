@@ -10,12 +10,12 @@ export PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export IOS_SOURCES="$HOME/ios-sources"           # cloned repos live here
 export IOS_SYSROOT=""   # set below based on PLATFORM
 export IOS_TOOLCHAIN="$HOME/ios-toolchain/ios.toolchain.cmake"
-export PRUSA_SRC="$IOS_SOURCES/PrusaSlicer"
-# Pinned upstream versions. When bumping PRUSA_TAG, also set LIBBGCODE_COMMIT to
-# the commit in PrusaSlicer's deps/+LibBGCode/LibBGCode.cmake for that tag, and
-# re-check patches/prusaslicer_ios.patch (see BUILDING.md "Updating PrusaSlicer").
-export PRUSA_TAG="version_2.9.6"
-export LIBBGCODE_COMMIT="6f4ad7ce6b0e638b760199d6611039a610a5a479"
+# OrcaSlicer's libslic3r and the deps only it needs install under $ORCA_PREFIX
+# (set below, per platform); the shared deps (Boost, TBB, CGAL, GMP, ...) in
+# $IOS_SYSROOT. When bumping ORCA_TAG, re-check patches/orcaslicer_ios.patch
+# (see BUILDING.md "Updating OrcaSlicer").
+export ORCA_SRC="$IOS_SOURCES/OrcaSlicer"
+export ORCA_TAG="v2.4.2"
 
 # ── Build config ─────────────────────────────────────────────────────────────
 # PLATFORM can be overridden by the caller:
@@ -37,6 +37,7 @@ else
     export IOS_TARGET_TRIPLE="arm64-apple-ios${DEPLOYMENT_TARGET}-simulator"
     export BUILD_SUFFIX="ios-sim"
 fi
+export ORCA_PREFIX="$IOS_SYSROOT/orca"
 
 export CMAKE_COMMON=(
   -G Ninja

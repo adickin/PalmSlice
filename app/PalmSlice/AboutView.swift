@@ -8,7 +8,7 @@ private struct ThirdPartyLicense: Identifiable {
 
 // Kept in sync with LICENSE.md's "Third-Party Licenses" table.
 private let thirdPartyLicenses: [ThirdPartyLicense] = [
-    .init(name: "PrusaSlicer / libslic3r", license: "AGPL-3.0"),
+    .init(name: "OrcaSlicer / libslic3r & profiles", license: "AGPL-3.0"),
     .init(name: "Boost",                   license: "Boost Software License 1.0"),
     .init(name: "oneTBB",                  license: "Apache-2.0"),
     .init(name: "CGAL",                    license: "GPL-3.0 / LGPL-3.0"),
@@ -18,8 +18,11 @@ private let thirdPartyLicenses: [ThirdPartyLicense] = [
     .init(name: "Clipper2",                license: "Boost Software License 1.0"),
     .init(name: "cereal",                  license: "BSD-3-Clause"),
     .init(name: "Qhull",                   license: "Qhull license (permissive)"),
-    .init(name: "LibBGCode",               license: "AGPL-3.0"),
-    .init(name: "heatshrink",              license: "ISC"),
+    .init(name: "MCUT",                    license: "GPL-3.0"),
+    .init(name: "libigl",                  license: "MPL-2.0"),
+    .init(name: "libnoise",                license: "LGPL-2.1"),
+    .init(name: "Draco",                   license: "Apache-2.0"),
+    .init(name: "libjpeg-turbo",           license: "IJG / BSD-3-Clause / zlib"),
     .init(name: "nlohmann/json",           license: "MIT"),
     .init(name: "NanoSVG",                 license: "zlib"),
     .init(name: "NLopt",                   license: "LGPL-2.1+"),
@@ -56,7 +59,7 @@ struct AboutView: View {
                 }
 
                 Section("Source & License") {
-                    Text("PalmSlice embeds libslic3r (the PrusaSlicer slicing engine) and is distributed, as a derivative work, under the GNU Affero General Public License v3.0. The complete source code is publicly available.")
+                    Text("PalmSlice embeds libslic3r (the OrcaSlicer slicing engine, derived from BambuStudio and PrusaSlicer) and OrcaSlicer's printer profiles, and is distributed, as a derivative work, under the GNU Affero General Public License v3.0. The complete source code is publicly available.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Link(destination: URL(string: "https://github.com/adickin/PalmSlice")!) {

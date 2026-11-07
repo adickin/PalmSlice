@@ -4,7 +4,7 @@ Guidelines and context for AI-assisted development on this project.
 
 ## Project Summary
 
-iOS on-device 3D printing slicer. Embeds libslic3r (PrusaSlicer's C++ core) as a static library, wrapped by a thin C bridge, consumed by a SwiftUI app. No cloud, no network, all slicing runs on-device.
+iOS on-device 3D printing slicer. Embeds libslic3r (OrcaSlicer's C++ core) as a static library, wrapped by a thin C bridge, consumed by a SwiftUI app. No cloud, no network, all slicing runs on-device.
 
 This project is entirely AI-written. See README.md for the app overview, BUILDING.md for build instructions, PROGRESS.md for feature status, and CHANGELOG.md for change history.
 
@@ -13,7 +13,8 @@ This project is entirely AI-written. See README.md for the app overview, BUILDIN
 | Path | Purpose |
 |------|---------|
 | `~/ios-sysroot-sim/` | All cross-compiled deps (static `.a` + headers) |
-| `~/ios-sources/PrusaSlicer/` | Full PrusaSlicer tree — libslic3r lives at `src/libslic3r/` |
+| `~/ios-sysroot-sim/orca/` | OrcaSlicer's libslic3r + the deps only it needs (`ORCA_PREFIX`) |
+| `~/ios-sources/OrcaSlicer/` | Full OrcaSlicer tree (patched by `patches/orcaslicer_ios.patch`) — libslic3r lives at `src/libslic3r/` |
 | `scripts/common.sh` | Shared env vars — read this before touching any build script |
 | `app/project.yml` | xcodegen spec — source of truth for Xcode build settings |
 | `BUILDING.md` | Full build steps, prerequisites, and Xcode setup |
@@ -22,7 +23,7 @@ This project is entirely AI-written. See README.md for the app overview, BUILDIN
 ## Build System
 
 - Steps are numbered scripts in `scripts/`. Each is idempotent via a sentinel file (typically a `.a` in `~/ios-sysroot-sim/lib/`).
-- To force a rebuild of a step, delete its sentinel and re-run. E.g.: `rm ~/ios-sysroot-sim/lib/libslic3r.a && bash scripts/10_libslic3r.sh`
+- To force a rebuild of a step, delete its sentinel and re-run. E.g.: `rm ~/ios-sysroot-sim/orca/lib/libslic3r.a && bash scripts/14_orca_libslic3r.sh`
 - After any change to `app/project.yml` run `xcodegen` from the `app/` directory before building in Xcode.
 - After any change to libslic3r or its deps, re-run `scripts/11_xcframework.sh` to update the XCFramework headers.
 - Primary target: **SIMULATORARM64** (iPhone Simulator on Apple Silicon), via `build.sh`. Device build (`PLATFORM=OS64`) also works, via `build_device.sh` → `~/ios-sysroot-dev`.
@@ -48,8 +49,9 @@ When adding new slicing features (supports, brim, printer profiles, etc.), add p
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | `cmake_minimum_required < 3.5` error | CMake 4.x broke older projects | Add `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` to the cmake invocation |
-| CGAL version mismatch | PrusaSlicer uses CGAL 5.6.2 API; CGAL 6.x changed `property_map()` | Use the CGAL 5.6.2 headers from `~/ios-sources/cgal-5.6.2-src/`, not homebrew |
+| CGAL version mismatch | libslic3r uses the CGAL 5.6 API; CGAL 6.x changed `property_map()` | Use the CGAL 5.6.2 headers from `~/ios-sources/cgal-5.6.2-src/`, not homebrew |
 | Undefined symbol at link | A new dep was added to libslic3r but not to `OTHER_LDFLAGS` | Add the `.a` path to `app/project.yml` and run `xcodegen` |
+| Crash in Boost.Log / Filesystem | Built without `-DBOOST_AC_USE_PTHREADS -DBOOST_SP_USE_PTHREADS` (Boost's ABI) | Use the same defines as `07_boost.sh` |
 
 ## Coding Conventions
 

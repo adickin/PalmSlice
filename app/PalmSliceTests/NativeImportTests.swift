@@ -107,6 +107,7 @@ final class NativeImportTests: XCTestCase {
     }
 
     func testColorMixFileUsesPalmSliceToolNumbers() throws {
+        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let file = try importFixture("colormix.3mf")
         XCTAssertEqual(file.mixes.map(\.id), [101, 102])
         XCTAssertEqual(file.mixes.map(\.kind), [.blend, .gradient])
@@ -120,6 +121,7 @@ final class NativeImportTests: XCTestCase {
     }
 
     func testReimportReusesIdenticalMixes() throws {
+        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let first = try importFixture("colormix.3mf")
         let second = try importFixture("colormix.3mf", mixes: first.mixes)
         XCTAssertEqual(second.mixes, first.mixes)
@@ -127,6 +129,7 @@ final class NativeImportTests: XCTestCase {
     }
 
     func testConflictingMixGetsTheNextNumber() throws {
+        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let other = ToolMix(id: 101, components: [.init(tool: 4, amount: 0.5), .init(tool: 5, amount: 0.5)])
         let file = try importFixture("colormix.3mf", mixes: [other])
         XCTAssertEqual(file.mixes.map(\.id), [101, 102, 103])
@@ -136,6 +139,7 @@ final class NativeImportTests: XCTestCase {
     // MARK: Slicing
 
     func testNativeSliceMatchesReferenceSlice() throws {
+        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let reference = toolsByLayer(try referenceSlice("colormix.3mf"))
         let ours = toolsByLayer(try slice(try importFixture("colormix.3mf")))
         XCTAssertEqual(ours["blend"], reference["blend"])
@@ -145,6 +149,7 @@ final class NativeImportTests: XCTestCase {
 
     // Mixes renumbered on import (paint and object tool) still slice the same.
     func testRenumberedMixesSliceTheSame() throws {
+        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let reference = toolsByLayer(try referenceSlice("colormix.3mf"))
         let other = ToolMix(id: 101, components: [.init(tool: 4, amount: 0.5), .init(tool: 5, amount: 0.5)])
         let ours = toolsByLayer(try slice(try importFixture("colormix.3mf", mixes: [other])))
@@ -195,18 +200,15 @@ final class NativeImportTests: XCTestCase {
         XCTAssertEqual(Set(tools.suffix(49)), [1])
     }
 
-    // The plate exported as a PrusaSlicer project slices the same in PrusaSlicer's
-    // own path: mixes, painting and tool assignments survive the round trip.
+    // The plate exported as an OrcaSlicer project slices the same in OrcaSlicer's
+    // own path: parts, modifiers and tool assignments survive the round trip.
     func testProjectExportRoundTrips() throws {
-        let other = ToolMix(id: 101, components: [.init(tool: 4, amount: 0.5), .init(tool: 5, amount: 0.5)])
-        var file = try importFixture("colormix.3mf", mixes: [other])   // renumbered mixes
-        file.mixes.removeAll { $0.id == 101 }                            // and an unused one dropped
+        let file = try importFixture("parts.3mf")
         let project = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).3mf")
         defer { try? FileManager.default.removeItem(at: project) }
         let ours = toolsByLayer(try slice(file, projectTo: project))
         let desktop = toolsByLayer(try referenceSlice(at: project))
-        XCTAssertEqual(desktop["blend"], ours["blend"])
-        XCTAssertEqual(desktop["gradient"], ours["gradient"])
-        XCTAssertEqual(ours["blend"]?.count, 50)
+        XCTAssertEqual(desktop["assembly"], ours["assembly"])
+        XCTAssertEqual(Set(ours["assembly"] ?? []), [0, 1, 2])   // the stripe modifier's T2 at the bottom
     }
 }

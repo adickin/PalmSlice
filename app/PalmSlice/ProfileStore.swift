@@ -36,7 +36,7 @@ final class ProfileStore: ObservableObject {
            !decoded.isEmpty {
             profiles = decoded
         } else {
-            // Built-ins are generated from PrusaSlicer presets; if those failed
+            // Built-ins are generated from OrcaSlicer presets; if those failed
             // to load, don't save an empty list — retry on the next launch.
             profiles = BuiltInProfiles.all
             if !profiles.isEmpty {
@@ -48,7 +48,31 @@ final class ProfileStore: ObservableObject {
         let added = mergeInMissingBuiltIns()
         let migrated = retireCustomEnder3S1()
         let linked = linkSystemPresets()
-        if (added || migrated || linked) && !profiles.isEmpty {
+        let orca = OrcaMigration.once("printer") {
+            for i in profiles.indices {
+                profiles[i].extraSettings = OrcaMigration.normalize(profiles[i].extraSettings)
+                if let key = profiles[i].builtInKey, let name = BuiltInProfiles.systemPresetNames[key] {
+                    profiles[i].systemPreset = name
+                } else {
+                    profiles[i].systemPreset = OrcaMigration.preset(.printer, profiles[i].systemPreset)
+                }
+            }
+        }
+        // Built-in printers copied before the move kept PrusaSlicer's preset
+        // values (start G-code, limits…); take OrcaSlicer's, keeping the name,
+        // identity and verified state.
+        let refreshed = OrcaMigration.once("printerDefaults") {
+            for i in profiles.indices {
+                guard let key = profiles[i].builtInKey,
+                      let entry = BuiltInProfiles.entries.first(where: { $0.key == key }),
+                      var fresh = BuiltInProfiles.profile(for: entry) else { continue }
+                fresh.id = profiles[i].id
+                fresh.name = profiles[i].name
+                fresh.verified = profiles[i].verified
+                profiles[i] = fresh
+            }
+        }
+        if (added || migrated || linked || orca || refreshed) && !profiles.isEmpty {
             save()
         }
 

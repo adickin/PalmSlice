@@ -181,6 +181,11 @@ struct ContentView: View {
             slicedTowerDepth = nil
         }
         .onChange(of: plateTools) { _ in slicedTowerDepth = nil }
+        // Qualities and filaments follow the printer (OrcaSlicer's per-printer lists).
+        .onChange(of: profileStore.selectedProfile?.systemPreset) { preset in
+            sliceProfileStore.setPrinter(preset)
+            materialProfileStore.setPrinter(preset)
+        }
         .onChange(of: viewerColorMode) { _ in
             let mode = viewerColorMode
             for model in models {
@@ -203,7 +208,7 @@ struct ContentView: View {
         #if DEBUG
         // Simulator scripting: `SIMCTL_CHILD_PALMSLICE_DEBUG_STL=/path/a.stl xcrun simctl launch …`
         .task {
-            // `PALMSLICE_DEBUG_PRINTER=<PrusaSlicer printer preset>` selects (adding if
+            // `PALMSLICE_DEBUG_PRINTER=<OrcaSlicer printer preset>` selects (adding if
             // needed) a printer from the vendor presets, e.g. a multi-tool one.
             if let preset = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_PRINTER"] {
                 if let existing = profileStore.profiles.first(where: { $0.systemPreset == preset }) {
@@ -237,7 +242,8 @@ struct ContentView: View {
             }
             // `PALMSLICE_DEBUG_SLICE=1` slices once the models have loaded.
             if ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_SLICE"] == "1" {
-                while models.isEmpty || models.contains(where: { $0.geometry == nil }) {
+                while models.isEmpty || models.contains(where: { $0.geometry == nil })
+                        || profileStore.selectedProfile == nil {
                     try? await Task.sleep(for: .milliseconds(200))
                 }
                 triggerSlice()
@@ -250,8 +256,8 @@ struct ContentView: View {
                 startPainting()
             } else if screen == "partSettings" {
                 partSettingsModelID = models.first?.id
-                models.indices.first.map { models[$0].partSettings.objectSettings = ["perimeters": "4"] }
-                models.indices.first.map { models[$0].partSettings.ranges = [.init(minZ: 0, maxZ: 5, settings: ["fill_density": "100%"])] }
+                models.indices.first.map { models[$0].partSettings.objectSettings = ["wall_loops": "4"] }
+                models.indices.first.map { models[$0].partSettings.ranges = [.init(minZ: 0, maxZ: 5, settings: ["sparse_infill_density": "100%"])] }
             } else if screen == "parts" {
                 partsModelID = models.first?.id
                 shownPart = models.first.flatMap { m in
@@ -297,7 +303,7 @@ struct ContentView: View {
             if let id = partSettingsModelID, let binding = modelBinding(id: id) {
                 PartSettingsView(model: binding,
                                  baseSettings: basePrintSettings.merging(
-                                    sliceProfileStore.selectedProfile?.prusaSettings() ?? [:]) { _, own in own })
+                                    sliceProfileStore.selectedProfile?.slicerSettings() ?? [:]) { _, own in own })
             }
         }
         .sheet(isPresented: Binding(get: { partsModelID != nil },
@@ -1634,16 +1640,18 @@ struct ContentView: View {
             }
             .disabled(isBusy)
         }
-        Button { showMixes = true } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "circle.lefthalf.filled").frame(width: 28)
-                Text(mixes.isEmpty ? "Mixes" : "Mixes (\(mixes.count))").font(.subheadline)
-                ForEach(mixes.prefix(5)) { MixSwatch(mix: $0, palette: toolPalette).scaleEffect(0.6).frame(width: 18, height: 18) }
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+        if ToolMix.isSupported {
+            Button { showMixes = true } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "circle.lefthalf.filled").frame(width: 28)
+                    Text(mixes.isEmpty ? "Mixes" : "Mixes (\(mixes.count))").font(.subheadline)
+                    ForEach(mixes.prefix(5)) { MixSwatch(mix: $0, palette: toolPalette).scaleEffect(0.6).frame(width: 18, height: 18) }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                }
             }
+            .disabled(isBusy)
         }
-        .disabled(isBusy)
         if let hint = mixLayerHint {
             Label(hint, systemImage: "info.circle").font(.caption).foregroundStyle(.orange)
         }
@@ -1678,7 +1686,7 @@ struct ContentView: View {
     private var wipeTower: WipeTowerFootprint? {
         let height = models.compactMap { m in m.meshInfo.map { Double($0.sizeMMZ * m.transform.scale.z) } }.max() ?? 0
         return WipeTowerFootprint.make(
-            settings: sliceProfileStore.selectedProfile?.prusaSettings() ?? [:], base: basePrintSettings,
+            settings: sliceProfileStore.selectedProfile?.slicerSettings() ?? [:], base: basePrintSettings,
             toolCount: toolCount, toolsUsed: toolPalette.physicalTools(plateTools).count,
             modelHeight: height, slicedDepth: slicedTowerDepth, position: wipeTowerXY)
     }
@@ -2207,9 +2215,9 @@ struct ContentView: View {
                 sliceCfg.bottom_layers = configCheck.suggested_bottom_layers
                 do {
                     try SliceSetup.applySettings([
-                        "perimeters": String(configCheck.suggested_wall_count),
-                        "top_solid_layers": String(configCheck.suggested_top_layers),
-                        "bottom_solid_layers": String(configCheck.suggested_bottom_layers),
+                        "wall_loops": String(configCheck.suggested_wall_count),
+                        "top_shell_layers": String(configCheck.suggested_top_layers),
+                        "bottom_shell_layers": String(configCheck.suggested_bottom_layers),
                     ], label: "Adjusted settings", to: handle)
                 } catch {
                     await MainActor.run { state = .failed(message: "\(error)") ; showErrorAlert = true }

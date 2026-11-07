@@ -1,12 +1,12 @@
 import SwiftUI
 
 /// One set of setting overrides, editable in AllSettingsView like a profile.
-struct SettingOverrides: PrusaSettingsConvertible {
+struct SettingOverrides: SlicerSettingsConvertible {
     static var presetType: PresetType { .print }
     static var typedKeys: Set<String> { [] }
     var extraSettings: [String: String]
-    func typedPrusaSettings() -> [String: String] { [:] }
-    mutating func updateTyped(fromPrusa settings: [String: String]) {}
+    func typedSlicerSettings() -> [String: String] { [:] }
+    mutating func updateTyped(from settings: [String: String]) {}
 
     /// Settings a part or a height range can have (PrusaSlicer's per-object and
     /// per-region settings), less the tool, which Parts & Tools sets.
@@ -77,7 +77,7 @@ struct PartSettingsView: View {
                 } header: {
                     Text("Height Ranges")
                 } footer: {
-                    Text("Settings for part of the height only, in mm above the bed (this part is \(PrusaValue.float(partHeight)) mm tall). They win over the whole-part settings where they overlap.")
+                    Text("Settings for part of the height only, in mm above the bed (this part is \(SlicerValue.float(partHeight)) mm tall). They win over the whole-part settings where they overlap.")
                 }
 
                 if model.fileSettings != nil {

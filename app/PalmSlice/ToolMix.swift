@@ -17,6 +17,11 @@ struct ToolMix: Identifiable, Equatable {
 
     static let base = Int(SLICER_MIX_BASE)
 
+    /// Mixes need PrusaSlicer's Full Spectrum virtual extruders, which the
+    /// OrcaSlicer backend doesn't have: the bridge ignores them and files'
+    /// mixes import as their object's tool. The UI to create them is hidden.
+    static let isSupported = false
+
     var id: Int
     var kind: Kind = .blend
     var components: [Component]

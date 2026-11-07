@@ -1,75 +1,94 @@
 import Foundation
 
-// PalmSlice profiles ↔ PrusaSlicer settings.
+// PalmSlice profiles ↔ OrcaSlicer settings.
 //
 // A PalmSlice profile is its typed fields (the settings PalmSlice's editors
-// show) plus `extraSettings`: any other PrusaSlicer setting, keyed by
-// PrusaSlicer option name with the value in PrusaSlicer's .ini text format.
-// `prusaSettings()` writes the whole profile as PrusaSlicer settings; the
-// `init(prusaSettings:)` / `update(fromPrusa:)` direction reads them back,
-// putting keys the typed fields don't cover into `extraSettings`. Together they
-// make profile import/export lossless and let any setting be edited.
+// show) plus `extraSettings`: any other OrcaSlicer setting, keyed by
+// OrcaSlicer option name with the value in libslic3r's .ini text format.
+// `slicerSettings()` writes the whole profile as OrcaSlicer settings; the
+// `update(from:)` direction reads them back, putting keys the typed fields
+// don't cover into `extraSettings`. Together they make profile import/export
+// lossless and let any setting be edited.
 //
-// Slicing applies, in order: the PrusaSlicer system presets (PresetLibrary),
-// then each profile's prusaSettings() through slicer_apply_settings, which
+// Slicing applies, in order: the OrcaSlicer system presets (PresetLibrary),
+// then each profile's slicerSettings() through slicer_apply_settings, which
 // validates every key and value with libslic3r.
 
-/// A profile type that converts to and from PrusaSlicer settings.
-protocol PrusaSettingsConvertible {
-    /// Which PrusaSlicer preset collection this profile type corresponds to.
+/// A profile type that converts to and from OrcaSlicer settings.
+protocol SlicerSettingsConvertible {
+    /// Which OrcaSlicer preset collection this profile type corresponds to.
     static var presetType: PresetType { get }
-    /// PrusaSlicer keys the typed fields read and write.
+    /// OrcaSlicer keys the typed fields read and write.
     static var typedKeys: Set<String> { get }
-    /// Settings that aren't typed fields, in PrusaSlicer .ini value format.
+    /// Settings that aren't typed fields, in .ini value format.
     var extraSettings: [String: String] { get set }
-    /// The typed fields as PrusaSlicer settings (not including extraSettings).
-    func typedPrusaSettings() -> [String: String]
-    /// Sets the typed fields from the PrusaSlicer keys present in `settings`
+    /// The typed fields as OrcaSlicer settings (not including extraSettings).
+    func typedSlicerSettings() -> [String: String]
+    /// Sets the typed fields from the OrcaSlicer keys present in `settings`
     /// (absent keys leave the field unchanged).
-    mutating func updateTyped(fromPrusa settings: [String: String])
+    mutating func updateTyped(from settings: [String: String])
 }
 
-extension PrusaSettingsConvertible {
-    /// The complete profile as PrusaSlicer settings. An extra setting with a
+extension SlicerSettingsConvertible {
+    /// The complete profile as OrcaSlicer settings. An extra setting with a
     /// typed key is an imported value the typed field couldn't represent
     /// exactly, so it wins (editing the field clears it).
-    func prusaSettings() -> [String: String] {
-        typedPrusaSettings().merging(extraSettings) { _, extra in extra }
+    func slicerSettings() -> [String: String] {
+        typedSlicerSettings().merging(extraSettings) { _, extra in extra }
     }
 
-    /// Applies PrusaSlicer settings to the profile: keys the typed fields
+    /// Applies OrcaSlicer settings to the profile: keys the typed fields
     /// cover set those fields, every other key of this profile's preset type
     /// goes into extraSettings. Keys belonging to another preset type are
-    /// ignored (a full PrusaSlicer config holds all three types).
-    mutating func update(fromPrusa settings: [String: String], allowedKeys: Set<String>? = nil) {
-        updateTyped(fromPrusa: settings)
+    /// ignored (a full OrcaSlicer config holds all three types).
+    mutating func update(from settings: [String: String], allowedKeys: Set<String>? = nil) {
+        updateTyped(from: settings)
         for (key, value) in settings where !Self.typedKeys.contains(key) {
-            if PrusaKeys.ignored.contains(key) { continue }
+            if SlicerKeys.ignored.contains(key) { continue }
             if let allowed = allowedKeys, !allowed.contains(key) { continue }
             extraSettings[key] = value
         }
     }
 
-    /// Sets one setting by PrusaSlicer key, routing typed keys to their field.
-    mutating func setPrusaSetting(_ key: String, _ value: String) {
+    /// Fills the typed fields (and extraSettings) with `base` and this
+    /// profile's own changes on top, for showing and editing it. A profile
+    /// keeps only its changes (extraSettings) between edits.
+    mutating func resolve(over base: [String: String]) {
+        let own = extraSettings
+        extraSettings = [:]
+        update(from: base.merging(own) { _, mine in mine })
+    }
+
+    /// Keeps only the settings that differ from `base` (compared as libslic3r
+    /// writes them): the profile's changes, which a slice applies over the
+    /// base preset.
+    mutating func keepChanges(from base: [String: String]) {
+        let mine = OrcaMigration.normalize(slicerSettings())
+        let theirs = OrcaMigration.normalize(base)
+        extraSettings = mine.filter { theirs[$0.key] != $0.value && !SlicerKeys.ignored.contains($0.key) }
+    }
+
+    /// Sets one setting by OrcaSlicer key, routing typed keys to their field.
+    mutating func setSlicerSetting(_ key: String, _ value: String) {
         if Self.typedKeys.contains(key) {
-            updateTyped(fromPrusa: [key: value])
+            updateTyped(from: [key: value])
         } else {
             extraSettings[key] = value
         }
     }
 }
 
-enum PrusaKeys {
+enum SlicerKeys {
     /// Preset bookkeeping and per-file identity — never stored in a profile.
     static let ignored: Set<String> = [
         "inherits", "compatible_printers", "compatible_printers_condition",
         "compatible_prints", "compatible_prints_condition", "renamed_from",
         "print_settings_id", "filament_settings_id", "printer_settings_id",
         "physical_printer_settings_id", "printer_technology",
+        "inherits_group", "different_settings_to_system", "print_compatible_printers",
     ]
 
-    /// PrusaSlicer keys belonging to a preset type, taken from any system preset
+    /// OrcaSlicer keys belonging to a preset type, taken from any system preset
     /// of that type (each holds every key of its type). Empty if presets aren't loaded.
     static func keys(for type: PresetType) -> Set<String> {
         cacheLock.lock(); defer { cacheLock.unlock() }
@@ -84,10 +103,10 @@ enum PrusaKeys {
     private static let cacheLock = NSLock()
 }
 
-// MARK: - Value encoding (PrusaSlicer .ini format)
+// MARK: - Value encoding (libslic3r .ini format)
 
-/// Encodes and decodes PrusaSlicer option values as they appear in .ini files.
-enum PrusaValue {
+/// Encodes and decodes libslic3r option values as they appear in .ini files.
+enum SlicerValue {
     static func float(_ v: Double) -> String {
         if v == v.rounded(), abs(v) < 1e15 { return String(Int64(v)) }
         var s = String(format: "%.10g", v)
@@ -201,7 +220,7 @@ enum PrusaValue {
 // MARK: - Enum mappings
 
 extension InfillPattern {
-    var prusaName: String {
+    var slicerName: String {
         switch self {
         case .gyroid: return "gyroid"
         case .grid: return "grid"
@@ -213,28 +232,29 @@ extension InfillPattern {
         case .lightning: return "lightning"
         }
     }
-    init?(prusaName: String) {
-        guard let p = Self.allCases.first(where: { $0.prusaName == prusaName }) else { return nil }
+    init?(slicerName: String) {
+        guard let p = Self.allCases.first(where: { $0.slicerName == slicerName }) else { return nil }
         self = p
     }
 }
 
 extension IroningType {
-    var prusaName: String {
+    /// OrcaSlicer's ironing_type value when ironing is on ("no ironing" = off).
+    var slicerName: String {
         switch bridgeInt {
         case 1: return "topmost"
         case 2: return "solid"
         default: return "top"
         }
     }
-    init?(prusaName: String) {
-        guard let t = Self.allCases.first(where: { $0.prusaName == prusaName }) else { return nil }
+    init?(slicerName: String) {
+        guard let t = Self.allCases.first(where: { $0.slicerName == slicerName }) else { return nil }
         self = t
     }
 }
 
 extension GCodeFlavor {
-    var prusaName: String {
+    var slicerName: String {
         switch self {
         case .marlin: return "marlin"
         case .marlin2: return "marlin2"
@@ -250,177 +270,194 @@ extension GCodeFlavor {
         case .noGCode: return "no-extrusion"
         }
     }
-    init?(prusaName: String) {
-        guard let f = Self.allCases.first(where: { $0.prusaName == prusaName }) else { return nil }
+    init?(slicerName: String) {
+        guard let f = Self.allCases.first(where: { $0.slicerName == slicerName }) else { return nil }
         self = f
     }
 }
 
-// MARK: - Creating profiles from PrusaSlicer settings
+// MARK: - Creating profiles from OrcaSlicer settings
 
-extension PrusaSettingsConvertible {
+extension SlicerSettingsConvertible {
     /// Copies `settings` of this profile's preset type into the profile
     /// (typed fields + extraSettings). With presets loaded, keys of other
     /// preset types are dropped; without them everything is kept.
-    mutating func importPrusaSettings(_ settings: [String: String]) {
-        let keys = PrusaKeys.keys(for: Self.presetType)
-        update(fromPrusa: settings, allowedKeys: keys.isEmpty ? nil : keys)
+    mutating func importSlicerSettings(_ settings: [String: String]) {
+        let keys = SlicerKeys.keys(for: Self.presetType)
+        update(from: settings, allowedKeys: keys.isEmpty ? nil : keys)
     }
 }
 
 // MARK: - Slice profile ↔ print settings
 
-extension SliceProfile: PrusaSettingsConvertible {
+extension SliceProfile: SlicerSettingsConvertible {
     static var presetType: PresetType { .print }
 
     static let typedKeys: Set<String> = [
-        "layer_height", "first_layer_height", "perimeters", "xy_size_compensation",
-        "perimeter_generator", "external_perimeters_first",
-        "top_solid_layers", "bottom_solid_layers", "top_solid_min_thickness", "bottom_solid_min_thickness",
-        "fill_density", "fill_pattern", "infill_overlap",
-        "slicing_mode", "slice_closing_radius", "extrusion_width", "first_layer_extrusion_width",
-        "perimeter_speed", "infill_speed", "travel_speed", "first_layer_speed",
-        "solid_infill_speed", "top_solid_infill_speed",
-        "ironing", "ironing_type", "ironing_flowrate", "ironing_speed", "ironing_spacing",
-        "support_material", "support_material_style", "support_material_buildplate_only",
-        "support_material_threshold", "support_material_xy_spacing", "support_material_with_sheath",
-        "support_material_contact_distance", "support_material_interface_layers",
-        "support_material_bottom_interface_layers", "support_material_interface_spacing",
-        "brim_type", "brim_width", "skirts", "skirt_distance", "raft_layers",
+        "layer_height", "initial_layer_print_height", "wall_loops", "xy_contour_compensation",
+        "wall_generator", "wall_sequence",
+        "top_shell_layers", "bottom_shell_layers", "top_shell_thickness", "bottom_shell_thickness",
+        "sparse_infill_density", "sparse_infill_pattern", "infill_wall_overlap",
+        "slicing_mode", "slice_closing_radius", "line_width", "initial_layer_line_width",
+        "outer_wall_speed", "inner_wall_speed", "sparse_infill_speed", "travel_speed", "initial_layer_speed",
+        "internal_solid_infill_speed", "top_surface_speed",
+        "ironing_type", "ironing_flow", "ironing_speed", "ironing_spacing",
+        "enable_support", "support_type", "support_on_build_plate_only",
+        "support_threshold_angle", "support_object_xy_distance",
+        "support_top_z_distance", "support_bottom_z_distance", "support_interface_top_layers",
+        "support_interface_bottom_layers", "support_interface_spacing",
+        "brim_type", "brim_width", "skirt_loops", "skirt_distance", "raft_layers",
     ]
 
-    func typedPrusaSettings() -> [String: String] {
-        typealias V = PrusaValue
+    func typedSlicerSettings() -> [String: String] {
+        typealias V = SlicerValue
         var s: [String: String] = [
             "layer_height": V.float(layerHeight),
-            "first_layer_height": V.float(firstLayerHeight),
-            "perimeters": V.int(wallCount),
-            "xy_size_compensation": V.float(horizontalExpansion),
-            "perimeter_generator": wallGenerator == .classic ? "classic" : "arachne",
-            "external_perimeters_first": V.bool(externalPerimetersFirst),
-            "top_solid_layers": V.int(topLayers),
-            "bottom_solid_layers": V.int(bottomLayers),
-            "top_solid_min_thickness": V.float(topThickness),
-            "bottom_solid_min_thickness": V.float(bottomThickness),
-            "fill_density": V.percent(Double(infillDensity)),
-            "fill_pattern": infillPattern.prusaName,
-            "infill_overlap": V.percent(infillOverlap),
+            "initial_layer_print_height": V.float(firstLayerHeight),
+            "wall_loops": V.int(wallCount),
+            "xy_contour_compensation": V.float(horizontalExpansion),
+            "wall_generator": wallGenerator == .classic ? "classic" : "arachne",
+            "wall_sequence": externalPerimetersFirst ? "outer wall/inner wall" : "inner wall/outer wall",
+            "top_shell_layers": V.int(topLayers),
+            "bottom_shell_layers": V.int(bottomLayers),
+            "top_shell_thickness": V.float(topThickness),
+            "bottom_shell_thickness": V.float(bottomThickness),
+            "sparse_infill_density": V.percent(Double(infillDensity)),
+            "sparse_infill_pattern": infillPattern.slicerName,
+            "infill_wall_overlap": V.percent(infillOverlap),
             "slicing_mode": slicingMode == .evenOdd ? "even_odd" : "regular",
             "slice_closing_radius": V.float(gapClosingRadius),
-            "perimeter_speed": V.float(printSpeed),
-            "infill_speed": V.float(infillSpeed),
+            // One wall speed, like PrusaSlicer's perimeter_speed: OrcaSlicer
+            // splits it into outer and inner walls.
+            "outer_wall_speed": V.float(printSpeed),
+            "inner_wall_speed": V.float(printSpeed),
+            "sparse_infill_speed": V.float(infillSpeed),
             "travel_speed": V.float(travelSpeed),
-            "first_layer_speed": V.float(firstLayerSpeed),
-            "solid_infill_speed": V.float(solidInfillSpeed),
-            "top_solid_infill_speed": V.float(topSolidInfillSpeed),
-            "ironing": V.bool(ironingEnabled),
-            "ironing_type": ironingType.prusaName,
-            "ironing_flowrate": V.percent(ironingFlowrate),
+            "initial_layer_speed": V.float(firstLayerSpeed),
+            "internal_solid_infill_speed": V.float(solidInfillSpeed),
+            "top_surface_speed": V.float(topSolidInfillSpeed),
+            "ironing_type": ironingEnabled ? ironingType.slicerName : "no ironing",
+            "ironing_flow": V.percent(ironingFlowrate),
             "ironing_speed": V.float(ironingSpeed),
             "ironing_spacing": V.float(ironingSpacing),
-            "support_material": V.bool(generateSupport),
-            "support_material_style": supportStyle == .tree ? "organic" : "snug",
-            "support_material_buildplate_only": V.bool(supportPlacement == .buildplateOnly),
-            "support_material_threshold": V.int(supportOverhangAngle),
-            "support_material_xy_spacing": V.float(supportHorizontalExpansion),
-            "support_material_with_sheath": V.bool(supportUseTowers),
-            "support_material_contact_distance": V.float(supportContactDistance),
-            "support_material_interface_layers": V.int(supportInterfaceLayers),
+            "enable_support": V.bool(generateSupport),
+            "support_type": supportStyle == .tree ? "tree(auto)" : "normal(auto)",
+            "support_on_build_plate_only": V.bool(supportPlacement == .buildplateOnly),
+            "support_threshold_angle": V.int(supportOverhangAngle),
+            "support_object_xy_distance": V.float(supportHorizontalExpansion),
+            "support_top_z_distance": V.float(supportContactDistance),
+            "support_bottom_z_distance": V.float(supportContactDistance),
+            "support_interface_top_layers": V.int(supportInterfaceLayers),
             // Same dense seat under the supports as on top of them.
-            "support_material_bottom_interface_layers": V.int(supportInterfaceLayers),
-            "support_material_interface_spacing": V.float(supportInterfaceSpacing),
+            "support_interface_bottom_layers": V.int(supportInterfaceLayers),
+            "support_interface_spacing": V.float(supportInterfaceSpacing),
         ]
-        // 0 = keep the base value (the printer's PrusaSlicer print preset).
-        if extrusionWidth > 0 { s["extrusion_width"] = V.float(extrusionWidth) }
-        if firstLayerExtrusionWidth > 0 { s["first_layer_extrusion_width"] = V.float(firstLayerExtrusionWidth) }
+        // 0 = keep the base value (the printer's OrcaSlicer process preset).
+        if extrusionWidth > 0 { s["line_width"] = V.float(extrusionWidth) }
+        if firstLayerExtrusionWidth > 0 { s["initial_layer_line_width"] = V.float(firstLayerExtrusionWidth) }
 
-        s["skirts"] = V.int(skirtLoops)
+        s["skirt_loops"] = V.int(skirtLoops)
         s["skirt_distance"] = V.float(skirtDistance)
-        s["brim_type"] = brimType.prusaName
+        s["brim_type"] = brimType.slicerName
         s["brim_width"] = V.float(brimWidth)
         s["raft_layers"] = V.int(raftLayers)
         return s
     }
 
-    mutating func updateTyped(fromPrusa s: [String: String]) {
-        typealias V = PrusaValue
+    mutating func updateTyped(from s: [String: String]) {
+        typealias V = SlicerValue
         // Values the typed fields can't represent exactly; kept verbatim in
         // extraSettings once the fields are set (see SliceProfile).
         var verbatim: [String: String] = [:]
 
         if let v = s["layer_height"].flatMap(V.parseFloat) { layerHeight = v }
-        if let v = s["first_layer_height"] {
+        if let v = s["initial_layer_print_height"] {
             if let mm = V.parseAbsolute(v) { firstLayerHeight = mm }
-            else { firstLayerHeight = layerHeight * (V.parseFloat(v) ?? 100) / 100; verbatim["first_layer_height"] = v }
+            else { firstLayerHeight = layerHeight * (V.parseFloat(v) ?? 100) / 100; verbatim["initial_layer_print_height"] = v }
         }
-        if let v = s["perimeters"].flatMap(V.parseInt) { wallCount = v }
-        if let v = s["xy_size_compensation"].flatMap(V.parseFloat) { horizontalExpansion = v }
-        if let v = s["perimeter_generator"] { wallGenerator = v == "classic" ? .classic : .arachne }
-        if let v = s["external_perimeters_first"].flatMap(V.parseBool) { externalPerimetersFirst = v }
-        if let v = s["top_solid_layers"].flatMap(V.parseInt) { topLayers = v }
-        if let v = s["bottom_solid_layers"].flatMap(V.parseInt) { bottomLayers = v }
-        if let v = s["top_solid_min_thickness"].flatMap(V.parseFloat) { topThickness = v }
-        if let v = s["bottom_solid_min_thickness"].flatMap(V.parseFloat) { bottomThickness = v }
-        if let v = s["fill_density"].flatMap(V.parseFloat) { infillDensity = Int(v.rounded()) }
-        if let v = s["fill_pattern"] {
-            if let p = InfillPattern(prusaName: v) { infillPattern = p } else { verbatim["fill_pattern"] = v }
+        if let v = s["wall_loops"].flatMap(V.parseInt) { wallCount = v }
+        if let v = s["xy_contour_compensation"].flatMap(V.parseFloat) { horizontalExpansion = v }
+        if let v = s["wall_generator"] { wallGenerator = v == "classic" ? .classic : .arachne }
+        if let v = s["wall_sequence"] {
+            externalPerimetersFirst = v == "outer wall/inner wall"
+            if v != "outer wall/inner wall" && v != "inner wall/outer wall" { verbatim["wall_sequence"] = v }
         }
-        if let v = s["infill_overlap"], let f = V.parseFloat(v) {
+        if let v = s["top_shell_layers"].flatMap(V.parseInt) { topLayers = v }
+        if let v = s["bottom_shell_layers"].flatMap(V.parseInt) { bottomLayers = v }
+        if let v = s["top_shell_thickness"].flatMap(V.parseFloat) { topThickness = v }
+        if let v = s["bottom_shell_thickness"].flatMap(V.parseFloat) { bottomThickness = v }
+        if let v = s["sparse_infill_density"].flatMap(V.parseFloat) { infillDensity = Int(v.rounded()) }
+        if let v = s["sparse_infill_pattern"] {
+            if let p = InfillPattern(slicerName: v) { infillPattern = p } else { verbatim["sparse_infill_pattern"] = v }
+        }
+        if let v = s["infill_wall_overlap"], let f = V.parseFloat(v) {
             infillOverlap = f
-            if !v.contains("%") { verbatim["infill_overlap"] = v }
+            if !v.contains("%") { verbatim["infill_wall_overlap"] = v }
         }
-        if let v = s["slicing_mode"] { slicingMode = v == "even_odd" ? .evenOdd : .regular }
+        if let v = s["slicing_mode"] {
+            slicingMode = v == "even_odd" ? .evenOdd : .regular
+            if v != "even_odd" && v != "regular" { verbatim["slicing_mode"] = v }
+        }
         if let v = s["slice_closing_radius"].flatMap(V.parseFloat) { gapClosingRadius = v }
-        if let v = s["extrusion_width"] {
+        if let v = s["line_width"] {
             extrusionWidth = V.parseAbsolute(v) ?? 0
-            if V.parseAbsolute(v) == nil { verbatim["extrusion_width"] = v }
+            if V.parseAbsolute(v) == nil { verbatim["line_width"] = v }
         }
-        if let v = s["first_layer_extrusion_width"] {
+        if let v = s["initial_layer_line_width"] {
             firstLayerExtrusionWidth = V.parseAbsolute(v) ?? 0
-            if V.parseAbsolute(v) == nil { verbatim["first_layer_extrusion_width"] = v }
+            if V.parseAbsolute(v) == nil { verbatim["initial_layer_line_width"] = v }
         }
-        if let v = s["perimeter_speed"].flatMap(V.parseFloat) { printSpeed = v }
-        if let v = s["infill_speed"].flatMap(V.parseFloat) { infillSpeed = v }
+        // The wall speed field is the outer wall's; a different inner wall
+        // speed is kept as is.
+        if let v = s["outer_wall_speed"].flatMap(V.parseFloat) { printSpeed = v }
+        if let v = s["inner_wall_speed"], V.parseFloat(v) != printSpeed { verbatim["inner_wall_speed"] = v }
+        if let v = s["sparse_infill_speed"].flatMap(V.parseFloat) { infillSpeed = v }
         if let v = s["travel_speed"].flatMap(V.parseFloat) { travelSpeed = v }
-        // Speeds given as a percentage in PrusaSlicer: the field shows the
-        // resolved mm/s, the percentage is what's sliced.
+        // Speeds given as a percentage: the field shows the resolved mm/s,
+        // the percentage is what's sliced.
         func relativeSpeed(_ key: String, of reference: Double) -> Double? {
             guard let v = s[key] else { return nil }
             if let mm = V.parseAbsolute(v) { return mm }
             verbatim[key] = v
             return reference * (V.parseFloat(v) ?? 100) / 100
         }
-        if let v = relativeSpeed("first_layer_speed", of: printSpeed) { firstLayerSpeed = v }
-        if let v = relativeSpeed("solid_infill_speed", of: infillSpeed) { solidInfillSpeed = v }
-        if let v = relativeSpeed("top_solid_infill_speed", of: solidInfillSpeed) { topSolidInfillSpeed = v }
-        if let v = s["ironing"].flatMap(V.parseBool) { ironingEnabled = v }
-        if let v = s["ironing_type"].flatMap(IroningType.init(prusaName:)) { ironingType = v }
-        if let v = s["ironing_flowrate"].flatMap(V.parseFloat) { ironingFlowrate = v }
+        if let v = relativeSpeed("initial_layer_speed", of: printSpeed) { firstLayerSpeed = v }
+        if let v = relativeSpeed("internal_solid_infill_speed", of: infillSpeed) { solidInfillSpeed = v }
+        if let v = relativeSpeed("top_surface_speed", of: solidInfillSpeed) { topSolidInfillSpeed = v }
+        if let v = s["ironing_type"] {
+            ironingEnabled = v != "no ironing"
+            if let t = IroningType(slicerName: v) { ironingType = t }
+        }
+        if let v = s["ironing_flow"].flatMap(V.parseFloat) { ironingFlowrate = v }
         if let v = s["ironing_speed"].flatMap(V.parseFloat) { ironingSpeed = v }
         if let v = s["ironing_spacing"].flatMap(V.parseFloat) { ironingSpacing = v }
-        if let v = s["support_material"].flatMap(V.parseBool) { generateSupport = v }
-        if let v = s["support_material_style"] {
-            supportStyle = (v == "organic" || v == "tree") ? .tree : .normal
-            if v != "organic" && v != "snug" { verbatim["support_material_style"] = v }
+        if let v = s["enable_support"].flatMap(V.parseBool) { generateSupport = v }
+        if let v = s["support_type"] {
+            supportStyle = v.hasPrefix("tree") ? .tree : .normal
+            if v != "tree(auto)" && v != "normal(auto)" { verbatim["support_type"] = v }   // manual: painted / enforcers only
         }
-        if let v = s["support_material_buildplate_only"].flatMap(V.parseBool) {
+        if let v = s["support_on_build_plate_only"].flatMap(V.parseBool) {
             supportPlacement = v ? .buildplateOnly : .everywhere
         }
-        if let v = s["support_material_threshold"].flatMap(V.parseInt) { supportOverhangAngle = v }
-        if let v = s["support_material_xy_spacing"] {
-            if let mm = V.parseAbsolute(v) { supportHorizontalExpansion = mm } else { verbatim["support_material_xy_spacing"] = v }
+        if let v = s["support_threshold_angle"].flatMap(V.parseInt) { supportOverhangAngle = v }
+        if let v = s["support_object_xy_distance"] {
+            if let mm = V.parseAbsolute(v) { supportHorizontalExpansion = mm } else { verbatim["support_object_xy_distance"] = v }
         }
-        if let v = s["support_material_with_sheath"].flatMap(V.parseBool) { supportUseTowers = v }
-        if let v = s["support_material_contact_distance"].flatMap(V.parseFloat) { supportContactDistance = v }
-        if let v = s["support_material_interface_layers"].flatMap(V.parseInt) { supportInterfaceLayers = v }
-        if let v = s["support_material_bottom_interface_layers"], V.parseInt(v) != supportInterfaceLayers {
-            verbatim["support_material_bottom_interface_layers"] = v   // e.g. -1 = "same as top"
+        if let v = s["support_top_z_distance"].flatMap(V.parseFloat) { supportContactDistance = v }
+        if let v = s["support_bottom_z_distance"], V.parseFloat(v) != supportContactDistance {
+            verbatim["support_bottom_z_distance"] = v
         }
-        if let v = s["support_material_interface_spacing"].flatMap(V.parseFloat) { supportInterfaceSpacing = v }
+        if let v = s["support_interface_top_layers"].flatMap(V.parseInt) { supportInterfaceLayers = v }
+        if let v = s["support_interface_bottom_layers"], V.parseInt(v) != supportInterfaceLayers {
+            verbatim["support_interface_bottom_layers"] = v   // e.g. -1 = "same as top"
+        }
+        if let v = s["support_interface_spacing"].flatMap(V.parseFloat) { supportInterfaceSpacing = v }
 
-        if let v = s["skirts"].flatMap(V.parseInt) { skirtLoops = v }
+        if let v = s["skirt_loops"].flatMap(V.parseInt) { skirtLoops = v }
         if let v = s["skirt_distance"].flatMap(V.parseFloat) { skirtDistance = v }
-        if let v = s["brim_type"].flatMap(BrimType.init(prusaName:)) { brimType = v }
+        if let v = s["brim_type"] {
+            if let b = BrimType(slicerName: v) { brimType = b } else { verbatim["brim_type"] = v }
+        }
         if let v = s["brim_width"].flatMap(V.parseFloat) { brimWidth = v }
         if let v = s["raft_layers"].flatMap(V.parseInt) { raftLayers = v }
 
@@ -429,7 +466,7 @@ extension SliceProfile: PrusaSettingsConvertible {
 }
 
 extension BrimType {
-    var prusaName: String {
+    var slicerName: String {
         switch self {
         case .none: return "no_brim"
         case .outerOnly: return "outer_only"
@@ -437,50 +474,57 @@ extension BrimType {
         case .outerAndInner: return "outer_and_inner"
         }
     }
-    init?(prusaName: String) {
-        guard let b = Self.allCases.first(where: { $0.prusaName == prusaName }) else { return nil }
+    init?(slicerName: String) {
+        guard let b = Self.allCases.first(where: { $0.slicerName == slicerName }) else { return nil }
         self = b
     }
 }
 
 // MARK: - Material profile ↔ filament settings
 
-extension MaterialProfile: PrusaSettingsConvertible {
+extension MaterialProfile: SlicerSettingsConvertible {
     static var presetType: PresetType { .filament }
 
-    /// Filament overrides of the printer's retraction, in PrusaSlicer.
-    static let retractionKeys = ["filament_retract_length", "filament_retract_speed",
-                                 "filament_retract_restart_extra", "filament_retract_lift",
-                                 "filament_retract_before_travel"]
+    /// Filament overrides of the printer's retraction, in OrcaSlicer.
+    static let retractionKeys = ["filament_retraction_length", "filament_retraction_speed",
+                                 "filament_retract_restart_extra", "filament_z_hop",
+                                 "filament_retraction_minimum_travel"]
+
+    /// OrcaSlicer bed temperatures are per plate type; a PalmSlice material
+    /// has one, used on every plate. The smooth PEI ("hot") plate is the one
+    /// read back.
+    static let bedTemperatureKeys = ["hot_plate_temp", "textured_plate_temp", "cool_plate_temp",
+                                     "eng_plate_temp", "supertack_plate_temp", "textured_cool_plate_temp"]
+    static let firstLayerBedTemperatureKeys = bedTemperatureKeys.map { $0 + "_initial_layer" }
 
     static let typedKeys: Set<String> = Set([
-        "filament_type", "filament_colour", "filament_diameter", "first_layer_temperature", "temperature",
-        "first_layer_bed_temperature", "bed_temperature", "extrusion_multiplier",
-        "cooling", "min_fan_speed", "max_fan_speed", "bridge_fan_speed",
-        "disable_fan_first_layers", "fan_below_layer_time", "slowdown_below_layer_time",
-        "min_print_speed",
-    ] + retractionKeys)
+        "filament_type", "filament_colour", "filament_diameter", "nozzle_temperature_initial_layer",
+        "nozzle_temperature", "filament_flow_ratio",
+        "slow_down_for_layer_cooling", "fan_min_speed", "fan_max_speed", "overhang_fan_speed",
+        "close_fan_the_first_x_layers", "fan_cooling_layer_time", "slow_down_layer_time",
+        "slow_down_min_speed",
+    ] + retractionKeys + bedTemperatureKeys + firstLayerBedTemperatureKeys)
 
-    func typedPrusaSettings() -> [String: String] {
-        typealias V = PrusaValue
+    func typedSlicerSettings() -> [String: String] {
+        typealias V = SlicerValue
         var s: [String: String] = [
             "filament_type": V.strings([filamentType]),
             "filament_colour": V.strings([colour]),
             "filament_diameter": V.floats([filamentDiameter]),
-            "first_layer_temperature": V.ints([firstLayerTemp]),
-            "temperature": V.ints([otherLayersTemp]),
-            "first_layer_bed_temperature": V.ints([firstLayerBedTemp]),
-            "bed_temperature": V.ints([otherLayersBedTemp]),
-            "extrusion_multiplier": V.floats([extrusionMultiplier]),
-            "cooling": V.bools([coolingEnabled]),
-            "min_fan_speed": V.ints([minFanSpeed]),
-            "max_fan_speed": V.ints([maxFanSpeed]),
-            "bridge_fan_speed": V.ints([bridgeFanSpeed]),
-            "disable_fan_first_layers": V.ints([disableFanFirstLayers]),
-            "fan_below_layer_time": V.ints([fanBelowLayerTime]),
-            "slowdown_below_layer_time": V.ints([slowdownBelowLayerTime]),
-            "min_print_speed": V.floats([minPrintSpeed]),
+            "nozzle_temperature_initial_layer": V.ints([firstLayerTemp]),
+            "nozzle_temperature": V.ints([otherLayersTemp]),
+            "filament_flow_ratio": V.floats([extrusionMultiplier]),
+            "slow_down_for_layer_cooling": V.bools([coolingEnabled]),
+            "fan_min_speed": V.ints([minFanSpeed]),
+            "fan_max_speed": V.ints([maxFanSpeed]),
+            "overhang_fan_speed": V.ints([bridgeFanSpeed]),
+            "close_fan_the_first_x_layers": V.ints([disableFanFirstLayers]),
+            "fan_cooling_layer_time": V.ints([fanBelowLayerTime]),
+            "slow_down_layer_time": V.ints([slowdownBelowLayerTime]),
+            "slow_down_min_speed": V.floats([minPrintSpeed]),
         ]
+        for key in Self.bedTemperatureKeys { s[key] = V.ints([otherLayersBedTemp]) }
+        for key in Self.firstLayerBedTemperatureKeys { s[key] = V.ints([firstLayerBedTemp]) }
         let values: [Double] = [retractionEnabled ? retractionLength : 0, retractionSpeed,
                                 retractionRestartExtra, zHop, minTravelForRetraction]
         for (key, value) in zip(Self.retractionKeys, values) {
@@ -489,24 +533,31 @@ extension MaterialProfile: PrusaSettingsConvertible {
         return s
     }
 
-    mutating func updateTyped(fromPrusa s: [String: String]) {
-        typealias V = PrusaValue
+    mutating func updateTyped(from s: [String: String]) {
+        typealias V = SlicerValue
         if let v = s["filament_type"].flatMap({ V.parseStrings($0).first }), !v.isEmpty { filamentType = v }
         if let v = s["filament_colour"].flatMap({ V.parseStrings($0).first }), HexColour(v) != nil { colour = v }
         if let v = s["filament_diameter"].flatMap(V.parseFloat) { filamentDiameter = v }
-        if let v = s["first_layer_temperature"].flatMap(V.parseInt) { firstLayerTemp = v }
-        if let v = s["temperature"].flatMap(V.parseInt) { otherLayersTemp = v }
-        if let v = s["first_layer_bed_temperature"].flatMap(V.parseInt) { firstLayerBedTemp = v }
-        if let v = s["bed_temperature"].flatMap(V.parseInt) { otherLayersBedTemp = v }
-        if let v = s["extrusion_multiplier"].flatMap(V.parseFloat) { extrusionMultiplier = v }
-        if let v = s["cooling"].flatMap(V.parseBool) { coolingEnabled = v }
-        if let v = s["min_fan_speed"].flatMap(V.parseInt) { minFanSpeed = v }
-        if let v = s["max_fan_speed"].flatMap(V.parseInt) { maxFanSpeed = v }
-        if let v = s["bridge_fan_speed"].flatMap(V.parseInt) { bridgeFanSpeed = v }
-        if let v = s["disable_fan_first_layers"].flatMap(V.parseInt) { disableFanFirstLayers = v }
-        if let v = s["fan_below_layer_time"].flatMap(V.parseInt) { fanBelowLayerTime = v }
-        if let v = s["slowdown_below_layer_time"].flatMap(V.parseInt) { slowdownBelowLayerTime = v }
-        if let v = s["min_print_speed"].flatMap(V.parseFloat) { minPrintSpeed = v }
+        if let v = s["nozzle_temperature_initial_layer"].flatMap(V.parseInt) { firstLayerTemp = v }
+        if let v = s["nozzle_temperature"].flatMap(V.parseInt) { otherLayersTemp = v }
+        if let v = s["hot_plate_temp_initial_layer"].flatMap(V.parseInt) { firstLayerBedTemp = v }
+        if let v = s["hot_plate_temp"].flatMap(V.parseInt) { otherLayersBedTemp = v }
+        // Other plates' temperatures that differ are kept as they are.
+        for key in Self.bedTemperatureKeys.dropFirst() where s[key].flatMap(V.parseInt) != otherLayersBedTemp {
+            if let v = s[key] { extraSettings[key] = v }
+        }
+        for key in Self.firstLayerBedTemperatureKeys.dropFirst() where s[key].flatMap(V.parseInt) != firstLayerBedTemp {
+            if let v = s[key] { extraSettings[key] = v }
+        }
+        if let v = s["filament_flow_ratio"].flatMap(V.parseFloat) { extrusionMultiplier = v }
+        if let v = s["slow_down_for_layer_cooling"].flatMap(V.parseBool) { coolingEnabled = v }
+        if let v = s["fan_min_speed"].flatMap(V.parseInt) { minFanSpeed = v }
+        if let v = s["fan_max_speed"].flatMap(V.parseInt) { maxFanSpeed = v }
+        if let v = s["overhang_fan_speed"].flatMap(V.parseInt) { bridgeFanSpeed = v }
+        if let v = s["close_fan_the_first_x_layers"].flatMap(V.parseInt) { disableFanFirstLayers = v }
+        if let v = s["fan_cooling_layer_time"].flatMap(V.parseInt) { fanBelowLayerTime = v }
+        if let v = s["slow_down_layer_time"].flatMap(V.parseInt) { slowdownBelowLayerTime = v }
+        if let v = s["slow_down_min_speed"].flatMap(V.parseFloat) { minPrintSpeed = v }
 
         // Retraction overrides: "nil" = use the printer's value.
         let given = Self.retractionKeys.filter { s[$0] != nil }
@@ -518,12 +569,12 @@ extension MaterialProfile: PrusaSettingsConvertible {
             guard let raw = s[key] else { continue }
             guard raw != "nil", let v = V.parseFloat(raw) else { unset.append(key); continue }
             switch key {
-            case "filament_retract_length":
+            case "filament_retraction_length":
                 retractionEnabled = v > 0
                 if v > 0 { retractionLength = v }
-            case "filament_retract_speed": retractionSpeed = v
+            case "filament_retraction_speed": retractionSpeed = v
             case "filament_retract_restart_extra": retractionRestartExtra = v
-            case "filament_retract_lift": zHop = v
+            case "filament_z_hop": zHop = v
             default: minTravelForRetraction = v
             }
         }
@@ -534,36 +585,36 @@ extension MaterialProfile: PrusaSettingsConvertible {
 
 // MARK: - Printer profile ↔ printer settings
 
-extension PrinterProfile: PrusaSettingsConvertible {
+extension PrinterProfile: SlicerSettingsConvertible {
     static var presetType: PresetType { .printer }
 
     static let typedKeys: Set<String> = [
-        "bed_shape", "max_print_height", "gcode_flavor", "start_gcode", "end_gcode",
-        "nozzle_diameter", "extruder_offset", "extruder_clearance_radius", "extruder_clearance_height",
+        "printable_area", "printable_height", "gcode_flavor", "machine_start_gcode", "machine_end_gcode",
+        "nozzle_diameter", "extruder_offset", "extruder_clearance_radius", "extruder_clearance_height_to_rod",
     ]
 
-    func typedPrusaSettings() -> [String: String] {
-        typealias V = PrusaValue
+    func typedSlicerSettings() -> [String: String] {
+        typealias V = SlicerValue
         let count = max(1, numberOfExtruders)
         let exts = (0..<count).map { $0 < extruders.count ? extruders[$0] : ExtruderProfile() }
-        // Printhead clearance: PrusaSlicer models the head as a cylinder.
+        // Printhead clearance: OrcaSlicer models the head as a cylinder.
         let radius = [printheadXMin, printheadXMax, printheadYMin, printheadYMax].map(abs).max() ?? 0
         var s: [String: String] = [
-            "bed_shape": V.points(bedOutline()),
-            "max_print_height": V.float(bedZ),
-            "gcode_flavor": gcodeFlavor.prusaName,
-            "start_gcode": V.string(startGCode),
-            "end_gcode": V.string(endGCode),
+            "printable_area": V.points(bedOutline()),
+            "printable_height": V.float(bedZ),
+            "gcode_flavor": gcodeFlavor.slicerName,
+            "machine_start_gcode": V.string(startGCode),
+            "machine_end_gcode": V.string(endGCode),
             "nozzle_diameter": V.floats(exts.map(\.nozzleDiameter)),
             "extruder_offset": exts.map { "\(V.float($0.offsetX))x\(V.float($0.offsetY))" }.joined(separator: ","),
             "extruder_clearance_radius": V.float(radius),
         ]
-        if gantryHeight > 0 { s["extruder_clearance_height"] = V.float(gantryHeight) }
+        if gantryHeight > 0 { s["extruder_clearance_height_to_rod"] = V.float(gantryHeight) }
         return s
     }
 
     /// The bed outline in printer coordinates. Circular beds are approximated
-    /// by a 64-gon, the way PrusaSlicer stores circular beds.
+    /// by a 64-gon, the way OrcaSlicer stores circular beds.
     func bedOutline() -> [(Double, Double)] {
         let ox = originAtCenter ? -bedX / 2 : 0
         let oy = originAtCenter ? -bedY / 2 : 0
@@ -578,9 +629,9 @@ extension PrinterProfile: PrusaSettingsConvertible {
         }
     }
 
-    mutating func updateTyped(fromPrusa s: [String: String]) {
-        typealias V = PrusaValue
-        if let raw = s["bed_shape"], case let pts = V.parsePoints(raw), pts.count >= 3 {
+    mutating func updateTyped(from s: [String: String]) {
+        typealias V = SlicerValue
+        if let raw = s["printable_area"], case let pts = V.parsePoints(raw), pts.count >= 3 {
             let xs = pts.map(\.0), ys = pts.map(\.1)
             bedX = xs.max()! - xs.min()!
             bedY = ys.max()! - ys.min()!
@@ -588,14 +639,14 @@ extension PrinterProfile: PrusaSettingsConvertible {
             buildPlateShape = pts.count > 4 ? .circular : .rectangular
             // An outline the fields can't reproduce (e.g. a bed starting at
             // X = 5) is kept verbatim until the bed is edited.
-            if V.points(bedOutline()) != V.points(pts) { extraSettings["bed_shape"] = raw }
+            if V.points(bedOutline()) != V.points(pts) { extraSettings["printable_area"] = raw }
         }
-        if let v = s["max_print_height"].flatMap(V.parseFloat) { bedZ = v }
+        if let v = s["printable_height"].flatMap(V.parseFloat) { bedZ = v }
         if let v = s["gcode_flavor"] {
-            if let f = GCodeFlavor(prusaName: v) { gcodeFlavor = f } else { extraSettings["gcode_flavor"] = v }
+            if let f = GCodeFlavor(slicerName: v) { gcodeFlavor = f } else { extraSettings["gcode_flavor"] = v }
         }
-        if let v = s["start_gcode"] { startGCode = V.parseString(v) }
-        if let v = s["end_gcode"] { endGCode = V.parseString(v) }
+        if let v = s["machine_start_gcode"] { startGCode = V.parseString(v) }
+        if let v = s["machine_end_gcode"] { endGCode = V.parseString(v) }
         if let nozzles = s["nozzle_diameter"].map(V.parseFloats), !nozzles.isEmpty {
             numberOfExtruders = nozzles.count
             while extruders.count < nozzles.count { extruders.append(ExtruderProfile()) }
@@ -611,6 +662,6 @@ extension PrinterProfile: PrusaSettingsConvertible {
         if let r = s["extruder_clearance_radius"].flatMap(V.parseFloat) {
             printheadXMin = -r; printheadYMin = -r; printheadXMax = r; printheadYMax = r
         }
-        if let h = s["extruder_clearance_height"].flatMap(V.parseFloat) { gantryHeight = h }
+        if let h = s["extruder_clearance_height_to_rod"].flatMap(V.parseFloat) { gantryHeight = h }
     }
 }

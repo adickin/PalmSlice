@@ -55,42 +55,42 @@ struct SliceProfile: Codable, Identifiable {
     var builtInName: String? = nil
 
     // MARK: - Layers
-    var layerHeight: Double = 0.2        // mm  — PrusaSlicer: layer_height
-    var firstLayerHeight: Double = 0.2 { didSet { extraSettings["first_layer_height"] = nil } }  // mm  — PrusaSlicer: first_layer_height
+    var layerHeight: Double = 0.2        // mm  — OrcaSlicer: layer_height
+    var firstLayerHeight: Double = 0.2 { didSet { extraSettings["initial_layer_print_height"] = nil } }  // mm  — OrcaSlicer: initial_layer_print_height
 
     // MARK: - Walls
-    var wallCount: Int = 3               // PrusaSlicer: perimeters
-    var horizontalExpansion: Double = 0.0 // mm — PrusaSlicer: xy_size_compensation
-    var wallGenerator: WallGenerator = .arachne  // PrusaSlicer: perimeter_generator
-    var externalPerimetersFirst: Bool = false    // PrusaSlicer: external_perimeters_first
+    var wallCount: Int = 3               // OrcaSlicer: wall_loops
+    var horizontalExpansion: Double = 0.0 // mm — OrcaSlicer: xy_contour_compensation
+    var wallGenerator: WallGenerator = .arachne  // OrcaSlicer: wall_generator
+    var externalPerimetersFirst: Bool = false    // OrcaSlicer: wall_sequence
 
     // MARK: - Top / Bottom
-    var topLayers: Int = 4              // PrusaSlicer: top_solid_layers
-    var bottomLayers: Int = 4           // PrusaSlicer: bottom_solid_layers
+    var topLayers: Int = 4              // OrcaSlicer: top_shell_layers
+    var bottomLayers: Int = 4           // OrcaSlicer: bottom_shell_layers
     // Min thickness overrides (0 = rely on layer count only)
-    var topThickness: Double = 0.0      // mm — PrusaSlicer: top_solid_min_thickness
-    var bottomThickness: Double = 0.0   // mm — PrusaSlicer: bottom_solid_min_thickness
+    var topThickness: Double = 0.0      // mm — OrcaSlicer: top_shell_thickness
+    var bottomThickness: Double = 0.0   // mm — OrcaSlicer: bottom_shell_thickness
 
     // MARK: - Infill
-    var infillDensity: Int = 20         // %  — PrusaSlicer: fill_density
-    var infillPattern: InfillPattern = .gyroid { didSet { extraSettings["fill_pattern"] = nil } }  // PrusaSlicer: fill_pattern
+    var infillDensity: Int = 20         // %  — OrcaSlicer: sparse_infill_density
+    var infillPattern: InfillPattern = .gyroid { didSet { extraSettings["sparse_infill_pattern"] = nil } }  // OrcaSlicer: sparse_infill_pattern
     // Overlap of infill into perimeters (% of extrusion width). Stock is 25%;
     // 15% reduces material squished out through the walls on dense/solid parts.
-    var infillOverlap: Double = 15.0 { didSet { extraSettings["infill_overlap"] = nil } }  // %  — PrusaSlicer: infill_overlap
+    var infillOverlap: Double = 15.0 { didSet { extraSettings["infill_wall_overlap"] = nil } }  // %  — OrcaSlicer: infill_wall_overlap
 
     // MARK: - Advanced (defaults match PrusaSlicer's own)
-    var slicingMode: SlicingMode = .regular     // PrusaSlicer: slicing_mode
-    var gapClosingRadius: Double = 0.049        // mm — PrusaSlicer: slice_closing_radius
-    var extrusionWidth: Double = 0.0 { didSet { extraSettings["extrusion_width"] = nil } }  // mm — PrusaSlicer: extrusion_width (0 = keep base)
-    var firstLayerExtrusionWidth: Double = 0.0 { didSet { extraSettings["first_layer_extrusion_width"] = nil } }  // mm — PrusaSlicer: first_layer_extrusion_width (0 = keep base)
+    var slicingMode: SlicingMode = .regular     // OrcaSlicer: slicing_mode
+    var gapClosingRadius: Double = 0.049        // mm — OrcaSlicer: slice_closing_radius
+    var extrusionWidth: Double = 0.0 { didSet { extraSettings["line_width"] = nil } }  // mm — OrcaSlicer: line_width (0 = keep base)
+    var firstLayerExtrusionWidth: Double = 0.0 { didSet { extraSettings["initial_layer_line_width"] = nil } }  // mm — OrcaSlicer: initial_layer_line_width (0 = keep base)
 
     // MARK: - Speed (mm/s)
-    var printSpeed: Double = 60.0       // PrusaSlicer: perimeter_speed
-    var infillSpeed: Double = 80.0      // PrusaSlicer: infill_speed
-    var travelSpeed: Double = 120.0     // PrusaSlicer: travel_speed
-    var firstLayerSpeed: Double = 30.0 { didSet { extraSettings["first_layer_speed"] = nil } }  // PrusaSlicer: first_layer_speed
-    var solidInfillSpeed: Double = 20.0 { didSet { extraSettings["solid_infill_speed"] = nil } }  // PrusaSlicer: solid_infill_speed
-    var topSolidInfillSpeed: Double = 15.0 { didSet { extraSettings["top_solid_infill_speed"] = nil } }  // PrusaSlicer: top_solid_infill_speed
+    var printSpeed: Double = 60.0       // OrcaSlicer: outer_wall_speed + inner_wall_speed
+    var infillSpeed: Double = 80.0      // OrcaSlicer: sparse_infill_speed
+    var travelSpeed: Double = 120.0     // OrcaSlicer: travel_speed
+    var firstLayerSpeed: Double = 30.0 { didSet { extraSettings["initial_layer_speed"] = nil } }  // OrcaSlicer: initial_layer_speed
+    var solidInfillSpeed: Double = 20.0 { didSet { extraSettings["internal_solid_infill_speed"] = nil } }  // OrcaSlicer: internal_solid_infill_speed
+    var topSolidInfillSpeed: Double = 15.0 { didSet { extraSettings["top_surface_speed"] = nil } }  // OrcaSlicer: top_surface_speed
 
     // MARK: - Ironing
     // A slow, low-flow finishing pass over solid top surfaces after solid
@@ -98,42 +98,67 @@ struct SliceProfile: Codable, Identifiable {
     // Top Layers (or Min Top Thickness) is high enough that those ridges are
     // clearly visible on a large flat top.
     var ironingEnabled: Bool = false
-    var ironingType: IroningType = .topSurfaces  // PrusaSlicer: ironing_type
-    var ironingFlowrate: Double = 15.0           // %    — PrusaSlicer: ironing_flowrate
-    var ironingSpeed: Double = 15.0              // mm/s — PrusaSlicer: ironing_speed
-    var ironingSpacing: Double = 0.1             // mm   — PrusaSlicer: ironing_spacing
+    var ironingType: IroningType = .topSurfaces  // OrcaSlicer: ironing_type
+    var ironingFlowrate: Double = 15.0           // %    — OrcaSlicer: ironing_flow
+    var ironingSpeed: Double = 15.0              // mm/s — OrcaSlicer: ironing_speed
+    var ironingSpacing: Double = 0.1             // mm   — OrcaSlicer: ironing_spacing
 
     // MARK: - Support
     var generateSupport: Bool = false
-    var supportStyle: SupportStyle = .normal { didSet { extraSettings["support_material_style"] = nil } }
+    var supportStyle: SupportStyle = .normal { didSet { extraSettings["support_type"] = nil } }
     var supportPlacement: SupportPlacement = .everywhere
-    var supportOverhangAngle: Int = 50   // degrees — PrusaSlicer: support_material_threshold
-    var supportHorizontalExpansion: Double = 0.7 { didSet { extraSettings["support_material_xy_spacing"] = nil } }  // mm — PrusaSlicer: support_material_xy_spacing
-    var supportUseTowers: Bool = true    // PrusaSlicer: support_material_with_sheath
+    var supportOverhangAngle: Int = 50   // degrees — OrcaSlicer: support_threshold_angle
+    var supportHorizontalExpansion: Double = 0.7 { didSet { extraSettings["support_object_xy_distance"] = nil } }  // mm — OrcaSlicer: support_object_xy_distance
+    var supportUseTowers: Bool = true    // no OrcaSlicer equivalent (was PrusaSlicer support_material_with_sheath)
     // Support-to-part interface — how solid the supported bottom surface prints.
     // Smaller contact gap + dense interface = more solid bottom, harder removal.
-    var supportContactDistance: Double = 0.15 // mm — support_material_contact_distance
-    var supportInterfaceLayers: Int = 3 { didSet { extraSettings["support_material_bottom_interface_layers"] = nil } }  // PrusaSlicer: support_material_interface_layers
+    var supportContactDistance: Double = 0.15 // mm — support_top_z_distance + support_bottom_z_distance
+    var supportInterfaceLayers: Int = 3 { didSet { extraSettings["support_interface_bottom_layers"] = nil } }  // OrcaSlicer: support_interface_top_layers
     var supportInterfaceSpacing: Double = 0.2 // mm — support_material_interface_spacing (0 = solid)
 
     // MARK: - Build Plate Adhesion (independent; any combination, like PrusaSlicer)
-    var skirtLoops: Int = 0             // PrusaSlicer: skirts (0 = no skirt)
-    var skirtDistance: Double = 6.0     // mm — PrusaSlicer: skirt_distance
-    var brimType: BrimType = .none      // PrusaSlicer: brim_type
-    var brimWidth: Double = 8.0         // mm — PrusaSlicer: brim_width
-    var raftLayers: Int = 0             // PrusaSlicer: raft_layers (0 = no raft)
+    var skirtLoops: Int = 0             // OrcaSlicer: skirt_loops (0 = no skirt)
+    var skirtDistance: Double = 6.0     // mm — OrcaSlicer: skirt_distance
+    var brimType: BrimType = .none      // OrcaSlicer: brim_type
+    var brimWidth: Double = 8.0         // mm — OrcaSlicer: brim_width
+    var raftLayers: Int = 0             // OrcaSlicer: raft_layers (0 = no raft)
 
-    // MARK: - PrusaSlicer
-    // Fields marked `didSet { extraSettings[...] = nil }` can't hold every
-    // PrusaSlicer value (e.g. a speed given as a percentage); an imported value
-    // they can't represent is kept verbatim in extraSettings and wins, until
-    // the field is edited in PalmSlice.
+    // MARK: - OrcaSlicer
+    // A quality is either one of the printer's OrcaSlicer qualities
+    // (isSystem, basePreset = the print preset) or the user's own: a set of
+    // changes (extraSettings) applied over the printer's OrcaSlicer quality
+    // nearest its layer height, so it works on every printer. The typed fields
+    // show the result for the current printer (resolve(over:)); only
+    // extraSettings is what the profile changes (keepChanges(from:) on save).
     //
-    // The PrusaSlicer print preset this profile starts from. nil = the
-    // printer's default print preset (see PresetLibrary.base).
+    // Fields marked `didSet { extraSettings[...] = nil }` can't hold every
+    // value (e.g. a speed given as a percentage); while editing, a value they
+    // can't represent is kept verbatim in extraSettings and wins, until the
+    // field is edited.
     var basePreset: String? = nil
-    // Any other PrusaSlicer print setting, in .ini value format (see ProfileSettings.swift).
+    var isSystem = false
+    /// true: the typed fields hold the full intended values (a profile built
+    /// in code, or resolved for a printer). false: only extraSettings — the
+    /// changes — means anything (stored user qualities and the built-ins).
+    var isResolved = true
     var extraSettings: [String: String] = [:]
+
+    /// One of a printer's OrcaSlicer qualities, as a profile list entry.
+    static func system(_ preset: String) -> SliceProfile {
+        var p = SliceProfile()
+        p.id = PresetLibrary.stableID(.print, preset)
+        p.name = PresetLibrary.shortName(preset)
+        p.basePreset = preset
+        p.isSystem = true
+        // Resolved: typed fields plus extraSettings (the preset's other keys,
+        // and values a typed field can't hold) are the preset exactly.
+        p.resolve(over: PresetLibrary.settings(.print, preset) ?? [:])
+        return p
+    }
+
+    /// The layer height this quality asks for (its own change), which picks
+    /// the OrcaSlicer quality it's applied over on each printer.
+    var ownLayerHeight: Double? { extraSettings["layer_height"].flatMap(SlicerValue.parseFloat) }
 
     // MARK: - Summary (shown in picker row subtitle)
     var pickerSubtitle: String {
@@ -204,6 +229,8 @@ extension SliceProfile {
         skirtDistance = try v(.skirtDistance, d.skirtDistance)
         raftLayers = try v(.raftLayers, d.raftLayers)
         basePreset = try c.decodeIfPresent(String.self, forKey: .basePreset)
+        isSystem = try v(.isSystem, d.isSystem)
+        isResolved = try v(.isResolved, false)
         extraSettings = try v(.extraSettings, d.extraSettings)
         try migrateSingleAdhesionChoice(from: decoder)
     }
@@ -220,7 +247,7 @@ extension SliceProfile {
         if choice != "Brim" { brimType = .none }
         if choice != "Raft" { raftLayers = 0 }
         // A brim_type kept verbatim by the old single-choice mapping.
-        if let raw = extraSettings.removeValue(forKey: "brim_type"), let b = BrimType(prusaName: raw), choice == "Brim" {
+        if let raw = extraSettings.removeValue(forKey: "brim_type"), let b = BrimType(slicerName: raw), choice == "Brim" {
             brimType = b
         }
     }

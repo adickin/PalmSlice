@@ -39,8 +39,8 @@ final class PartSettingsTests: XCTestCase {
 
     func testWholePartAndRangesChangeTheSlice() throws {
         let plain = try filament([])
-        let solid = try filament([settings(["fill_density": "100%"]).userText(partHeight: 20)])
-        let halfSolid = try filament([settings(ranges: [.init(minZ: 0, maxZ: 10, settings: ["fill_density": "100%"])])
+        let solid = try filament([settings(["sparse_infill_density": "100%"]).userText(partHeight: 20)])
+        let halfSolid = try filament([settings(ranges: [.init(minZ: 0, maxZ: 10, settings: ["sparse_infill_density": "100%"])])
             .userText(partHeight: 20)])
         XCTAssertGreaterThan(solid, plain * 1.5)
         XCTAssertGreaterThan(halfSolid, plain * 1.2)
@@ -49,30 +49,30 @@ final class PartSettingsTests: XCTestCase {
 
     // A user range over a file's range: split, the user's value wins where they overlap.
     func testUserRangesGoOnTopOfFileRanges() throws {
-        let file = settings(ranges: [.init(minZ: 0, maxZ: 20, settings: ["fill_density": "100%"])]).text()
-        let user = settings(ranges: [.init(minZ: 10, maxZ: 20, settings: ["fill_density": "15%"])]).userText(partHeight: 20)
+        let file = settings(ranges: [.init(minZ: 0, maxZ: 20, settings: ["sparse_infill_density": "100%"])]).text()
+        let user = settings(ranges: [.init(minZ: 10, maxZ: 20, settings: ["sparse_infill_density": "15%"])]).userText(partHeight: 20)
         let fileOnly = try filament([file])
         let both = try filament([file, user])
-        let halfSolid = try filament([settings(ranges: [.init(minZ: 0, maxZ: 10, settings: ["fill_density": "100%"])]).text()])
+        let halfSolid = try filament([settings(ranges: [.init(minZ: 0, maxZ: 10, settings: ["sparse_infill_density": "100%"])]).text()])
         XCTAssertLessThan(both, fileOnly * 0.9)
         XCTAssertEqual(both, halfSolid, accuracy: halfSolid * 0.02)
     }
 
     // Ranges past the top end there; empty or upside-down ones are dropped.
     func testUserTextClampsAndDropsRanges() {
-        let s = settings(ranges: [.init(minZ: 5, maxZ: 50, settings: ["perimeters": "4"]),
-                                  .init(minZ: 8, maxZ: 3, settings: ["perimeters": "4"]),
+        let s = settings(ranges: [.init(minZ: 5, maxZ: 50, settings: ["wall_loops": "4"]),
+                                  .init(minZ: 8, maxZ: 3, settings: ["wall_loops": "4"]),
                                   .init(minZ: 0, maxZ: 5, settings: [:]),
-                                  .init(minZ: 25, maxZ: 30, settings: ["perimeters": "4"])])
+                                  .init(minZ: 25, maxZ: 30, settings: ["wall_loops": "4"])])
         let parsed = ModelFileSettings(text: s.userText(partHeight: 20))
         XCTAssertEqual(parsed?.ranges.count, 1)
         XCTAssertEqual(parsed?.ranges.first?.maxZ, 20)
     }
 
     func testAllowedKeysArePerObjectSettings() {
-        XCTAssertTrue(SettingOverrides.allowedKeys.contains("fill_density"))
-        XCTAssertTrue(SettingOverrides.allowedKeys.contains("perimeters"))
-        XCTAssertFalse(SettingOverrides.allowedKeys.contains("skirts"))       // whole print only
+        XCTAssertTrue(SettingOverrides.allowedKeys.contains("sparse_infill_density"))
+        XCTAssertTrue(SettingOverrides.allowedKeys.contains("wall_loops"))
+        XCTAssertFalse(SettingOverrides.allowedKeys.contains("skirt_loops"))       // whole print only
         XCTAssertFalse(SettingOverrides.allowedKeys.contains("extruder"))    // Parts & Tools sets it
     }
 }

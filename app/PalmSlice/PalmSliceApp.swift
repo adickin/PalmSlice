@@ -17,13 +17,14 @@ struct PalmSliceApp: App {
                     .environmentObject(sliceProfileStore)
                     .environmentObject(materialProfileStore)
                     .task {
-                        // Load PrusaSlicer's vendor presets off the main thread
+                        // Load OrcaSlicer's vendor presets off the main thread
                         // while the splash shows (~1.5 s). Built-in printers are
                         // generated from them, so the stores load afterwards.
                         await Task.detached(priority: .userInitiated) { PresetLibrary.load() }.value
                         profileStore.load()
-                        sliceProfileStore.load()
-                        materialProfileStore.load()
+                        let printer = profileStore.selectedProfile?.systemPreset
+                        sliceProfileStore.load(printerPreset: printer)
+                        materialProfileStore.load(printerPreset: printer)
                     }
                     .fullScreenCover(isPresented: $showEULA) {
                         EULAView {

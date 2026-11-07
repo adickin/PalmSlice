@@ -2,8 +2,23 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-07
+
+- **Defaults come from OrcaSlicer, per printer.** The quality list is the selected printer's own OrcaSlicer qualities (e.g. 15 for the Snapmaker U1, 2 for the Ender-3 S1), and switching printers switches to that printer's default quality. Materials list the printer's default filament and OrcaSlicer's generic per type, with **All OrcaSlicer Filaments…** to search every compatible filament (a pick stays on the list)
+- Your own qualities and materials store **only what you change** and apply it over OrcaSlicer: a quality over the printer's OrcaSlicer quality nearest its layer height (so it works on every printer), a material over its filament (or the printer's filament of its type). Editing an OrcaSlicer entry saves your copy as a new one
+- Saved qualities and materials were **reset** (new `slice_qualities.json` / `materials.json`); PalmSlice's own Draft / Standard / Fine / Thick Walls / PLA / PETG / ABS / TPU are replaced by OrcaSlicer's. Lightweight LW-PLA, 3DLabPrint RC Plane and eSUN PLA-LW remain, as their changes only
+- Saved copies of the built-in printers are refreshed once from their OrcaSlicer presets (they still carried PrusaSlicer's start G-code and limits), keeping name and verified state
+- DEBUG: `PALMSLICE_DEBUG_SCREEN=qualityPicker` / `materialPicker`
+
 ## 2026-11-06
 
+- **Slicing engine moved from PrusaSlicer 2.9.6 to OrcaSlicer 2.4.2** (branch `orcaslicer`; the PrusaSlicer version is on `PrusaSlicerVersion`). libslic3r is built from OrcaSlicer (`scripts/13_orcaslicer.sh`, `13b_orca_deps.sh`, `14_orca_libslic3r.sh`, `patches/orcaslicer_ios.patch`) into `~/ios-sysroot-*/orca`; the PrusaSlicer-only build steps are gone. The bridge keeps its C API
+- **OrcaSlicer's vendor profiles** (1,001 printers, incl. a native Snapmaker U1) replace the PrusaSlicer `.ini` bundles and PalmSlice's own U1 bundle; `scripts/15_orca_profiles.sh` copies them into `app/PalmSlice/OrcaResources` (generated, not committed). Built-in printers point at the OrcaSlicer presets (the CR-10 becomes the CR-10 V2, which OrcaSlicer has)
+- Profiles use **OrcaSlicer setting names**. Saved printer / material / slice profiles are migrated once on launch (`OrcaMigration`); PrusaSlicer `.ini` files, PrusaSlicer 3MF projects and their per-object settings are read through a PrusaSlicer → OrcaSlicer key translation in libslic3r. A material's bed temperature applies to every OrcaSlicer plate type; the slice starts on the printer's default plate
+- **ColorMix (mixes) is not available** on the OrcaSlicer backend: the Mixes button is hidden and a file's mixes import as the object's own tool. Colour painting is limited to 16 tools (OrcaSlicer's limit)
+- New import formats via OrcaSlicer: DRC, PLY and USD/USDZ (through ModelIO)
+- Fixes found along the way: the bridge now sizes multi-tool settings like OrcaSlicer's GUI (filament map, per-filament values, purge volumes computed from filament colours, `filament_self_index` — without it every tool printed at tool 1's temperature); uninitialized `Print` members (`m_isBBLPrinter`, plate origin) are set; Boost's ABI defines are now used everywhere (the cause of the old Boost.Filesystem empty-path workaround)
+- Build 1.0 (4) — the first on OrcaSlicer — uploaded to App Store Connect (via the App Store Connect API key, Xcode's account sign-in had expired); `CFBundleVersion` bumped to 5
 - Build 1.0 (3) uploaded to App Store Connect; `CFBundleVersion` bumped to 4
 
 ## 2026-11-01

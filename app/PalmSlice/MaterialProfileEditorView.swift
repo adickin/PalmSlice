@@ -31,7 +31,7 @@ struct MaterialProfileEditorView: View {
                     onResetBase: draft.basePreset == nil ? nil : { draft.basePreset = nil })
                 if mode == .edit, let template = BuiltInMaterialProfiles.template(named: draft.builtInName) {
                     ResetToDefaultSection(kind: "material") {
-                        var m = template
+                        var m = materialProfileStore.resolved(template)
                         m.id = draft.id
                         draft = m
                     }
@@ -243,7 +243,15 @@ struct MaterialProfileEditorView: View {
     // MARK: - Save
 
     private func save() {
-        if mode == .add {
+        if draft.isSystem {
+            // OrcaSlicer's filaments aren't changed; the edit becomes the user's own.
+            var copy = draft
+            copy.id = UUID()
+            copy.isSystem = false
+            if copy.name == MaterialProfile.system(draft.basePreset ?? "").name { copy.name = "My " + copy.name }
+            materialProfileStore.add(copy)
+            materialProfileStore.select(id: copy.id)
+        } else if mode == .add {
             materialProfileStore.add(draft)
         } else {
             materialProfileStore.update(draft)

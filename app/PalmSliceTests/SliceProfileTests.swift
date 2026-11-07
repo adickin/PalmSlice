@@ -4,7 +4,7 @@ import XCTest
 final class SliceProfileTests: XCTestCase {
 
     // A profile saved before the Advanced settings existed must still decode,
-    // keeping its values and taking PrusaSlicer's defaults for the new keys.
+    // keeping its values and taking the defaults for the new keys.
     func testDecodesProfileSavedBeforeAdvancedSettings() throws {
         var original = BuiltInSliceProfiles.standard
         original.wallCount = 5
@@ -34,14 +34,14 @@ final class SliceProfileTests: XCTestCase {
 
         let evenOdd = try slice(stl, with: BuiltInSliceProfiles.rcPlane)
         var regularProfile = BuiltInSliceProfiles.rcPlane
-        regularProfile.slicingMode = .regular
+        regularProfile.extraSettings["slicing_mode"] = "regular"
         let regular = try slice(stl, with: regularProfile)
 
         XCTAssertTrue(evenOdd.contains("; slicing_mode = even_odd"), "slicing_mode not applied")
-        XCTAssertTrue(evenOdd.contains("; perimeter_generator = classic"), "perimeter_generator not applied")
-        XCTAssertTrue(evenOdd.contains("; external_perimeters_first = 1"))
+        XCTAssertTrue(evenOdd.contains("; wall_generator = classic"), "wall_generator not applied")
+        XCTAssertTrue(evenOdd.contains("; wall_sequence = outer wall/inner wall"))
         XCTAssertTrue(evenOdd.contains("; slice_closing_radius = 0\n"))
-        XCTAssertTrue(evenOdd.contains("; extrusion_width = 0.42\n"))
+        XCTAssertTrue(evenOdd.contains("; line_width = 0.42\n"))
 
         let evenOddMM = try XCTUnwrap(filamentUsedMM(evenOdd))
         let regularMM = try XCTUnwrap(filamentUsedMM(regular))
@@ -96,41 +96,46 @@ final class SliceProfileTests: XCTestCase {
     }
 }
 
-/// PalmSlice profiles ↔ PrusaSlicer settings.
+/// PalmSlice profiles ↔ OrcaSlicer settings.
 final class ProfileSettingsTests: XCTestCase {
 
-    private let ender = "Creality Ender-3 S1 (0.4 mm nozzle)"
+    private let ender = "Creality Ender-3 S1 0.4 nozzle"
 
     // Every built-in profile's settings must be accepted by libslic3r, and
     // read back into an identical profile.
     func testBuiltInProfilesRoundTripThroughLibslic3r() throws {
-        func roundTrip<P: PrusaSettingsConvertible>(_ profile: P, empty: P) throws -> P {
+        func roundTrip<P: SlicerSettingsConvertible>(_ profile: P, empty: P) throws -> P {
             guard let h = slicer_create() else { throw XCTSkip("slicer_create") }
             defer { slicer_destroy(h) }
             try SliceSetup.apply(profile, label: "profile", to: h)
             var readBack: [String: String] = [:]
-            for key in profile.prusaSettings().keys {
+            for key in profile.slicerSettings().keys {
                 readBack[key] = slicer_get_setting(h, key).map { String(cString: $0) }
             }
             var copy = empty
-            copy.update(fromPrusa: readBack)
+            copy.update(from: readBack)
             return copy
         }
-        for p in BuiltInSliceProfiles.all {
+        // The built-ins hold only their changes: resolved over a base first.
+        for changes in BuiltInSliceProfiles.all {
+            let p = SliceSetup.resolved(changes, base: PresetLibrary.base(
+                printerPreset: nil, layerHeight: changes.ownLayerHeight, filamentType: "PLA"))
             let copy = try roundTrip(p, empty: SliceProfile())
-            XCTAssertEqual(copy.typedPrusaSettings(), p.typedPrusaSettings(), p.name)
+            XCTAssertEqual(copy.typedSlicerSettings(), p.typedSlicerSettings(), p.name)
         }
-        for p in BuiltInMaterialProfiles.all {
+        for changes in BuiltInMaterialProfiles.all {
+            let p = SliceSetup.resolved(changes, filament: PresetLibrary.base(
+                printerPreset: nil, filamentType: changes.ownFilamentType)?.filament)
             let copy = try roundTrip(p, empty: MaterialProfile())
-            XCTAssertEqual(copy.typedPrusaSettings(), p.typedPrusaSettings(), p.name)
+            XCTAssertEqual(copy.typedSlicerSettings(), p.typedSlicerSettings(), p.name)
         }
         for p in BuiltInProfiles.all {
             let copy = try roundTrip(p, empty: PrinterProfile())
-            XCTAssertEqual(copy.typedPrusaSettings(), p.typedPrusaSettings(), p.name)
+            XCTAssertEqual(copy.typedSlicerSettings(), p.typedSlicerSettings(), p.name)
         }
     }
 
-    // Importing a PrusaSlicer preset into a PalmSlice profile is lossless:
+    // Importing an OrcaSlicer preset into a PalmSlice profile is lossless:
     // slicing with the imported profile on top of a *different* preset of the
     // same type gives the same G-code as slicing with the original preset.
     func testImportedPrintPresetSlicesIdentically() throws {
@@ -139,7 +144,7 @@ final class ProfileSettingsTests: XCTestCase {
             $0 != base.print && PresetLibrary.isCompatible(.print, $0, printer: ender)
         })
         var imported = SliceProfile()
-        imported.importPrusaSettings(try XCTUnwrap(PresetLibrary.settings(.print, base.print)))
+        imported.importSlicerSettings(try XCTUnwrap(PresetLibrary.settings(.print, base.print)))
         var otherBase = base
         otherBase.print = other
         try assertSameGCode(base: base, otherBase: otherBase, imported: imported, what: base.print)
@@ -150,7 +155,7 @@ final class ProfileSettingsTests: XCTestCase {
         let other = try XCTUnwrap(PresetLibrary.base(printerPreset: ender, filamentType: "PETG")).filament
         XCTAssertNotEqual(other, base.filament)
         var imported = MaterialProfile()
-        imported.importPrusaSettings(try XCTUnwrap(PresetLibrary.settings(.filament, base.filament)))
+        imported.importSlicerSettings(try XCTUnwrap(PresetLibrary.settings(.filament, base.filament)))
         var otherBase = base
         otherBase.filament = other
         try assertSameGCode(base: base, otherBase: otherBase, imported: imported, what: base.filament)
@@ -159,13 +164,13 @@ final class ProfileSettingsTests: XCTestCase {
     func testImportedPrinterPresetSlicesIdentically() throws {
         let base = try XCTUnwrap(PresetLibrary.base(printerPreset: ender, filamentType: "PLA"))
         var imported = PrinterProfile()
-        imported.importPrusaSettings(try XCTUnwrap(PresetLibrary.settings(.printer, ender)))
+        imported.importSlicerSettings(try XCTUnwrap(PresetLibrary.settings(.printer, ender)))
         var otherBase = base
-        otherBase.printer = "Creality Ender-3 V2 (0.4 mm nozzle)"
+        otherBase.printer = "Creality Ender-3 V2 0.4 nozzle"
         try assertSameGCode(base: base, otherBase: otherBase, imported: imported, what: ender)
     }
 
-    private func assertSameGCode<P: PrusaSettingsConvertible>(base: PresetBase, otherBase: PresetBase,
+    private func assertSameGCode<P: SlicerSettingsConvertible>(base: PresetBase, otherBase: PresetBase,
                                                                imported: P, what: String) throws {
         let a = strip(try sliceSphere(base: base, apply: { _ in }))
         let b = strip(try sliceSphere(base: otherBase, apply: {
@@ -195,22 +200,27 @@ final class ProfileSettingsTests: XCTestCase {
         return try String(contentsOf: out, encoding: .utf8)
     }
 
-    /// Drops lines that legitimately differ: the timestamp and preset names.
+    /// Drops lines that legitimately differ: the timestamp, preset names,
+    /// object label ids (OrcaSlicer numbers objects process-wide) and the
+    /// filament colour (OrcaSlicer's presets have none; PalmSlice's do).
     private func strip(_ gcode: String) -> [String] {
         gcode.split(separator: "\n").map(String.init).filter {
             !$0.hasPrefix("; generated by") && !$0.hasPrefix("; print_settings_id")
+                && !$0.hasPrefix("; filament_colour") && !$0.hasPrefix("; extruder_colour")
                 && !$0.hasPrefix("; filament_settings_id") && !$0.hasPrefix("; printer_settings_id")
+                && !$0.contains("label id") && !$0.contains("printing object") && !$0.hasPrefix("M486")
+                && !$0.contains("EXCLUDE_OBJECT")
         }
     }
 
     func testValueEncoding() {
-        XCTAssertEqual(PrusaValue.float(0.2), "0.2")
-        XCTAssertEqual(PrusaValue.float(45), "45")
-        XCTAssertEqual(PrusaValue.percent(15), "15%")
-        XCTAssertEqual(PrusaValue.string("G28\nG1 X0\\"), "G28\\nG1 X0\\\\")
-        XCTAssertEqual(PrusaValue.parseString("G28\\nG1 X0\\\\"), "G28\nG1 X0\\")
-        XCTAssertEqual(PrusaValue.strings(["PLA"]), "PLA")
-        XCTAssertEqual(PrusaValue.strings(["Generic PLA"]), "\"Generic PLA\"")
+        XCTAssertEqual(SlicerValue.float(0.2), "0.2")
+        XCTAssertEqual(SlicerValue.float(45), "45")
+        XCTAssertEqual(SlicerValue.percent(15), "15%")
+        XCTAssertEqual(SlicerValue.string("G28\nG1 X0\\"), "G28\\nG1 X0\\\\")
+        XCTAssertEqual(SlicerValue.parseString("G28\\nG1 X0\\\\"), "G28\nG1 X0\\")
+        XCTAssertEqual(SlicerValue.strings(["PLA"]), "PLA")
+        XCTAssertEqual(SlicerValue.strings(["Generic PLA"]), "\"Generic PLA\"")
         XCTAssertEqual(SettingsText.splitStrings("\"a b\";\"c\""), ["a b", "c"])
         XCTAssertEqual(SettingsText.splitStrings("PLA;PETG"), ["PLA", "PETG"])
     }
@@ -220,38 +230,39 @@ final class AllSettingsTests: XCTestCase {
     // Every key in the vendor presets has a description for the All Settings list.
     func testEveryPresetKeyHasSettingInfo() {
         for type in [PresetType.print, .filament, .printer] {
-            let keys = PrusaKeys.keys(for: type)
+            let keys = SlicerKeys.keys(for: type)
             XCTAssertGreaterThan(keys.count, 30, "\(type)")
             let missing = keys.filter { SettingInfo.cached($0) == nil }
             XCTAssertTrue(missing.isEmpty, "no info for \(missing.sorted())")
         }
-        let info = SettingInfo.cached("fill_pattern")!
+        let info = SettingInfo.cached("sparse_infill_pattern")!
         XCTAssertEqual(info.kind, .enum_)
         XCTAssertTrue(info.enumValues.contains("gyroid"))
-        XCTAssertTrue(SettingInfo.cached("start_gcode")!.isMultiline)
+        XCTAssertTrue(SettingInfo.cached("machine_start_gcode")!.isMultiline)
     }
 
     // Typed keys go to their field; others to extraSettings; editing the field
     // clears a verbatim override.
-    func testSetPrusaSettingRouting() {
+    func testSetSlicerSettingRouting() {
         var p = SliceProfile()
-        p.setPrusaSetting("perimeters", "5")
+        p.setSlicerSetting("wall_loops", "5")
         XCTAssertEqual(p.wallCount, 5)
-        XCTAssertNil(p.extraSettings["perimeters"])
-        p.setPrusaSetting("seam_position", "rear")
-        XCTAssertEqual(p.extraSettings["seam_position"], "rear")
-        p.setPrusaSetting("first_layer_speed", "50%")
-        XCTAssertEqual(p.prusaSettings()["first_layer_speed"], "50%")
-        p.firstLayerSpeed = 25
-        XCTAssertEqual(p.prusaSettings()["first_layer_speed"], "25")
+        XCTAssertNil(p.extraSettings["wall_loops"])
+        p.setSlicerSetting("seam_position", "back")
+        XCTAssertEqual(p.extraSettings["seam_position"], "back")
+        p.setSlicerSetting("initial_layer_print_height", "50%")
+        XCTAssertEqual(p.slicerSettings()["initial_layer_print_height"], "50%")
+        p.firstLayerHeight = 0.25
+        XCTAssertEqual(p.slicerSettings()["initial_layer_print_height"], "0.25")
     }
 }
 
 final class ProfileIniTests: XCTestCase {
-    private let creality = "0.16 mm OPTIMAL (0.4 mm nozzle) @CREALITY"
+    private let creality = "0.16mm Optimal @Creality Ender3S1"
 
     // A PrusaSlicer config bundle: presets inherit from a system preset or
-    // from each other; abstract "*parent*" sections aren't imported.
+    // from each other; abstract "*parent*" sections aren't imported. Its
+    // PrusaSlicer keys (perimeters, fill_density, temperature) are renamed.
     func testBundleResolvesInheritance() throws {
         let text = """
         [print:*shared*]
@@ -274,7 +285,7 @@ final class ProfileIniTests: XCTestCase {
         XCTAssertEqual(prints[1].infillDensity, 0)
         // The system preset's values are carried in, e.g. its layer height.
         let preset = try XCTUnwrap(PresetLibrary.settings(.print, creality))
-        XCTAssertEqual(PrusaValue.float(prints[0].layerHeight), preset["layer_height"])
+        XCTAssertEqual(SlicerValue.float(prints[0].layerHeight), preset["layer_height"])
 
         let materials = ProfileIni.profiles(MaterialProfile.self, from: text, fileName: "bundle.ini")
         XCTAssertEqual(materials.map(\.name), ["Some filament"])
@@ -307,7 +318,10 @@ final class ProfileIniTests: XCTestCase {
         original.extraSettings["seam_position"] = "rear"
         let text = ProfileIni.text(original, baseSettings: base)
         let back = try XCTUnwrap(ProfileIni.profiles(SliceProfile.self, from: text, fileName: "x.ini").first)
-        XCTAssertEqual(back.prusaSettings(), base.merging(original.prusaSettings()) { _, own in own }
-            .filter { !PrusaKeys.ignored.contains($0.key) })
+        // Compared as libslic3r re-serializes them (a few values aren't
+        // written back character for character).
+        XCTAssertEqual(OrcaMigration.normalize(back.slicerSettings()),
+                       OrcaMigration.normalize(base.merging(original.slicerSettings()) { _, own in own }
+                           .filter { !SlicerKeys.ignored.contains($0.key) }))
     }
 }

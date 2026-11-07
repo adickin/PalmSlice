@@ -25,11 +25,11 @@ struct PrinterProfile: Codable, Identifiable {
     var systemPreset: String? = nil
 
     // MARK: Bed / Machine
-    var bedX: Double = 220.0 { didSet { extraSettings["bed_shape"] = nil } }  // mm (width)
-    var bedY: Double = 220.0 { didSet { extraSettings["bed_shape"] = nil } }  // mm (depth)
+    var bedX: Double = 220.0 { didSet { extraSettings["printable_area"] = nil } }  // mm (width)
+    var bedY: Double = 220.0 { didSet { extraSettings["printable_area"] = nil } }  // mm (depth)
     var bedZ: Double = 250.0               // mm (height)
-    var buildPlateShape: BuildPlateShape = .rectangular { didSet { extraSettings["bed_shape"] = nil } }
-    var originAtCenter: Bool = false { didSet { extraSettings["bed_shape"] = nil } }
+    var buildPlateShape: BuildPlateShape = .rectangular { didSet { extraSettings["printable_area"] = nil } }
+    var originAtCenter: Bool = false { didSet { extraSettings["printable_area"] = nil } }
     var heatedBed: Bool = true
     var heatedBuildVolume: Bool = false
 

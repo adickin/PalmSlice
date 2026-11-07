@@ -7,7 +7,7 @@ final class ToolMaterialsTests: XCTestCase {
         .deletingLastPathComponent().appendingPathComponent("Fixtures")
 
     private func xl5T() throws -> PrinterProfile {
-        try XCTUnwrap(PrinterProfile(systemPreset: "Original Prusa XL - 5T 0.4 nozzle"))
+        try XCTUnwrap(PrinterProfile(systemPreset: "Prusa XL 5T 0.4 nozzle"))
     }
 
     private func setting(_ h: SlicerHandle, _ key: String) -> String {
@@ -23,15 +23,15 @@ final class ToolMaterialsTests: XCTestCase {
         var blue = BuiltInMaterialProfiles.petg; blue.colour = "#0000FF"
         try SliceSetup.configure(h, printer: printer, material: red,
                                  slice: BuiltInSliceProfiles.rcPlane, toolMaterials: [blue, blue, red, blue])
-        XCTAssertEqual(PrusaValue.parseStrings(setting(h, "filament_type")), ["PLA", "PETG", "PETG", "PLA", "PETG"])
-        XCTAssertEqual(PrusaValue.parseStrings(setting(h, "filament_colour")),
+        XCTAssertEqual(SlicerValue.parseStrings(setting(h, "filament_type")), ["PLA", "PETG", "PETG", "PLA", "PETG"])
+        XCTAssertEqual(SlicerValue.parseStrings(setting(h, "filament_colour")),
                        ["#FF0000", "#0000FF", "#0000FF", "#FF0000", "#0000FF"])
-        let temps = PrusaValue.parseFloats(setting(h, "temperature")).map { Int($0) }
+        let temps = SlicerValue.parseFloats(setting(h, "nozzle_temperature")).map { Int($0) }
         let (r, b) = (red.otherLayersTemp, blue.otherLayersTemp)
         XCTAssertEqual(temps, [r, b, b, r, b])
-        XCTAssertEqual(PrusaValue.parseStrings(setting(h, "filament_settings_id")).count, 5)
-        XCTAssertNotEqual(PrusaValue.parseStrings(setting(h, "filament_settings_id"))[1],
-                          PrusaValue.parseStrings(setting(h, "filament_settings_id"))[0])
+        XCTAssertEqual(SlicerValue.parseStrings(setting(h, "filament_settings_id")).count, 5)
+        XCTAssertNotEqual(SlicerValue.parseStrings(setting(h, "filament_settings_id"))[1],
+                          SlicerValue.parseStrings(setting(h, "filament_settings_id"))[0])
     }
 
     // Without tool materials every tool uses the first material, as before.
@@ -40,7 +40,7 @@ final class ToolMaterialsTests: XCTestCase {
         defer { slicer_destroy(h) }
         try SliceSetup.configure(h, printer: try xl5T(), material: BuiltInMaterialProfiles.petg,
                                  slice: BuiltInSliceProfiles.rcPlane)
-        XCTAssertEqual(Set(PrusaValue.parseStrings(setting(h, "filament_type"))), ["PETG"])
+        XCTAssertEqual(Set(SlicerValue.parseStrings(setting(h, "filament_type"))), ["PETG"])
     }
 
     // A multi-part 3MF slices on the XL 5T with a different material per tool.
@@ -67,7 +67,7 @@ final class ToolMaterialsTests: XCTestCase {
         let gcode = try String(contentsOf: out, encoding: .utf8)
         // PETG in tool 2 is heated to its own temperature.
         let petgTemp = BuiltInMaterialProfiles.petg.otherLayersTemp
-        XCTAssertTrue(gcode.contains("S\(petgTemp) T1"), "no M104/M109 S\(petgTemp) T1")
+        XCTAssertTrue(gcode.contains("S\(petgTemp) T1") || gcode.contains("T1 S\(petgTemp)"), "no M104/M109 S\(petgTemp) T1")
         XCTAssertTrue(gcode.contains("; filament_type = PLA;PETG;PLA"))
     }
 }

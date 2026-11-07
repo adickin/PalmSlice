@@ -42,7 +42,7 @@ struct SliceProfileEditorView: View {
                     onResetBase: draft.basePreset == nil ? nil : { draft.basePreset = nil })
                 if mode == .edit, let template = BuiltInSliceProfiles.template(named: draft.builtInName) {
                     ResetToDefaultSection(kind: "slice profile") {
-                        var p = template
+                        var p = sliceProfileStore.resolved(template)
                         p.id = draft.id
                         draft = p
                     }
@@ -100,24 +100,24 @@ struct SliceProfileEditorView: View {
 
     // Settings without a typed field, read over the base preset and written
     // to the profile's extra settings.
-    private func setting(_ key: String) -> String? { draft.prusaSettings()[key] ?? baseSettings[key] }
+    private func setting(_ key: String) -> String? { draft.slicerSettings()[key] ?? baseSettings[key] }
     private func boolSetting(_ key: String, _ fallback: Bool = false) -> Binding<Bool> {
-        Binding(get: { setting(key).flatMap(PrusaValue.parseBool) ?? fallback },
-                set: { draft.setPrusaSetting(key, PrusaValue.bool($0)) })
+        Binding(get: { setting(key).flatMap(SlicerValue.parseBool) ?? fallback },
+                set: { draft.setSlicerSetting(key, SlicerValue.bool($0)) })
     }
     private func floatSetting(_ key: String, _ fallback: Float = 0, integer: Bool = false) -> Binding<Float> {
-        Binding(get: { setting(key).flatMap(PrusaValue.parseFloat).map(Float.init) ?? fallback },
-                set: { draft.setPrusaSetting(key, PrusaValue.float(Double(integer ? $0.rounded() : $0))) })
+        Binding(get: { setting(key).flatMap(SlicerValue.parseFloat).map(Float.init) ?? fallback },
+                set: { draft.setSlicerSetting(key, SlicerValue.float(Double(integer ? $0.rounded() : $0))) })
     }
 
     /// Wipe tower and ooze control, for printers with more than one tool.
     @ViewBuilder
     private var multiMaterialSection: some View {
         Section {
-            Toggle("Wipe Tower", isOn: boolSetting("wipe_tower", true))
-            if boolSetting("wipe_tower", true).wrappedValue {
-                LabeledContent("Width (mm)") { FloatField(value: floatSetting("wipe_tower_width", 60), fmt: "%g") }
-                LabeledContent("Brim Width (mm)") { FloatField(value: floatSetting("wipe_tower_brim_width", 2), fmt: "%g") }
+            Toggle("Wipe Tower", isOn: boolSetting("enable_prime_tower", true))
+            if boolSetting("enable_prime_tower", true).wrappedValue {
+                LabeledContent("Width (mm)") { FloatField(value: floatSetting("prime_tower_width", 60), fmt: "%g") }
+                LabeledContent("Brim Width (mm)") { FloatField(value: floatSetting("prime_tower_brim_width", 2), fmt: "%g") }
                 LabeledContent("Bridging (mm)") { FloatField(value: floatSetting("wipe_tower_bridging", 10), fmt: "%g") }
                 Toggle("Wipe into Infill", isOn: boolSetting("wipe_into_infill"))
                 Toggle("Wipe into Objects", isOn: boolSetting("wipe_into_objects"))
@@ -421,7 +421,16 @@ struct SliceProfileEditorView: View {
     // MARK: - Save
 
     private func save() {
-        if mode == .add {
+        if draft.isSystem {
+            // OrcaSlicer's qualities aren't changed; the edit becomes the user's own.
+            var copy = draft
+            copy.id = UUID()
+            copy.isSystem = false
+            copy.basePreset = nil
+            if copy.name == SliceProfile.system(draft.basePreset ?? "").name { copy.name = "My " + copy.name }
+            sliceProfileStore.add(copy)
+            sliceProfileStore.select(id: copy.id)
+        } else if mode == .add {
             sliceProfileStore.add(draft)
         } else {
             sliceProfileStore.update(draft)

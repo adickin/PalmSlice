@@ -32,14 +32,14 @@ struct ModelFileSettingsView: View {
                         }
                     }
                     ForEach(Array(fs.ranges.enumerated()), id: \.offset) { _, range in
-                        Section("\(PrusaValue.float(range.minZ))–\(PrusaValue.float(range.maxZ)) mm above the bed") {
+                        Section("\(SlicerValue.float(range.minZ))–\(SlicerValue.float(range.maxZ)) mm above the bed") {
                             settingRows(range.settings)
                         }
                     }
                     if let heights = fs.layerHeightRange {
                         Section("Layer Height") {
                             LabeledContent("Variable",
-                                           value: "\(PrusaValue.float(heights.lowerBound))–\(PrusaValue.float(heights.upperBound)) mm")
+                                           value: "\(SlicerValue.float(heights.lowerBound))–\(SlicerValue.float(heights.upperBound)) mm")
                         }
                     }
                 }
@@ -99,22 +99,24 @@ enum FileProfiles {
     /// The profiles the file's settings make (not yet added to any store).
     static func candidates(_ project: [String: String], fallback: String) -> (SliceProfile, MaterialProfile) {
         let n = names(project, fallback: fallback)
-        var slice = SliceProfile(); slice.importPrusaSettings(project); slice.name = n.print
-        var material = MaterialProfile(); material.importPrusaSettings(project); material.name = n.filament
+        var slice = SliceProfile(); slice.importSlicerSettings(project); slice.name = n.print
+        var material = MaterialProfile(); material.importSlicerSettings(project); material.name = n.filament
         return (slice, material)
     }
 
     /// An existing profile with the candidate's name — or a numbered copy
-    /// "name (2)" … — whose settings are the same.
-    static func match<P: PrusaIniProfile>(_ candidate: P, in profiles: [P]) -> P? {
-        profiles.first { p in
-            (p.name == candidate.name || p.name.hasPrefix(candidate.name + " (")) &&
-                p.prusaSettings() == candidate.prusaSettings()
+    /// "name (2)" … — whose settings are the same (compared as `changes`:
+    /// what each holds over its base).
+    static func match<P: IniProfile>(_ candidate: P, in profiles: [P],
+                                     changes: (P) -> [String: String] = { $0.slicerSettings() }) -> P? {
+        let wanted = changes(candidate)
+        return profiles.first { p in
+            (p.name == candidate.name || p.name.hasPrefix(candidate.name + " (")) && changes(p) == wanted
         }
     }
 
     /// First free "name", "name (2)", "name (3)"…
-    static func freeName<P: PrusaIniProfile>(_ name: String, in profiles: [P]) -> String {
+    static func freeName<P: IniProfile>(_ name: String, in profiles: [P]) -> String {
         let taken = Set(profiles.map(\.name))
         guard taken.contains(name) else { return name }
         var n = 2
@@ -128,7 +130,8 @@ enum FileProfiles {
                                 slices: SliceProfileStore, materials: MaterialProfileStore) -> Bool {
         let (slice, material) = candidates(project, fallback: fallback)
         guard let s = slices.selectedProfile, let m = materials.selectedProfile else { return false }
-        return match(slice, in: [s]) != nil && match(material, in: [m]) != nil
+        return match(slice, in: [s], changes: { slices.changesOnly($0).extraSettings }) != nil
+            && match(material, in: [m], changes: { materials.changesOnly($0).extraSettings }) != nil
     }
 
     /// Selects the file's slice profile and material, adding them if needed.
@@ -138,7 +141,7 @@ enum FileProfiles {
                       slices: SliceProfileStore, materials: MaterialProfileStore) -> String {
         var (slice, material) = candidates(project, fallback: fallback)
         var added: [String] = []
-        if let existing = match(slice, in: slices.profiles) {
+        if let existing = match(slice, in: slices.customProfiles, changes: { slices.changesOnly($0).extraSettings }) {
             slices.select(id: existing.id)
             slice = existing
         } else {
@@ -146,7 +149,7 @@ enum FileProfiles {
             slices.add(slice); slices.select(id: slice.id)
             added.append(slice.name)
         }
-        if let existing = match(material, in: materials.profiles) {
+        if let existing = match(material, in: materials.customProfiles, changes: { materials.changesOnly($0).extraSettings }) {
             materials.select(id: existing.id)
             material = existing
         } else {

@@ -22,7 +22,7 @@ struct SettingInfo {
 
     init?(key: String) {
         guard let raw = slicer_setting_info(key) else { return nil }
-        let f = SettingsText.parse(String(cString: raw)).mapValues(PrusaValue.parseString)
+        let f = SettingsText.parse(String(cString: raw)).mapValues(SlicerValue.parseString)
         self.key = key
         kind = Kind(rawValue: f["kind"] ?? "") ?? .string
         isVector = f["vector"] == "1"
@@ -58,7 +58,7 @@ struct SettingInfo {
             if let i = enumValues.firstIndex(of: value), i < enumLabels.count { return enumLabels[i] }
             return value
         case .string:
-            let text = PrusaValue.parseString(value)
+            let text = SlicerValue.parseString(value)
             let firstLine = text.split(separator: "\n", omittingEmptySubsequences: false).first.map(String.init) ?? ""
             let lines = text.split(separator: "\n").count
             if text.isEmpty { return "—" }
@@ -71,7 +71,7 @@ struct SettingInfo {
 
 /// "Defaults" section shown at the bottom of each profile editor: which
 /// PrusaSlicer preset the profile builds on, and every PrusaSlicer setting.
-struct DefaultsSection<P: PrusaIniProfile>: View {
+struct DefaultsSection<P: IniProfile>: View {
     @Binding var profile: P
     /// Name of the PrusaSlicer preset this profile is layered on.
     let basePresetName: String?
@@ -102,7 +102,7 @@ struct DefaultsSection<P: PrusaIniProfile>: View {
                     Text(changed == 0 ? "" : "\(changed) changed")
                 }
             }
-            ShareLink(item: PrusaIniFile(fileName: profile.name,
+            ShareLink(item: IniProfileFile(fileName: profile.name,
                                          text: ProfileIni.text(profile, baseSettings: baseSettings)),
                       preview: SharePreview("\(profile.name).ini")) {
                 Label("Export .ini", systemImage: "square.and.arrow.up")
@@ -117,7 +117,7 @@ struct DefaultsSection<P: PrusaIniProfile>: View {
 
 /// Every PrusaSlicer setting of a profile's type, grouped by PrusaSlicer's
 /// categories, with the effective value (profile, else base preset).
-struct AllSettingsView<P: PrusaSettingsConvertible>: View {
+struct AllSettingsView<P: SlicerSettingsConvertible>: View {
     @Binding var profile: P
     let baseSettings: [String: String]
     /// Only these settings (e.g. the ones a part can set); nil = all of the preset type's.
@@ -133,13 +133,13 @@ struct AllSettingsView<P: PrusaSettingsConvertible>: View {
     }
 
     private var rows: [Row] {
-        var keys = PrusaKeys.keys(for: P.presetType).union(profile.extraSettings.keys)
+        var keys = SlicerKeys.keys(for: P.presetType).union(profile.extraSettings.keys)
         if let allowedKeys { keys.formIntersection(allowedKeys) }
         let terms = search.lowercased().split(separator: " ")
         return keys.compactMap { SettingInfo.cached($0) }
             .filter { info in
                 if changedOnly && profile.extraSettings[info.key] == nil
-                    && !(P.typedKeys.contains(info.key) && profile.prusaSettings()[info.key] != baseSettings[info.key]) {
+                    && !(P.typedKeys.contains(info.key) && profile.slicerSettings()[info.key] != baseSettings[info.key]) {
                     return false
                 }
                 if !showExpert && info.mode >= 2 && search.isEmpty && profile.extraSettings[info.key] == nil {
@@ -155,7 +155,7 @@ struct AllSettingsView<P: PrusaSettingsConvertible>: View {
 
     var body: some View {
         let grouped = Dictionary(grouping: rows, by: \.info.category)
-        let effective = profile.prusaSettings()
+        let effective = profile.slicerSettings()
         List {
             Section {
                 Toggle("Changed Only", isOn: $changedOnly)
@@ -198,7 +198,7 @@ struct AllSettingsView<P: PrusaSettingsConvertible>: View {
 
 /// Edits one PrusaSlicer setting. Every value is checked by libslic3r before
 /// it's accepted.
-struct SettingEditView<P: PrusaSettingsConvertible>: View {
+struct SettingEditView<P: SlicerSettingsConvertible>: View {
     let info: SettingInfo
     @Binding var profile: P
     let baseValue: String?
@@ -208,7 +208,7 @@ struct SettingEditView<P: PrusaSettingsConvertible>: View {
     @State private var error: String? = nil
 
     private var currentValue: String {
-        profile.prusaSettings()[info.key] ?? baseValue ?? ""
+        profile.slicerSettings()[info.key] ?? baseValue ?? ""
     }
 
     var body: some View {
@@ -240,12 +240,12 @@ struct SettingEditView<P: PrusaSettingsConvertible>: View {
         .toolbar {
             if !(info.kind == .bool || info.kind == .enum_) {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { apply(info.kind == .string ? PrusaValue.string(text) : text) }
+                    Button("Done") { apply(info.kind == .string ? SlicerValue.string(text) : text) }
                 }
             }
         }
         .onAppear {
-            text = info.kind == .string ? PrusaValue.parseString(currentValue) : currentValue
+            text = info.kind == .string ? SlicerValue.parseString(currentValue) : currentValue
         }
     }
 
@@ -282,7 +282,7 @@ struct SettingEditView<P: PrusaSettingsConvertible>: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .keyboardType(info.kind == .string ? .default : .numbersAndPunctuation)
-                    .onSubmit { apply(info.kind == .string ? PrusaValue.string(text) : text) }
+                    .onSubmit { apply(info.kind == .string ? SlicerValue.string(text) : text) }
                 if !info.units.isEmpty { Text(info.units).foregroundStyle(.secondary) }
             }
             if info.isVector {
@@ -306,9 +306,9 @@ struct SettingEditView<P: PrusaSettingsConvertible>: View {
         if isReset && !P.typedKeys.contains(info.key) {
             profile.extraSettings[info.key] = nil
         } else {
-            profile.setPrusaSetting(info.key, normalized)
+            profile.setSlicerSetting(info.key, normalized)
         }
-        text = info.kind == .string ? PrusaValue.parseString(normalized) : normalized
+        text = info.kind == .string ? SlicerValue.parseString(normalized) : normalized
         if info.kind != .bool && info.kind != .enum_ { dismiss() }
     }
 }

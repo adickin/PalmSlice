@@ -25,15 +25,22 @@ struct MaterialProfilePickerView: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(materialProfileStore.profiles) { profile in
-                    MaterialProfileRowView(
-                        profile: profile,
-                        isSelected: selectedID == profile.id,
-                        onSelect: { choose(profile.id) },
-                        onOpen:   { profileToEdit = profile },
-                        onDelete: { materialProfileStore.delete(id: profile.id) },
-                        canDelete: materialProfileStore.profiles.count > 1
-                    )
+                Section {
+                    ForEach(materialProfileStore.systemProfiles) { row($0) }
+                    Button {
+                        showPresetPicker = true
+                    } label: {
+                        Label("All OrcaSlicer Filaments…", systemImage: "magnifyingglass")
+                    }
+                } header: {
+                    Text("OrcaSlicer · \(profileStore.selectedProfile?.name ?? "this printer")")
+                }
+                Section {
+                    ForEach(materialProfileStore.customProfiles) { row($0) }
+                } header: {
+                    Text("My Materials")
+                } footer: {
+                    Text("Your materials keep only what you change, over their OrcaSlicer filament (or, on a printer that can't use it, the printer's filament of the same type).")
                 }
             }
             .iniImporter(MaterialProfile.self, isPresented: $showIniImport) { imported in
@@ -48,7 +55,6 @@ struct MaterialProfilePickerView: View {
                     Button("New Material") {
                         newProfile = .newProfile(for: profileStore.selectedProfile)
                     }
-                    Button("From Default Filaments…") { showPresetPicker = true }
                     Button("Import .ini…") { showIniImport = true }
                 } label: {
                     Image(systemName: "plus")
@@ -59,16 +65,26 @@ struct MaterialProfilePickerView: View {
             }
             .sheet(isPresented: $showPresetPicker) {
                 PresetPickerView(type: .filament, printerPreset: profileStore.selectedProfile?.systemPreset) { name in
-                    // Let this sheet finish dismissing before presenting the editor.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        newProfile = .from(filamentPreset: name)
-                    }
+                    choose(materialProfileStore.pin(name))
                 }
             }
             .sheet(item: $profileToEdit) { profile in
                 MaterialProfileEditorView(mode: .edit, profile: profile)
             }
         }
+    }
+
+    private func row(_ profile: MaterialProfile) -> some View {
+        let featured = PresetLibrary.featuredFilaments(forPrinter: profileStore.selectedProfile?.systemPreset)
+        return MaterialProfileRowView(
+            profile: profile,
+            isSelected: selectedID == profile.id,
+            onSelect: { choose(profile.id) },
+            onOpen:   { profileToEdit = profile },
+            onDelete: { materialProfileStore.delete(id: profile.id) },
+            // Picked OrcaSlicer filaments come off the list; the printer's own stay.
+            canDelete: !profile.isSystem || !featured.contains(profile.basePreset ?? "")
+        )
     }
 }
 

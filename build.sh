@@ -37,38 +37,34 @@ run_step() {
 # ── Toolchain & source ────────────────────────────────────────────────────────
 run_step  0 "00_prerequisites.sh"  "Install build tools (cmake, ninja, xcodegen)"
 run_step  1 "01_toolchain.sh"      "Download iOS CMake toolchain"
-run_step  2 "02_prusaslicer.sh"    "Clone PrusaSlicer + submodules"
+run_step  2 "13_orcaslicer.sh"     "Clone OrcaSlicer + apply iOS patch"
 
 # ── Core C deps ───────────────────────────────────────────────────────────────
-run_step  3 "03_clipper2.sh"       "Build Clipper2"
-run_step  4 "04_eigen.sh"          "Install Eigen3 headers"
-run_step  5 "05_zlib.sh"           "Build zlib"
-run_step  6 "06_libpng.sh"         "Build libpng"
+run_step  3 "05_zlib.sh"           "Build zlib"
+run_step  4 "06_libpng.sh"         "Build libpng"
 
 # ── Boost ─────────────────────────────────────────────────────────────────────
-run_step  7 "07_boost.sh"          "Build Boost (longest step ~20-40 min)"
-run_step  8 "07b_boost_nowide.sh"  "Build boost::nowide"
+run_step  5 "07_boost.sh"          "Build Boost (longest step ~20-40 min)"
+run_step  6 "07b_boost_nowide.sh"  "Build boost::nowide"
 
 # ── Threading / parsing ───────────────────────────────────────────────────────
-run_step  9 "08_tbb.sh"            "Build oneTBB"
-run_step 10 "09_expat.sh"          "Build libexpat"
+run_step  7 "08_tbb.sh"            "Build oneTBB"
+run_step  8 "09_expat.sh"          "Build libexpat"
 
 # ── Exact arithmetic (CGAL deps) ──────────────────────────────────────────────
-run_step 11 "09b_gmp.sh"           "Build GMP (exact arithmetic, no assembly)"
-run_step 12 "09c_mpfr.sh"          "Build MPFR (multi-precision float)"
-run_step 13 "09d_cgal.sh"          "Install CGAL 5.6.2 headers + cmake config"
+run_step  9 "09b_gmp.sh"           "Build GMP (exact arithmetic, no assembly)"
+run_step 10 "09c_mpfr.sh"          "Build MPFR (multi-precision float)"
+run_step 11 "09d_cgal.sh"          "Install CGAL 5.6.2 headers + cmake config"
 
-# ── Serialization / geometry / compression ────────────────────────────────────
-run_step 14 "09e_cereal.sh"        "Install cereal (header-only serialization)"
-run_step 15 "09f_qhull.sh"         "Build Qhull (convex hull)"
-run_step 16 "09g_heatshrink.sh"    "Build heatshrink (compression)"
-run_step 17 "09h_libbgcode.sh"     "Build LibBGCode (Prusa binary gcode)"
+# ── Serialization / geometry ──────────────────────────────────────────────────
+run_step 12 "09e_cereal.sh"        "Install cereal (header-only serialization)"
+run_step 13 "09f_qhull.sh"         "Build Qhull (convex hull)"
+run_step 14 "13b_orca_deps.sh"     "Build Eigen 5, NLopt, libnoise, draco, libjpeg-turbo"
 
 # ── libslic3r + packaging ─────────────────────────────────────────────────────
-run_step 18 "10_libslic3r.sh"      "Build libslic3r"
-run_step 19 "10b_install_stub_headers.sh" "Install stub headers (seq, nlopt, nanosvg, bundled deps)"
-run_step 20 "11_xcframework.sh"    "Package as XCFramework"
-run_step 21 "12_vendor_profiles.sh" "Copy PrusaSlicer vendor profiles into the app"
+run_step 15 "14_orca_libslic3r.sh" "Build OrcaSlicer libslic3r"
+run_step 16 "11_xcframework.sh"    "Package as XCFramework"
+run_step 17 "15_orca_profiles.sh"  "Copy OrcaSlicer profiles into the app"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
