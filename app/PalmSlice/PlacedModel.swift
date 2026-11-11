@@ -40,7 +40,7 @@ struct ToolBand: Equatable, Identifiable {
 }
 
 struct PlacedModel: Identifiable {
-    let id: UUID
+    var id: UUID
     /// Display / collision mesh (an imported object's printable parts merged).
     var url: URL
     var name: String

@@ -116,6 +116,7 @@ struct PrinterProfileEditorView: View {
         }
     }
 
+    @ViewBuilder
     private var printheadSection: some View {
         Section("Printhead") {
             LabeledContent("X Min (mm)") {
@@ -149,6 +150,17 @@ struct PrinterProfileEditorView: View {
                    isOn: $draft.applyExtruderOffsetsToGCode)
             Toggle("Start G-Code Must Be First",
                    isOn: $draft.startGCodeMustBeFirst)
+        }
+        Section {
+            LabeledContent("Cost per Hour") {
+                TextField("0", value: $draft.number("time_cost"), format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+            }
+        } header: {
+            Text("Cost")
+        } footer: {
+            Text("What running the printer costs (power, wear), added to the cost shown after slicing.")
         }
     }
 

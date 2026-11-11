@@ -25,6 +25,7 @@ struct MaterialProfileEditorView: View {
                 filamentSection
                 retractionSection
                 coolingSection
+                costSection
                 DefaultsSection(
                     profile: $draft, basePresetName: baseFilament, baseSettings: baseSettings,
                     onChooseBase: { showBasePicker = true },
@@ -127,6 +128,25 @@ struct MaterialProfileEditorView: View {
                 }
                 Slider(value: $draft.extrusionMultiplier, in: 0.5...1.5, step: 0.01)
             }
+        }
+    }
+
+    private var costSection: some View {
+        Section {
+            LabeledContent("Price per kg") {
+                TextField("0", value: $draft.number("filament_cost", perFilament: true), format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+            }
+            LabeledContent("Density (g/cm³)") {
+                TextField("1.24", value: $draft.number("filament_density", perFilament: true), format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+            }
+        } header: {
+            Text("Cost")
+        } footer: {
+            Text("Used for the grams and cost shown after slicing.")
         }
     }
 

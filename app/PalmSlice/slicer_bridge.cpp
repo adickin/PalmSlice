@@ -103,6 +103,8 @@ struct SlicerContext {
     std::string imported_project;
     // Colliding paths found by the last export (slicer_path_conflict).
     std::string path_conflict;
+    // Statistics of the last export (slicer_print_stats).
+    std::string print_stats;
 
     // Wipe (prime) tower placement from slicer_set_wipe_tower_position; until
     // then the printer preset's. OrcaSlicer keeps it in the config (per plate).
@@ -428,6 +430,54 @@ void slicer_cancel(SlicerHandle handle) {
     CTX(handle)->print.cancel();
 }
 
+// Filament use by purpose and cost, as slicer_print_stats describes: the
+// numbers OrcaSlicer's preview legend shows.
+static std::string print_stats_json(const Slic3r::PrintConfig& cfg,
+                                    const Slic3r::PrintEstimatedStatistics& ps, unsigned changes) {
+    using Mode = Slic3r::PrintEstimatedStatistics::ETimeMode;
+    const double time = ps.modes[size_t(Mode::Normal)].time;
+    auto volume = [](const std::map<size_t, double>& m, size_t id) {
+        auto it = m.find(id);
+        return it == m.end() ? 0.0 : it->second;
+    };
+    char buf[512];
+    std::snprintf(buf, sizeof buf,
+                  "{\"time\":%.1f,\"filament_changes\":%u,\"change_time\":%.1f,\"time_cost\":%.4f,\"filaments\":[",
+                  time, changes,
+                  double(ps.total_filament_load_time + ps.total_filament_unload_time + ps.total_tool_change_time),
+                  cfg.time_cost.value * time / 3600.0);
+    std::string out = buf;
+    bool first = true;
+    for ([[maybe_unused]] const auto& [id, total_volume] : ps.total_volumes_per_extruder) {
+        const double density  = cfg.filament_density.get_at(id);
+        const double diameter = cfg.filament_diameter.get_at(id);
+        const double price    = cfg.filament_cost.get_at(id);
+        auto grams = [&](double mm3) { return mm3 * density * 0.001; };
+        // The total is the sum of the uses, as OrcaSlicer's legend shows it
+        // (total_volumes_per_extruder books purges to the other filament).
+        const double used = volume(ps.model_volumes_per_extruder, id) + volume(ps.support_volumes_per_extruder, id)
+                          + volume(ps.wipe_tower_volumes_per_extruder, id) + volume(ps.flush_per_filament, id);
+        const double total_g = grams(used);
+        std::string colour = id < cfg.filament_colour.values.size() ? cfg.filament_colour.values[id] : "";
+        colour.erase(std::remove_if(colour.begin(), colour.end(), [](char c) { return c == '"' || c == '\\'; }),
+                     colour.end());
+        std::snprintf(buf, sizeof buf,
+                      "%s{\"index\":%zu,\"colour\":\"%s\",\"model_g\":%.4f,\"support_g\":%.4f,\"tower_g\":%.4f,"
+                      "\"flush_g\":%.4f,\"total_g\":%.4f,\"total_m\":%.4f,\"price_per_kg\":%.4f,\"cost\":%.4f}",
+                      first ? "" : ",", id, colour.c_str(),
+                      grams(volume(ps.model_volumes_per_extruder, id)),
+                      grams(volume(ps.support_volumes_per_extruder, id)),
+                      grams(volume(ps.wipe_tower_volumes_per_extruder, id)),
+                      grams(volume(ps.flush_per_filament, id)),
+                      total_g,
+                      diameter > 0 ? used / (M_PI * 0.25 * diameter * diameter) * 0.001 : 0.0,
+                      price, total_g * price * 0.001);
+        out += buf;
+        first = false;
+    }
+    return out + "]}";
+}
+
 int slicer_export_gcode(SlicerHandle handle, const char* output_path) {
     auto ctx = CTX(handle);
     try {
@@ -448,6 +498,9 @@ int slicer_export_gcode(SlicerHandle handle, const char* output_path) {
         ctx->print.export_gcode(std::string(output_path), &result, thumbnail_cb);
         if (const auto& c = result.conflict_result)
             ctx->path_conflict = c->_objName1 + "\n" + c->_objName2 + "\n" + std::to_string(c->_height);
+        // Tool changes, as the G-code footer's "total filament change" counts them.
+        ctx->print_stats = print_stats_json(ctx->print.config(), result.print_statistics,
+                                            unsigned(ctx->print.print_statistics().total_toolchanges));
         return 0;
     } catch (const std::exception& e) {
         return set_err(ctx, e);
@@ -456,6 +509,10 @@ int slicer_export_gcode(SlicerHandle handle, const char* output_path) {
 
 const char* slicer_path_conflict(SlicerHandle handle) {
     return CTX(handle)->path_conflict.c_str();
+}
+
+const char* slicer_print_stats(SlicerHandle handle) {
+    return CTX(handle)->print_stats.c_str();
 }
 
 // Writes `model` (with `config` as the project settings, if given) as an

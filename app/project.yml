@@ -187,7 +187,7 @@ targets:
       properties:
         CFBundleDisplayName: PalmSlice
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "5"
+        CFBundleVersion: "6"
         # Long slices keep running in the background (SliceActivity, iOS 26+).
         BGTaskSchedulerPermittedIdentifiers:
           - com.adickin.PalmSlice.slice.*

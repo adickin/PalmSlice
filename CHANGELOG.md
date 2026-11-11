@@ -2,6 +2,16 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-11
+
+- **Duplicate** and **Fill Plate** for a model (Move bar, and the model's long-press menu). Copies go where there's room, 6 mm clear of the other models and the prime tower: a duplicate as near the original as it can, Fill Plate as many as fit, in rows. Placement works on each model's outline seen from above (its convex hull), so wedge-shaped parts nest. Copies share the original's files; painting one saves its own
+- **Filament Use & Cost** after slicing: grams for the model, supports, prime tower and flushing, overall and per filament (with each tool's material); length; filament changes and the time spent on them; and cost. The status line shows total grams, cost and filament changes
+- **Pricing:** materials have a price per kg (OrcaSlicer's `filament_cost`) and density, and printers a cost per hour (`time_cost`), added to the cost
+- Slice warns about overlapping models only after the mesh check confirms it (the quick box check flagged nested copies)
+- Bridge: `slicer_print_stats` (JSON from OrcaSlicer's G-code processor statistics)
+- DEBUG: `PALMSLICE_DEBUG_FILL=1`, `PALMSLICE_DEBUG_SCREEN=sliceStats`
+- Build 1.0 (6) to TestFlight
+
 ## 2026-11-07
 
 - **Defaults come from OrcaSlicer, per printer.** The quality list is the selected printer's own OrcaSlicer qualities (e.g. 15 for the Snapmaker U1, 2 for the Ender-3 S1), and switching printers switches to that printer's default quality. Materials list the printer's default filament and OrcaSlicer's generic per type, with **All OrcaSlicer Filaments…** to search every compatible filament (a pick stays on the list)

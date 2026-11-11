@@ -41,6 +41,15 @@ int slicer_export_gcode(SlicerHandle handle, const char* output_path);
 // wipe tower's) paths cross, "<name 1>\n<name 2>\n<height mm>". The wipe tower
 // is named "WipeTower". Valid until the next export.
 const char* slicer_path_conflict(SlicerHandle handle);
+// After slicer_export_gcode: the print's statistics as JSON —
+//   {"time": s, "filament_changes": n, "change_time": s, "time_cost": money,
+//    "filaments": [{"index": 0-based filament, "colour": "#RRGGBB",
+//                   "model_g", "support_g", "tower_g", "flush_g", "total_g",
+//                   "total_m", "price_per_kg", "cost"}, …]}
+// Grams come from filament_density, cost from filament_cost (per kg) and
+// time_cost (per hour). Valid until the next export.
+const char* slicer_print_stats(SlicerHandle handle);
+
 
 // Where the wipe tower goes: its front-left corner in printer coordinates (mm)
 // and its rotation about that corner. (PrusaSlicer 2.9 keeps these on the

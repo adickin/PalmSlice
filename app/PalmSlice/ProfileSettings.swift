@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // PalmSlice profiles ↔ OrcaSlicer settings.
 //
@@ -663,5 +664,15 @@ extension PrinterProfile: SlicerSettingsConvertible {
             printheadXMin = -r; printheadYMin = -r; printheadXMax = r; printheadYMax = r
         }
         if let h = s["extruder_clearance_height_to_rod"].flatMap(V.parseFloat) { gantryHeight = h }
+    }
+}
+
+extension Binding where Value: SlicerSettingsConvertible {
+    /// A number setting without a typed field (e.g. filament_cost), for
+    /// editing. `perFilament` settings are stored as a one-value list.
+    func number(_ key: String, perFilament: Bool = false) -> Binding<Double> {
+        Binding<Double>(
+            get: { wrappedValue.extraSettings[key].flatMap { SlicerValue.parseFloats($0).first } ?? 0 },
+            set: { wrappedValue.extraSettings[key] = perFilament ? SlicerValue.floats([$0]) : SlicerValue.float($0) })
     }
 }

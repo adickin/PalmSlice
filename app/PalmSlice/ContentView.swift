@@ -8,7 +8,7 @@ import SceneKit
 enum SliceState {
     case idle
     case slicing(phase: String, progress: Double)
-    case done(gcodeURL: URL, printTime: String?, filamentG: String?)
+    case done(gcodeURL: URL, printTime: String?, filamentG: String?, stats: SliceStats?)
     case failed(message: String)
 }
 
@@ -53,6 +53,7 @@ struct ContentView: View {
     @State private var debugScreen: DebugScreen? = nil
     #endif
     @State private var showAbout = false
+    @State private var showSliceStats = false
     /// Part whose settings-from-file sheet is open.
     @State private var fileSettingsModelID: UUID? = nil
     /// Model whose Parts & Tools sheet is open.
@@ -61,6 +62,9 @@ struct ContentView: View {
     @State private var partSettingsModelID: UUID? = nil
     /// Auto-orient is working out the selected model's rotation.
     @State private var isOrienting = false
+    /// Placing copies (Duplicate / Fill Plate) with the arranger.
+    @State private var isArranging = false
+    @State private var arrangeMessage: String? = nil
     /// Volume shown in the 3D view from the Parts & Tools sheet.
     @State private var shownPart: STLSceneView.ShownPart? = nil
     /// Wipe tower position dragged on the bed this session (printer mm); nil = the default.
@@ -240,6 +244,14 @@ struct ContentView: View {
                     materialProfileStore.setMaterial(m.id, forTool: i + 1)
                 }
             }
+            // `PALMSLICE_DEBUG_FILL=1` fills the plate with the first model.
+            if ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_FILL"] == "1" {
+                while models.isEmpty || models.contains(where: { $0.geometry == nil }) {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                addCopies(of: models[0].id, count: nil)
+                while isArranging { try? await Task.sleep(for: .milliseconds(200)) }
+            }
             // `PALMSLICE_DEBUG_SLICE=1` slices once the models have loaded.
             if ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_SLICE"] == "1" {
                 while models.isEmpty || models.contains(where: { $0.geometry == nil })
@@ -249,7 +261,10 @@ struct ContentView: View {
                 triggerSlice()
             }
             let screen = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_SCREEN"]
-            if screen == "fileSettings" {
+            if screen == "sliceStats" {
+                while sliceStats == nil { try? await Task.sleep(for: .milliseconds(500)) }
+                showSliceStats = true
+            } else if screen == "fileSettings" {
                 fileSettingsModelID = models.first?.id   // with PALMSLICE_DEBUG_STL set to a 3MF
             } else if screen == "paint" {
                 selectedModelID = models.last?.id
@@ -280,6 +295,9 @@ struct ContentView: View {
             MaterialProfilePickerView(tool: $0.tool, toolCount: toolCount)
         }
         .sheet(isPresented: $showAbout) { AboutView() }
+        .sheet(isPresented: $showSliceStats) {
+            if let stats = sliceStats { SliceStatsView(stats: stats) }
+        }
         .alert("Use This File's Print Settings?",
                isPresented: Binding(get: { fileProfilesOffer != nil }, set: { if !$0 { fileProfilesOffer = nil } }),
                presenting: fileProfilesOffer) { offer in
@@ -374,6 +392,12 @@ struct ContentView: View {
             too small to print. STL and OBJ files don't store units, so this is likely modeled in meters, not millimeters. \
             Scale \u{00d7}\(Int(unitScaleAlertScale)) to fix it?
             """)
+        }
+        .alert("No Room on the Plate", isPresented: Binding(get: { arrangeMessage != nil },
+                                                            set: { if !$0 { arrangeMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(arrangeMessage ?? "")
         }
         .alert("Paths Collide", isPresented: Binding(get: { pathConflictMessage != nil },
                                                      set: { if !$0 { pathConflictMessage = nil } })) {
@@ -683,6 +707,12 @@ struct ContentView: View {
                     Label("Settings from File…", systemImage: "slider.horizontal.3")
                 }
             }
+            Button { addCopies(of: model.id, count: 1) } label: {
+                Label("Duplicate", systemImage: "plus.square.on.square")
+            }
+            Button { addCopies(of: model.id, count: nil) } label: {
+                Label("Fill Plate", systemImage: "square.grid.3x3")
+            }
             Button(role: .destructive) { removeModel(id: model.id) } label: {
                 Label("Remove", systemImage: "trash")
             }
@@ -748,6 +778,7 @@ struct ContentView: View {
                 if case .slicing(_, let p) = state {
                     ProgressView(value: p).animation(.linear(duration: 0.15), value: p)
                 }
+                sliceDetailsButton
             }
 
             Section {
@@ -899,6 +930,8 @@ struct ContentView: View {
                         onShowFileSettings: { fileSettingsModelID = $0 },
                         onShowParts: { partsModelID = $0 },
                         onShowPartSettings: { partSettingsModelID = $0 },
+                        onDuplicate: { addCopies(of: $0, count: 1) },
+                        onFillPlate: { addCopies(of: $0, count: nil) },
                         palette: showsToolColours ? toolPalette : nil
                     )
                 }
@@ -1032,8 +1065,17 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             case .translate:
-                Button("Drop to Bed") { dropToBed() }
-                    .buttonStyle(.bordered).controlSize(.mini)
+                HStack(spacing: 6) {
+                    Button("Drop to Bed") { dropToBed() }
+                    if let id = selectedModelID {
+                        Button("Duplicate") { addCopies(of: id, count: 1) }
+                        Button { addCopies(of: id, count: nil) } label: {
+                            if isArranging { ProgressView().controlSize(.mini) } else { Text("Fill Plate") }
+                        }
+                    }
+                }
+                .disabled(isArranging)
+                .buttonStyle(.bordered).controlSize(.mini)
             case .rotate:
                 HStack(spacing: 6) {
                     Button { autoOrient() } label: {
@@ -1180,6 +1222,59 @@ struct ContentView: View {
 
     private func centerOnBed() {
         writeTransform { $0.positionMM.x = 0; $0.positionMM.y = 0 }
+    }
+
+    // MARK: Duplicate / Fill Plate
+
+    /// Adds copies of a model where there's room around the other models and
+    /// the wipe tower (PlateArrange): `count` copies, or as many as fit
+    /// when nil. A duplicate with no room goes beside the original, off the
+    /// plate. Copies share the model's files (painting saves a new file).
+    private func addCopies(of id: UUID, count: Int?) {
+        guard !isBusy, !isArranging, let printer = profileStore.selectedProfile,
+              let source = models.first(where: { $0.id == id }), let info = source.meshInfo else { return }
+        let placed = models.compactMap { m in m.meshInfo.map { (m.transform, $0) } }
+        let tower = wipeTower.map { PlateArrange.footprint($0, bedCentre: bedCentreMM) }
+        let bed = PlateArrange.bed(printer)
+        isArranging = true
+        Task.detached(priority: .userInitiated) {
+            let footprint = source.transform.footprintMM(meshInfo: info)
+            var fixed = placed.map { t, i in
+                t.footprintMM(meshInfo: i).map { $0 + SIMD2(t.positionMM.x, -t.positionMM.y) }
+            }
+            if let tower { fixed.append(tower) }
+            let wanted = count ?? PlateArrange.maxCopies(of: footprint, bed: bed)
+            // A duplicate goes as near the original as it can; a fill packs rows.
+            let near = count == nil ? nil : SIMD2(source.transform.positionMM.x, -source.transform.positionMM.y)
+            var spots = PlateArrange.place(Array(repeating: footprint, count: wanted), around: fixed, bed: bed,
+                                           prefer: near).compactMap { $0 }
+            if spots.isEmpty, count != nil {
+                let width = (footprint.map(\.x).max() ?? 0) - (footprint.map(\.x).min() ?? 0)
+                spots = [SIMD2(source.transform.positionMM.x + width + PlateArrange.spacingMM,
+                               -source.transform.positionMM.y)]
+            }
+            await MainActor.run {
+                isArranging = false
+                guard !spots.isEmpty else {
+                    arrangeMessage = "There's no room for another \(source.name). Make room or scale it down, then try again."
+                    return
+                }
+                for spot in spots {
+                    var copy = source
+                    copy.id = UUID()
+                    copy.transform.positionMM.x = spot.x
+                    copy.transform.positionMM.y = -spot.y
+                    copy.geometry = source.geometry?.copy() as? SCNGeometry
+                    copy.partGeometries = source.partGeometries.compactMapValues { $0.copy() as? SCNGeometry }
+                    models.append(copy)
+                }
+                selectedModelID = models.last?.id
+                state = .idle
+                showLayerPreview = false
+                parsedLayers = []
+                updateIntersections()
+            }
+        }
     }
 
     private func dropToBed() {
@@ -1494,7 +1589,7 @@ struct ContentView: View {
         switch state {
         case .idle:            return profileStore.selectedProfile?.name ?? "No printer selected"
         case .slicing(let phase, _): return phase
-        case .done(_, let time, _): return time.map { "Done · \($0)" } ?? "Done"
+        case .done(_, let time, _, _): return time.map { "Done · \($0)" } ?? "Done"
         case .failed:          return "Error — tap to expand"
         }
     }
@@ -1553,6 +1648,8 @@ struct ContentView: View {
                 if case .slicing(_, let p) = state {
                     ProgressView(value: p).animation(.linear(duration: 0.15), value: p)
                 }
+
+                sliceDetailsButton
 
                 Divider()
 
@@ -1773,12 +1870,30 @@ struct ContentView: View {
         switch state {
         case .idle:               return "Ready to slice."
         case .slicing(let p, _): return p
-        case .done(let url, let time, let filament):
+        case .done(let url, let time, let filament, let stats):
             var msg = "Sliced: \(url.lastPathComponent)\nReview the preview, then tap Export."
             if let t = time { msg += "\nTime: \(t)" }
-            if let f = filament { msg += "\nFilament: \(f)" }
+            if let stats { msg += "\nFilament: \(stats.summaryText)" }
+            else if let f = filament { msg += "\nFilament: \(f)" }
             return msg
         case .failed(let msg):   return "Error: \(msg)"
+        }
+    }
+
+    private var sliceStats: SliceStats? {
+        if case .done(_, _, _, let stats) = state { return stats }
+        return nil
+    }
+
+    /// Opens the slice's filament use, cost and filament changes.
+    @ViewBuilder
+    private var sliceDetailsButton: some View {
+        if sliceStats != nil {
+            Button { showSliceStats = true } label: {
+                Label("Filament Use & Cost", systemImage: "chart.bar.doc.horizontal")
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -1832,7 +1947,7 @@ struct ContentView: View {
     /// Opens the export sheet for the previewed slice, where the user can rename
     /// it and choose Files, Share, or OctoPrint. Slicing alone never writes outside temp.
     private func exportGCode() {
-        guard case .done(let tempURL, _, _) = state else { return }
+        guard case .done(let tempURL, _, _, _) = state else { return }
         let project = tempURL.deletingPathExtension().appendingPathExtension("3mf")
         exportRequest = ExportRequest(sourceURL: tempURL,
                                       projectURL: FileManager.default.fileExists(atPath: project.path) ? project : nil)
@@ -1994,10 +2109,17 @@ struct ContentView: View {
     // MARK: - Slice trigger (checks for intersection first)
 
     private func triggerSlice() {
-        if anyIntersecting {
-            showIntersectingAlert = true
-        } else {
-            startSlice()
+        guard anyIntersecting else { startSlice(); return }
+        // The quick box check flags models whose boxes overlap (e.g. nested
+        // copies from Fill Plate); confirm with the mesh check before warning.
+        preciseCheckTask?.cancel()
+        let snapshot = models, bx = bedXVal, by = bedYVal
+        Task {
+            let ids = await Task.detached(priority: .userInitiated) {
+                preciseIntersectionResults(models: snapshot, bedX: bx, bedY: by)
+            }.value
+            for i in models.indices { models[i].isIntersecting = ids.contains(models[i].id) }
+            if anyIntersecting { showIntersectingAlert = true } else { startSlice() }
         }
     }
 
@@ -2024,14 +2146,14 @@ struct ContentView: View {
 
     /// What the background notification says about the slice that just ended.
     private var sliceNotificationTitle: String {
-        if case .done(let url, _, _) = state { return "Sliced \(url.deletingPathExtension().lastPathComponent)" }
+        if case .done(let url, _, _, _) = state { return "Sliced \(url.deletingPathExtension().lastPathComponent)" }
         return "Slice Failed"
     }
 
     private var sliceNotificationBody: String {
         switch state {
-        case .done(_, let time, let filament):
-            let parts = [time, filament?.split(separator: "\n").first.map(String.init)].compactMap { $0 }
+        case .done(_, let time, let filament, let stats):
+            let parts = [time, stats?.summaryText ?? filament?.split(separator: "\n").first.map(String.init)].compactMap { $0 }
             return parts.isEmpty ? "Ready to preview." : parts.joined(separator: " · ")
         case .failed(let message): return message
         default: return ""
@@ -2302,13 +2424,20 @@ struct ContentView: View {
         try? FileManager.default.removeItem(at: projectURL)
         slicer_export_project_3mf(handle, projectURL.path)
         let summary = GCodeSummary(url: gcodeURL)
+        let stats = SliceStats(json: String(cString: slicer_print_stats(handle)))
         let layers = parseGCode(url: gcodeURL)
         let severalTools = layers.contains { $0.moves.contains { $0.tool != 0 } }
 
         await MainActor.run {
             var filament = summary?.filamentText
             if let changes = summary?.toolChanges, changes > 0 { filament = (filament ?? "") + "\nTool changes: \(changes)" }
-            state = .done(gcodeURL: gcodeURL, printTime: summary?.printTime, filamentG: filament)
+            var stats = stats
+            let palette = toolPalette
+            for f in stats?.filaments ?? [] {
+                stats?.materialNames[f.tool] = materialProfileStore.material(forTool: f.tool)?.name
+                stats?.toolColours[f.tool] = palette.colour(f.tool)
+            }
+            state = .done(gcodeURL: gcodeURL, printTime: summary?.printTime, filamentG: filament, stats: stats)
             previewUsesSeveralTools = severalTools
             slicedTowerDepth = hasTower ? Double(towerDepth) : nil
             parsedLayers = layers

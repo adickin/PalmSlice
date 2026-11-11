@@ -9,6 +9,8 @@ struct ModelListView: View {
     var onShowFileSettings: ((UUID) -> Void)? = nil
     var onShowParts: ((UUID) -> Void)? = nil
     var onShowPartSettings: ((UUID) -> Void)? = nil
+    var onDuplicate: ((UUID) -> Void)? = nil
+    var onFillPlate: ((UUID) -> Void)? = nil
     /// Shows each model's tool (multi-tool printers).
     var palette: ToolPalette? = nil
 
@@ -24,6 +26,8 @@ struct ModelListView: View {
                         onShowFileSettings: { onShowFileSettings?(model.id) },
                         onShowParts: { onShowParts?(model.id) },
                         onShowPartSettings: { onShowPartSettings?(model.id) },
+                        onDuplicate: { onDuplicate?(model.id) },
+                        onFillPlate: { onFillPlate?(model.id) },
                         palette: palette
                     )
                     .disabled(disabled)
@@ -64,6 +68,8 @@ private struct ModelCell: View {
     let onShowFileSettings: () -> Void
     let onShowParts: () -> Void
     let onShowPartSettings: () -> Void
+    let onDuplicate: () -> Void
+    let onFillPlate: () -> Void
     let palette: ToolPalette?
 
     var body: some View {
@@ -150,6 +156,12 @@ private struct ModelCell: View {
                 Button(action: onShowFileSettings) {
                     Label("Settings from File…", systemImage: "slider.horizontal.3")
                 }
+            }
+            Button(action: onDuplicate) {
+                Label("Duplicate", systemImage: "plus.square.on.square")
+            }
+            Button(action: onFillPlate) {
+                Label("Fill Plate", systemImage: "square.grid.3x3")
             }
         }
     }

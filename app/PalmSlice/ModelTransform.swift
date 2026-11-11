@@ -10,6 +10,16 @@ struct ModelTransform: Equatable {
 
     var isIdentity: Bool { self == .identity }
 
+    /// The rotation in SceneKit space. Pivot eulerAngles = (rx, rz, ry);
+    /// SceneKit applies X, then Y, then Z: Rz(ry) * Ry(rz) * Rx(rx)
+    /// (AutoOrientTests checks this against SCNNode).
+    var rotationQuaternion: simd_quatf {
+        let r = rotationDeg * (.pi / 180)
+        return simd_quaternion(r.y, SIMD3<Float>(0,0,1))
+             * simd_quaternion(r.z, SIMD3<Float>(0,1,0))
+             * simd_quaternion(r.x, SIMD3<Float>(1,0,0))
+    }
+
     // MARK: - Drop to bed
 
     /// Minimum world-space Y (SceneKit units) produced by this transform, ignoring positionMM.
@@ -17,12 +27,7 @@ struct ModelTransform: Equatable {
     /// are scaled and rotated, then the minimum Y is returned.
     func minWorldY(meshInfo: STLMeshInfo) -> Float {
         let s = scale
-        let r = rotationDeg * (.pi / 180)
-        // Pivot eulerAngles = (rx, rz, ry); SceneKit applies X, then Y, then Z:
-        // Rz(ry) * Ry(rz) * Rx(rx) (AutoOrientTests checks this against SCNNode).
-        let q = simd_quaternion(r.y, SIMD3<Float>(0,0,1))
-              * simd_quaternion(r.z, SIMD3<Float>(0,1,0))
-              * simd_quaternion(r.x, SIMD3<Float>(1,0,0))
+        let q = rotationQuaternion
 
         // The mesh node centers geometry in X/Z and places its bottom at pivot Y=0.
         // SCNGeometry vertices are scaled by 1/100 in buildGeometry (mm → SceneKit units).
@@ -71,5 +76,43 @@ struct ModelTransform: Equatable {
         var t = self
         t.positionMM.z = -minWorldY(meshInfo: meshInfo) * 100
         return t
+    }
+
+    // MARK: - Footprint
+
+    /// The model's outline seen from above: the convex hull of its rotated and
+    /// scaled mesh in print coordinates (mm, X right, Y back), relative to
+    /// positionMM. Empty without vertices.
+    func footprintMM(meshInfo: STLMeshInfo) -> [SIMD2<Float>] {
+        let s = scale
+        let q = rotationQuaternion
+        let bb = meshInfo.boundingBoxMM
+        let cx = (bb.min.x + bb.max.x) * 0.5
+        let cy = (bb.min.y + bb.max.y) * 0.5
+        // Same mapping as minWorldY, in mm; SceneKit -Z is print Y.
+        let points = meshInfo.vertices.map { v -> SIMD2<Float> in
+            let w = simd_act(q, SIMD3<Float>((v.x - cx) * s.x, (v.z - bb.min.z) * s.z, (cy - v.y) * s.y))
+            return SIMD2(w.x, -w.z)
+        }
+        return Self.convexHull(points)
+    }
+
+    /// Counter-clockwise convex hull (Andrew's monotone chain).
+    static func convexHull(_ points: [SIMD2<Float>]) -> [SIMD2<Float>] {
+        let p = points.sorted { $0.x != $1.x ? $0.x < $1.x : $0.y < $1.y }
+        guard p.count > 2 else { return p }
+        func cross(_ o: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+        var lower: [SIMD2<Float>] = [], upper: [SIMD2<Float>] = []
+        for pt in p {
+            while lower.count >= 2, cross(lower[lower.count - 2], lower[lower.count - 1], pt) <= 0 { lower.removeLast() }
+            lower.append(pt)
+        }
+        for pt in p.reversed() {
+            while upper.count >= 2, cross(upper[upper.count - 2], upper[upper.count - 1], pt) <= 0 { upper.removeLast() }
+            upper.append(pt)
+        }
+        return Array(lower.dropLast() + upper.dropLast())
     }
 }
