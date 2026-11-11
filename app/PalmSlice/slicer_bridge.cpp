@@ -40,6 +40,8 @@
 #include <libslic3r/GCode/GCodeProcessor.hpp>
 #include <libslic3r/FlushVolCalc.hpp>
 #include <libslic3r/Flow.hpp>
+#include <libslic3r/Feature/FullSpectrum/VirtualExtruder.hpp>
+#include <libslic3r/Feature/FullSpectrum/prusa_fdm_mixer.hpp>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -112,6 +114,11 @@ struct SlicerContext {
     float wipe_tower_x = 0.f, wipe_tower_y = 0.f, wipe_tower_rotation = 0.f;
 
     std::unique_ptr<PaintSession> paint;
+
+    // The session's mixes (ColorMix: PrusaSlicer Full Spectrum virtual
+    // extruders), with PalmSlice tool numbers as ids.
+    Slic3r::FullSpectrum::VirtualExtruders mixes;
+    std::string mixes_json;
 
     // Thumbnails: when enabled, the printer's `thumbnails` setting is kept and
     // these images (rendered by the app, one per requested size) are embedded.
@@ -253,6 +260,7 @@ static void normalize_tools(Slic3r::DynamicPrintConfig& cfg) {
 }
 
 static void clamp_model_tools(Slic3r::Model& model, int filaments);
+static Slic3r::FullSpectrum::VirtualExtruders slicer_mixes(const SlicerContext* ctx);
 
 // OrcaSlicer drops a variable layer height profile whose first layer isn't
 // exactly the first layer height (PrintObject::update_layer_height_profile),
@@ -386,6 +394,7 @@ int slicer_slice_with_progress(SlicerHandle handle,
         ctx->print.is_BBL_printer() = cfg_copy.has("printer_model") &&
             boost::starts_with(cfg_copy.opt_string("printer_model"), "Bambu Lab");
         normalize_tools(cfg_copy);
+        ctx->model.virtual_extruders = slicer_mixes(ctx);
         clamp_model_tools(ctx->model, cfg_copy.option<Slic3r::ConfigOptionFloats>("filament_diameter")->values.size());
         fit_layer_height_profiles(ctx->model, cfg_copy);
         // One plate, at the bed origin.
@@ -513,6 +522,13 @@ const char* slicer_path_conflict(SlicerHandle handle) {
 
 const char* slicer_print_stats(SlicerHandle handle) {
     return CTX(handle)->print_stats.c_str();
+}
+
+void slicer_release_print(SlicerHandle handle) {
+    auto ctx = CTX(handle);
+    ctx->print.clear();
+    ctx->model.clear_objects();
+    ctx->volume_maps.clear();
 }
 
 // Writes `model` (with `config` as the project settings, if given) as an
@@ -888,6 +904,26 @@ int slicer_set_object_transform(SlicerHandle handle, int object_index,
     }
 }
 
+int slicer_add_object_instance(SlicerHandle handle, int object_index, float pos_x_mm, float pos_z_mm) {
+    auto ctx = CTX(handle);
+    if (object_index < 0 || object_index >= static_cast<int>(ctx->model.objects.size()))
+        return set_err(ctx, "object index out of range");
+    try {
+        Slic3r::ModelObject* obj = ctx->model.objects[object_index];
+        if (obj->instances.empty()) return set_err(ctx, "object has no instance");
+        const double bed_cx = ctx->origin_at_center ? 0.0 : ctx->bed_x / 2.0;
+        const double bed_cy = ctx->origin_at_center ? 0.0 : ctx->bed_y / 2.0;
+        // Same rotation, scale and height as the first copy; its own XY.
+        const Slic3r::ModelInstance* first = obj->instances.front();
+        Slic3r::ModelInstance* inst = obj->add_instance(*first);
+        const Slic3r::Vec3d from = first->get_offset();
+        inst->set_offset(Slic3r::Vec3d(bed_cx + pos_x_mm, bed_cy - pos_z_mm, from.z()));
+        return 0;
+    } catch (const std::exception& e) {
+        return set_err(ctx, e);
+    }
+}
+
 } // extern "C"
 
 // Object settings text (slicer_imported_object_settings format).
@@ -919,14 +955,30 @@ static std::string object_file_settings(const Slic3r::ModelObject& obj) {
     return out;
 }
 
-// ── Tools ────────────────────────────────────────────────────────────────────
-// PalmSlice tool numbers are OrcaSlicer filament numbers (1-based). Mixes
-// (SLICER_MIX_BASE + n) need PrusaSlicer's Full Spectrum virtual extruders,
-// which OrcaSlicer doesn't have: they fall back to the object's filament.
+// ── Tools and mixes ──────────────────────────────────────────────────────────
+// PalmSlice tool numbers are OrcaSlicer filament numbers (1-based); mix n
+// (SLICER_MIX_BASE + n) is the virtual extruder numbered right after the
+// physical filaments, as PrusaSlicer's Full Spectrum numbers them.
+namespace FS = Slic3r::FullSpectrum;
 using ToolRemap = std::map<int, int>;
 
-// Painted states OrcaSlicer can store: none + 16 filaments.
+// Painted states OrcaSlicer can store: none + 16 filaments. Tools paint as
+// themselves; mix n paints as state 17 - n (16, 15, …), so painting holds up
+// to 8 tools and 8 mixes whatever the printer.
 static constexpr int k_paint_states = int(Slic3r::EnforcerBlockerType::ExtruderMax) + 1;
+static constexpr int k_paint_mixes = 8;
+
+// PalmSlice tool → painted state (-1: can't be painted).
+static int paint_state(int tool) {
+    if (tool <= SLICER_MIX_BASE) return tool < k_paint_states - k_paint_mixes ? tool : -1;
+    const int n = tool - SLICER_MIX_BASE;
+    return n <= k_paint_mixes ? k_paint_states - n : -1;
+}
+
+// Painted state → PalmSlice tool.
+static int paint_tool(int state) {
+    return state >= k_paint_states - k_paint_mixes ? SLICER_MIX_BASE + (k_paint_states - state) : state;
+}
 
 // Filaments the printer is set up for (one per tool): one per nozzle on a
 // tool changer, or as many as are configured for a single nozzle.
@@ -936,15 +988,39 @@ static int physical_count(const SlicerContext* ctx) {
     return std::max({1, nd ? int(nd->values.size()) : 1, fd ? int(fd->values.size()) : 1});
 }
 
-static int to_slicer_tool(const SlicerContext*, int tool) {
-    return tool > SLICER_MIX_BASE ? 0 : tool;
+static bool has_mix(const SlicerContext* ctx, int tool) {
+    return std::any_of(ctx->mixes.begin(), ctx->mixes.end(), [tool](const FS::VirtualExtruder& m) { return int(m.id) == tool; });
 }
 
-// Every mix number → 0 (the object's filament).
-static ToolRemap mixes_to_slicer(const SlicerContext*) {
+// PalmSlice tool number → libslic3r's: a mix follows the physical filaments
+// (0, the object's filament, if it isn't in the session or beyond what
+// OrcaSlicer can number).
+static int to_slicer_tool(const SlicerContext* ctx, int tool) {
+    if (tool <= SLICER_MIX_BASE) return tool;
+    const int id = physical_count(ctx) + (tool - SLICER_MIX_BASE);
+    return has_mix(ctx, tool) && id < k_paint_states ? id : 0;
+}
+
+// PalmSlice → libslic3r numbers for every mix number.
+static ToolRemap mixes_to_slicer(const SlicerContext* ctx) {
     ToolRemap remap;
-    for (int id = SLICER_MIX_BASE + 1; id < 2 * SLICER_MIX_BASE; ++id) remap[id] = 0;
+    for (int id = SLICER_MIX_BASE + 1; id < 2 * SLICER_MIX_BASE; ++id) remap[id] = to_slicer_tool(ctx, id);
     return remap;
+}
+
+// The session's mixes in libslic3r numbering, for Print::apply.
+static FS::VirtualExtruders slicer_mixes(const SlicerContext* ctx) {
+    FS::VirtualExtruders out;
+    for (FS::VirtualExtruder m : ctx->mixes)
+        if (const int id = to_slicer_tool(ctx, int(m.id)); id > 0) {
+            m.id = static_cast<unsigned>(id);
+            out.push_back(m);
+        }
+    return out;
+}
+
+static void update_mixes_json(SlicerContext* ctx) {
+    ctx->mixes_json = FS::serialize_virtual_extruders_to_json({}, ctx->mixes);
 }
 
 // Settings holding a filament number (the *_filament_id ones: 0 = inherit).
@@ -960,33 +1036,99 @@ static void remap_config_tools(Slic3r::ModelConfig& cfg, const ToolRemap& remap)
         }
 }
 
-// Tools above the printer's filament count (e.g. a PrusaSlicer mix in an
-// imported file) fall back to the object's filament: OrcaSlicer would index
-// past its per-filament settings. Covers settings, height ranges, parts and
-// painted areas.
-static void clamp_model_tools(Slic3r::Model& model, int filaments) {
-    ToolRemap remap;
-    for (int t = filaments + 1; t < 2 * SLICER_MIX_BASE; ++t) remap[t] = 0;
+// Repaints a volume's colour painting with states[old state].
+static void remap_paint(Slic3r::ModelVolume& vol, const Slic3r::EnforcerBlockerStateMap& states) {
+    if (!vol.is_mm_painted()) return;
+    const auto& used = vol.mmu_segmentation_facets.get_data().used_states;
+    bool changes = false;
+    for (size_t st = 1; st < used.size() && st < states.size(); ++st)
+        changes |= used[st] && states[st] != Slic3r::EnforcerBlockerType(st);
+    if (!changes) return;
+    Slic3r::TriangleSelector selector(vol.mesh());
+    selector.deserialize(vol.mmu_segmentation_facets.get_data(), false);
+    selector.remap_triangle_state(states);
+    vol.mmu_segmentation_facets.set(selector);
+}
+
+// Painted mixes (states 17 - n) → their libslic3r numbers.
+static void paint_mixes_to_slicer(const SlicerContext* ctx, Slic3r::ModelVolume& vol) {
     Slic3r::EnforcerBlockerStateMap states;
-    bool repaint = false;
-    for (size_t i = 0; i < states.size(); ++i) {
-        states[i] = int(i) > filaments ? Slic3r::EnforcerBlockerType::NONE : Slic3r::EnforcerBlockerType(i);
-        repaint |= int(i) > filaments;
+    for (size_t st = 0; st < states.size(); ++st) {
+        const int tool = paint_tool(int(st));
+        states[st] = Slic3r::EnforcerBlockerType(tool > SLICER_MIX_BASE ? to_slicer_tool(ctx, tool) : int(st));
     }
+    remap_paint(vol, states);
+}
+
+// Renumbers every tool an object stores (settings, height ranges, parts,
+// painting) from a file's numbering to PalmSlice's.
+static void remap_object_tools(Slic3r::ModelObject& obj, const ToolRemap& remap) {
+    if (remap.empty()) return;
+    Slic3r::EnforcerBlockerStateMap states;
+    for (size_t st = 0; st < states.size(); ++st) {
+        auto it = remap.find(int(st));
+        const int to = it == remap.end() ? int(st) : paint_state(it->second);
+        states[st] = to < 0 ? Slic3r::EnforcerBlockerType::NONE : Slic3r::EnforcerBlockerType(to);
+    }
+    remap_config_tools(obj.config, remap);
+    for (auto& [range, config] : obj.layer_config_ranges) remap_config_tools(config, remap);
+    for (Slic3r::ModelVolume* vol : obj.volumes) {
+        remap_config_tools(vol->config, remap);
+        remap_paint(*vol, states);
+    }
+}
+
+// The same mix, ignoring its number and display colour.
+static bool same_mix(const FS::VirtualExtruder& a, const FS::VirtualExtruder& b) {
+    return a.components == b.components && a.gradient == b.gradient;
+}
+
+// Adds a file's mixes (libslic3r numbering) to the session's, reusing an
+// identical mix's number. Returns file number → PalmSlice number.
+static ToolRemap merge_file_mixes(SlicerContext* ctx, const FS::VirtualExtruders& file_mixes) {
+    ToolRemap remap;
+    for (const FS::VirtualExtruder& mix : file_mixes) {
+        auto it = std::find_if(ctx->mixes.begin(), ctx->mixes.end(),
+                               [&](const FS::VirtualExtruder& m) { return same_mix(m, mix); });
+        unsigned id;
+        if (it != ctx->mixes.end()) {
+            id = it->id;
+        } else {
+            id = SLICER_MIX_BASE;
+            for (const auto& m : ctx->mixes) id = std::max(id, m.id);
+            ++id;
+            if (paint_state(int(id)) < 0) continue;  // too many mixes
+            FS::VirtualExtruder added = mix;
+            added.id = id;
+            ctx->mixes.push_back(added);
+        }
+        remap[int(mix.id)] = int(id);
+    }
+    update_mixes_json(ctx);
+    return remap;
+}
+
+// Tools above the printer's filament count that aren't one of the print's
+// mixes (e.g. an unknown tool in an imported file) fall back to the object's
+// filament: OrcaSlicer would index past its per-filament settings. Covers
+// settings, height ranges, parts and painted areas.
+static void clamp_model_tools(Slic3r::Model& model, int filaments) {
+    auto valid = [&](int t) {
+        return t <= filaments || std::any_of(model.virtual_extruders.begin(), model.virtual_extruders.end(),
+                                              [t](const FS::VirtualExtruder& m) { return int(m.id) == t; });
+    };
+    ToolRemap remap;
+    for (int t = filaments + 1; t < 2 * SLICER_MIX_BASE; ++t)
+        if (!valid(t)) remap[t] = 0;
+    Slic3r::EnforcerBlockerStateMap states;
+    for (size_t i = 0; i < states.size(); ++i)
+        states[i] = valid(int(i)) ? Slic3r::EnforcerBlockerType(i) : Slic3r::EnforcerBlockerType::NONE;
     for (Slic3r::ModelObject* obj : model.objects) {
         remap_config_tools(obj->config, remap);
         for (auto& [range, config] : obj->layer_config_ranges) remap_config_tools(config, remap);
         for (Slic3r::ModelVolume* vol : obj->volumes) {
             remap_config_tools(vol->config, remap);
-            if (!repaint || !vol->is_mm_painted()) continue;
-            const auto& used = vol->mmu_segmentation_facets.get_data().used_states;
-            bool beyond = false;
-            for (size_t st = size_t(filaments) + 1; st < used.size(); ++st) beyond |= bool(used[st]);
-            if (!beyond) continue;
-            Slic3r::TriangleSelector selector(vol->mesh());
-            selector.deserialize(vol->mmu_segmentation_facets.get_data(), false);
-            selector.remap_triangle_state(states);
-            vol->mmu_segmentation_facets.set(selector);
+            remap_paint(*vol, states);
         }
     }
 }
@@ -1008,21 +1150,62 @@ static int config_tool(const Slic3r::ModelConfig& cfg) {
 
 extern "C" {
 
-// Mixes aren't supported on the OrcaSlicer backend: accepted and ignored.
-int slicer_set_virtual_extruders(SlicerHandle, const char*) {
-    return 0;
+int slicer_set_virtual_extruders(SlicerHandle handle, const char* json) {
+    auto ctx = CTX(handle);
+    try {
+        FS::VirtualExtruders mixes;
+        if (json && *json) {
+            FS::FullSpectrumConfig parsed = FS::deserialize_virtual_extruders_from_json(json);
+            for (const auto& m : FS::normalize_virtual_extruders(parsed.virtual_extruders))
+                if (m.id > SLICER_MIX_BASE) mixes.push_back(m);
+        }
+        ctx->mixes = std::move(mixes);
+        update_mixes_json(ctx);
+        return 0;
+    } catch (const std::exception& e) {
+        return set_err(ctx, e);
+    }
 }
 
-const char* slicer_get_virtual_extruders(SlicerHandle) {
-    return "{\"version\":1,\"physical_extruders\":[],\"virtual_extruders\":[]}";
+const char* slicer_get_virtual_extruders(SlicerHandle handle) {
+    auto ctx = CTX(handle);
+    if (ctx->mixes_json.empty()) update_mixes_json(ctx);
+    return ctx->mixes_json.c_str();
 }
 
-int slicer_mix_color(const char*, char*, int) {
-    return -1;
+int slicer_mix_color(const char* parts, char* out_hex, int len) {
+    if (!parts || !out_hex || len < 8) return -1;
+    try {
+        std::vector<prusa_fdm_mixer::Part> mix;
+        std::istringstream in(parts);
+        std::string item;
+        while (std::getline(in, item, ';')) {
+            size_t colon = item.find(':');
+            if (colon == std::string::npos) return -1;
+            const double ratio = std::stod(item.substr(colon + 1));
+            if (ratio > 0) mix.push_back({item.substr(0, colon), ratio});
+        }
+        if (mix.empty()) return -1;
+        double total = 0;
+        for (const auto& part : mix) total += part.ratio;
+        for (auto& part : mix) part.ratio /= total;
+        const std::string hex = mix.size() == 1 ? mix.front().hex : prusa_fdm_mixer::mix(mix);
+        std::snprintf(out_hex, size_t(len), "%s", hex.c_str());
+        return 0;
+    } catch (const std::exception&) {
+        return -1;
+    }
 }
 
-int slicer_color_delta_e(const char*, const char*, double*) {
-    return -1;
+int slicer_color_delta_e(const char* hex_a, const char* hex_b, double* out) {
+    if (!hex_a || !hex_b || !out) return -1;
+    try {
+        using namespace prusa_fdm_mixer;
+        *out = delta_e_2000(rgb_to_lab(hex_to_rgb(hex_a)), rgb_to_lab(hex_to_rgb(hex_b)));
+        return 0;
+    } catch (const std::exception&) {
+        return -1;
+    }
 }
 
 int slicer_import_model_file(SlicerHandle handle, const char* path, const char* out_dir) {
@@ -1042,6 +1225,9 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
             model = Slic3r::Model::read_from_file(path, &file_config);
         }
         model.add_default_instances();
+
+        // The file's mixes join the session's; its tools get PalmSlice numbers.
+        const ToolRemap mix_remap = merge_file_mixes(ctx, model.virtual_extruders);
 
         // One single-instance object per object instance, with the instance's
         // rotation / scale / mirroring folded into the volumes. Translation is
@@ -1068,6 +1254,7 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
                 for (Slic3r::ModelVolume* vol : o->volumes)
                     vol->set_transformation(Slic3r::Geometry::Transformation(inst_matrix * vol->get_matrix()));
                 o->instances.front()->set_transformation(Slic3r::Geometry::Transformation());
+                remap_object_tools(*o, mix_remap);
 
                 auto& info = n->info;
                 info.extruder = config_tool(o->config);
@@ -1084,7 +1271,7 @@ int slicer_import_model_file(SlicerHandle handle, const char* path, const char* 
                     if (v.painted) {
                         const auto& used = vol->mmu_segmentation_facets.get_data().used_states;
                         for (size_t s = 1; s < used.size(); ++s)
-                            if (used[s]) v.paint_tools.push_back(static_cast<int>(s));
+                            if (used[s]) v.paint_tools.push_back(paint_tool(static_cast<int>(s)));
                     }
                     if (vol->is_model_part()) {
                         Slic3r::TriangleMesh mesh = vol->mesh();
@@ -1226,7 +1413,10 @@ int slicer_add_model_object(SlicerHandle handle, const char* path, int keep_volu
                 }
             }
         }
-        for (Slic3r::ModelVolume* vol : src->volumes) remap_config_tools(vol->config, mixes_to_slicer(ctx));
+        for (Slic3r::ModelVolume* vol : src->volumes) {
+            remap_config_tools(vol->config, mixes_to_slicer(ctx));
+            paint_mixes_to_slicer(ctx, *vol);
+        }
         remap_config_tools(src->config, mixes_to_slicer(ctx));
 
         double cx = ctx->origin_at_center ? 0.0 : ctx->bed_x / 2.0;
@@ -1522,6 +1712,7 @@ int slicer_paint_brush(SlicerHandle handle, int facet, const float* point, const
     auto s = paint_session(ctx);
     if (!s || !point || !camera) return -1;
     if (facet < 0 || facet >= int(s->volume->mesh().facets_count())) return set_err(ctx, "facet out of range");
+    if (s->layer == SLICER_PAINT_COLOUR) state = paint_state(state);  // a tool or mix
     if (state < 0 || state >= paint_state_count(*s)) return set_err(ctx, "state out of range");
     try {
         using TS = Slic3r::TriangleSelector;
@@ -1546,6 +1737,7 @@ int slicer_paint_fill(SlicerHandle handle, int facet, const float* point, int st
     auto s = paint_session(ctx);
     if (!s || !point) return -1;
     if (facet < 0 || facet >= int(s->volume->mesh().facets_count())) return set_err(ctx, "facet out of range");
+    if (s->layer == SLICER_PAINT_COLOUR) state = paint_state(state);  // a tool or mix
     if (state < 0 || state >= paint_state_count(*s)) return set_err(ctx, "state out of range");
     try {
         using TS = Slic3r::TriangleSelector;
@@ -1611,7 +1803,7 @@ int slicer_paint_mesh_update(SlicerHandle handle) {
                     const Slic3r::Vec3d v = trafo * its.vertices[tri[k]].cast<double>();
                     s->vertices.insert(s->vertices.end(), {float(v.x()), float(v.y()), float(v.z())});
                 }
-                s->states.push_back(static_cast<unsigned char>(state));
+                s->states.push_back(static_cast<unsigned char>(s->layer == SLICER_PAINT_COLOUR ? paint_tool(state) : state));
             }
         }
         return int(s->states.size());
@@ -1638,7 +1830,7 @@ int slicer_paint_used_tools(SlicerHandle handle, int* out, int max) {
     int n = 0;
     for (size_t state = 1; state < data.used_states.size(); ++state)
         if (data.used_states[state]) {
-            if (out && n < max) out[n] = int(state);
+            if (out && n < max) out[n] = s->layer == SLICER_PAINT_COLOUR ? paint_tool(int(state)) : int(state);
             ++n;
         }
     return n;

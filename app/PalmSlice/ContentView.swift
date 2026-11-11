@@ -2247,9 +2247,20 @@ struct ContentView: View {
             return
         }
 
-        // 9. Load each model
+        // 9. Load each model. Copies that slice the same (Duplicate / Fill
+        // Plate) become instances of the first: sliced once, printed at each spot.
+        var loaded: [(model: PlacedModel, object: Int32)] = []
         for (i, model) in snapshotModels.enumerated() {
             await setPhase("Loading \(model.name)… (\(i+1)/\(snapshotModels.count))")
+            if let original = loaded.first(where: { $0.model.slicesLike(model) }) {
+                if slicer_add_object_instance(handle, original.object, model.transform.positionMM.x,
+                                              model.transform.positionMM.y) != 0 {
+                    let msg = String(cString: slicer_last_error(handle))
+                    await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+                    return
+                }
+                continue
+            }
             let objIdx = model.nativeURL.map {
                 slicer_add_model_object(handle, $0.path, model.useFileSettings ? 1 : 0)
             } ?? slicer_add_stl(handle, model.url.path)
@@ -2307,6 +2318,7 @@ struct ContentView: View {
                 await MainActor.run { state = .failed(message: "\(model.name): \(msg)") ; showErrorAlert = true }
                 return
             }
+            loaded.append((model, objIdx))
         }
 
         // 8.5 Sanity-check wall/top/bottom settings against the now-loaded,
@@ -2423,8 +2435,10 @@ struct ContentView: View {
         let projectURL = gcodeURL.deletingPathExtension().appendingPathExtension("3mf")
         try? FileManager.default.removeItem(at: projectURL)
         slicer_export_project_3mf(handle, projectURL.path)
-        let summary = GCodeSummary(url: gcodeURL)
         let stats = SliceStats(json: String(cString: slicer_print_stats(handle)))
+        // Free the slice before reading the G-code back: big plates need both otherwise.
+        slicer_release_print(handle)
+        let summary = GCodeSummary(url: gcodeURL)
         let layers = parseGCode(url: gcodeURL)
         let severalTools = layers.contains { $0.moves.contains { $0.tool != 0 } }
 

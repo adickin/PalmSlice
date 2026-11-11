@@ -100,6 +100,17 @@ struct PlacedModel: Identifiable {
         }.joined()
     }
 
+    /// Whether `other` slices the same apart from where it sits (e.g. a
+    /// Duplicate / Fill Plate copy): the slice prints it as another instance
+    /// of this model, sliced once.
+    func slicesLike(_ other: PlacedModel) -> Bool {
+        url == other.url && nativeURL == other.nativeURL
+            && transform.rotationDeg == other.transform.rotationDeg && transform.scale == other.transform.scale
+            && extruder == other.extruder && parts == other.parts && toolBands == other.toolBands
+            && useFileSettings == other.useFileSettings && fileSettings == other.fileSettings
+            && partSettings == other.partSettings
+    }
+
     /// Triangle counts of the printable parts, in display-mesh order.
     var partFacetCounts: [Int] { parts.filter { $0.kind == .part }.map(\.facetCount) }
     var isPainted: Bool { parts.contains { $0.isPainted || $0.supportsPainted || $0.seamPainted } }

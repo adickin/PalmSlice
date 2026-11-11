@@ -49,7 +49,9 @@ func parseGCode(url: URL) -> [GCodeLayer] {
     var inLayer       = false
     var tool          = 0
 
-    for rawLine in text.components(separatedBy: "\n") {
+    // Substrings, not a copy of every line: a big plate's G-code is tens of MB.
+    for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let rawLine = String(line)
         // Strip inline comment to get the command portion
         let commentIdx = rawLine.firstIndex(of: ";")
         let command    = commentIdx.map { String(rawLine[rawLine.startIndex..<$0]) } ?? rawLine

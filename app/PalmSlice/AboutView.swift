@@ -9,6 +9,8 @@ private struct ThirdPartyLicense: Identifiable {
 // Kept in sync with LICENSE.md's "Third-Party Licenses" table.
 private let thirdPartyLicenses: [ThirdPartyLicense] = [
     .init(name: "OrcaSlicer / libslic3r & profiles", license: "AGPL-3.0"),
+    .init(name: "PrusaSlicer Full Spectrum", license: "AGPL-3.0"),
+    .init(name: "prusa_fdm_mixer",         license: "MIT"),
     .init(name: "Boost",                   license: "Boost Software License 1.0"),
     .init(name: "oneTBB",                  license: "Apache-2.0"),
     .init(name: "CGAL",                    license: "GPL-3.0 / LGPL-3.0"),

@@ -2,6 +2,13 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-11 (later)
+
+- **ColorMix is back** on the OrcaSlicer backend: PrusaSlicer 2.9.6's Full Spectrum virtual extruders (blends and gradients; whole objects, parts, height bands and painting) are ported into OrcaSlicer's libslic3r (`patches/orcaslicer_ios.patch`: `Feature/FullSpectrum`, region / MM-segmentation remapping, PrusaSlicer 3MF mixes), with the calibrated `prusa_fdm_mixer` colour predictor (MIT). Painting holds tools 1–8 and mixes 1–8 (OrcaSlicer stores 16 paint states). The ColorMix / mix import tests run again, plus a 70/30 blend slice on the Snapmaker U1
+- **Fix: crash slicing a full plate** (e.g. Fill Plate with a painted multi-part model): identical copies are now sliced once and printed as instances (memory 2.9 → 1.9 GB peak, and faster), the slice is freed before the G-code is read back for the preview, the preview reader no longer copies every G-code line, and the app asks iOS for the increased memory limit (`com.apple.developer.kernel.increased-memory-limit`)
+- Bridge: `slicer_add_object_instance`, `slicer_release_print`; the mix functions work again
+- Build 1.0 (7) to TestFlight
+
 ## 2026-11-11
 
 - **Duplicate** and **Fill Plate** for a model (Move bar, and the model's long-press menu). Copies go where there's room, 6 mm clear of the other models and the prime tower: a duplicate as near the original as it can, Fill Plate as many as fit, in rows. Placement works on each model's outline seen from above (its convex hull), so wedge-shaped parts nest. Copies share the original's files; painting one saves its own

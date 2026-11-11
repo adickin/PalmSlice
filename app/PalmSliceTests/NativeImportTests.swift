@@ -107,7 +107,6 @@ final class NativeImportTests: XCTestCase {
     }
 
     func testColorMixFileUsesPalmSliceToolNumbers() throws {
-        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let file = try importFixture("colormix.3mf")
         XCTAssertEqual(file.mixes.map(\.id), [101, 102])
         XCTAssertEqual(file.mixes.map(\.kind), [.blend, .gradient])
@@ -121,7 +120,6 @@ final class NativeImportTests: XCTestCase {
     }
 
     func testReimportReusesIdenticalMixes() throws {
-        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let first = try importFixture("colormix.3mf")
         let second = try importFixture("colormix.3mf", mixes: first.mixes)
         XCTAssertEqual(second.mixes, first.mixes)
@@ -129,7 +127,6 @@ final class NativeImportTests: XCTestCase {
     }
 
     func testConflictingMixGetsTheNextNumber() throws {
-        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let other = ToolMix(id: 101, components: [.init(tool: 4, amount: 0.5), .init(tool: 5, amount: 0.5)])
         let file = try importFixture("colormix.3mf", mixes: [other])
         XCTAssertEqual(file.mixes.map(\.id), [101, 102, 103])
@@ -139,7 +136,6 @@ final class NativeImportTests: XCTestCase {
     // MARK: Slicing
 
     func testNativeSliceMatchesReferenceSlice() throws {
-        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let reference = toolsByLayer(try referenceSlice("colormix.3mf"))
         let ours = toolsByLayer(try slice(try importFixture("colormix.3mf")))
         XCTAssertEqual(ours["blend"], reference["blend"])
@@ -149,7 +145,6 @@ final class NativeImportTests: XCTestCase {
 
     // Mixes renumbered on import (paint and object tool) still slice the same.
     func testRenumberedMixesSliceTheSame() throws {
-        throw XCTSkip("ColorMix needs PrusaSlicer's Full Spectrum; not on the OrcaSlicer backend")
         let reference = toolsByLayer(try referenceSlice("colormix.3mf"))
         let other = ToolMix(id: 101, components: [.init(tool: 4, amount: 0.5), .init(tool: 5, amount: 0.5)])
         let ours = toolsByLayer(try slice(try importFixture("colormix.3mf", mixes: [other])))

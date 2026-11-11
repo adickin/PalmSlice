@@ -37,6 +37,8 @@ https://www.gnu.org/licenses/agpl-3.0.en.html
 | Library | License |
 |---------|---------|
 | [OrcaSlicer / libslic3r](https://github.com/SoftFever/OrcaSlicer) (from BambuStudio and PrusaSlicer), incl. its profiles | AGPL-3.0 |
+| [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) Full Spectrum virtual extruders (ColorMix, ported into libslic3r) | AGPL-3.0 |
+| [prusa_fdm_mixer](https://github.com/prusa3d/PrusaSlicer/tree/master/bundled_deps/prusa_fdm_mixer) (mix colour prediction) | MIT |
 | [Boost](https://www.boost.org/) | Boost Software License 1.0 |
 | [oneTBB](https://github.com/oneapi-src/oneTBB) | Apache-2.0 |
 | [CGAL](https://www.cgal.org/) | GPL-3.0 / LGPL-3.0 (header-only parts: LGPL) |

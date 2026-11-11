@@ -49,6 +49,10 @@ const char* slicer_path_conflict(SlicerHandle handle);
 // Grams come from filament_density, cost from filament_cost (per kg) and
 // time_cost (per hour). Valid until the next export.
 const char* slicer_print_stats(SlicerHandle handle);
+// Frees the sliced print and the model (most of a slice's memory) once its
+// G-code, stats and project are exported. The handle stays valid; add
+// objects again before the next slice.
+void slicer_release_print(SlicerHandle handle);
 
 
 // Where the wipe tower goes: its front-left corner in printer coordinates (mm)
@@ -228,6 +232,12 @@ int slicer_add_stl(SlicerHandle handle, const char* path);
 int slicer_set_object_transform(SlicerHandle handle, int object_index,
                                 const SlicerModelTransform* t);
 
+// Adds a copy of an object at another spot on the bed (SceneKit X / Z offsets
+// from the bed centre, as in SlicerModelTransform), with the object's rotation
+// and scale. Copies are sliced once and printed at each spot. Call after
+// slicer_set_object_transform. Returns 0, or negative on error.
+int slicer_add_object_instance(SlicerHandle handle, int object_index, float pos_x_mm, float pos_z_mm);
+
 // ── Tools and mixes ───────────────────────────────────────────────────────────
 //
 // PalmSlice tool numbers, used everywhere a tool is stored (object / part
@@ -235,6 +245,7 @@ int slicer_set_object_transform(SlicerHandle handle, int object_index,
 // = physical tools, SLICER_MIX_BASE + n = mix n (n ≥ 1). They don't depend on
 // the printer's tool count; the bridge converts them to libslic3r's numbering
 // (mixes after the physical tools) when objects are added and sliced.
+// Painting holds tools 1–8 and mixes 1–8.
 #define SLICER_MIX_BASE 100
 
 // The session's mixes (ColorMix / PrusaSlicer "Full Spectrum" virtual
