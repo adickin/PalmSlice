@@ -261,6 +261,7 @@ static void normalize_tools(Slic3r::DynamicPrintConfig& cfg) {
 
 static void clamp_model_tools(Slic3r::Model& model, int filaments);
 static Slic3r::FullSpectrum::VirtualExtruders slicer_mixes(const SlicerContext* ctx);
+static bool apply_sub_layer_profiles(Slic3r::Model& model);
 
 // OrcaSlicer drops a variable layer height profile whose first layer isn't
 // exactly the first layer height (PrintObject::update_layer_height_profile),
@@ -396,6 +397,18 @@ int slicer_slice_with_progress(SlicerHandle handle,
         normalize_tools(cfg_copy);
         ctx->model.virtual_extruders = slicer_mixes(ctx);
         clamp_model_tools(ctx->model, cfg_copy.option<Slic3r::ConfigOptionFloats>("filament_diameter")->values.size());
+        if (apply_sub_layer_profiles(ctx->model)) {
+            // Organic tree supports assume every layer has the same height;
+            // sub-layers vary it. Slim trees follow the object's layers.
+            auto organic = [](const Slic3r::ConfigOption* style) {
+                return !style || style->getInt() == int(Slic3r::smsDefault) || style->getInt() == int(Slic3r::smsTreeOrganic);
+            };
+            if (organic(cfg_copy.option("support_style")))
+                cfg_copy.set_key_value("support_style", new Slic3r::ConfigOptionEnum<Slic3r::SupportMaterialStyle>(Slic3r::smsTreeSlim));
+            for (Slic3r::ModelObject* obj : ctx->model.objects)
+                if (const Slic3r::ConfigOption* own = obj->config.option("support_style"); own && organic(own))
+                    obj->config.set_key_value("support_style", new Slic3r::ConfigOptionEnum<Slic3r::SupportMaterialStyle>(Slic3r::smsTreeSlim));
+        }
         fit_layer_height_profiles(ctx->model, cfg_copy);
         // One plate, at the bed origin.
         ctx->print.set_plate_origin(Slic3r::Vec3d::Zero());
@@ -1008,25 +1021,111 @@ static ToolRemap mixes_to_slicer(const SlicerContext* ctx) {
     return remap;
 }
 
-// The session's mixes in libslic3r numbering, for Print::apply.
+// Settings holding a filament number (the *_filament_id ones: 0 = inherit).
+static const char* const k_tool_keys[] = {
+    "extruder", "outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
+    "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id" };
+
+// The session's mixes in libslic3r numbering, for Print::apply. Sub-layer
+// mixes get their sub-layer heights for the print's layer height.
 static FS::VirtualExtruders slicer_mixes(const SlicerContext* ctx) {
+    const auto number = [&](const char* key, double fallback) {
+        const Slic3r::ConfigOption* opt = ctx->config.option(key);
+        if (!opt) return fallback;
+        if (auto* v = dynamic_cast<const Slic3r::ConfigOptionFloats*>(opt)) return v->values.empty() ? fallback : v->values.front();
+        return opt->getFloat();
+    };
+    const double layer = number("layer_height", 0.2);
+    const double min_h = std::max(0.01, number("min_layer_height", 0.07));
+    const double max_h = std::max(min_h, number("max_layer_height", layer));
     FS::VirtualExtruders out;
     for (FS::VirtualExtruder m : ctx->mixes)
         if (const int id = to_slicer_tool(ctx, int(m.id)); id > 0) {
             m.id = static_cast<unsigned>(id);
+            if (m.sub_layers && !m.gradient) {
+                m.sub_layer_heights = m.compute_sub_layer_heights(layer, min_h, max_h);
+                m.sub_layer_first_height = number("initial_layer_print_height", layer);
+            }
             out.push_back(m);
         }
     return out;
+}
+
+// Whether any object prints with a tool (libslic3r number): its settings,
+// height ranges, parts or painting.
+static bool model_uses_tool(const Slic3r::Model& model, int tool) {
+    auto in_config = [tool](const Slic3r::ModelConfig& cfg) {
+        for (const char* key : k_tool_keys)
+            if (const Slic3r::ConfigOption* opt = cfg.option(key); opt && opt->getInt() == tool) return true;
+        return false;
+    };
+    for (const Slic3r::ModelObject* obj : model.objects) {
+        if (in_config(obj->config)) return true;
+        for (const auto& [range, config] : obj->layer_config_ranges)
+            if (in_config(config)) return true;
+        for (const Slic3r::ModelVolume* vol : obj->volumes) {
+            if (in_config(vol->config)) return true;
+            const auto& used = vol->mmu_segmentation_facets.get_data().used_states;
+            if (size_t(tool) < used.size() && used[tool]) return true;
+        }
+    }
+    return false;
+}
+
+// Sub-layer mixing: when the plate uses a sub-layer mix, every object is
+// sliced with each layer split at the mixes' sub-layer boundaries (all
+// objects alike, as the prime tower needs). The mixes' layers then each
+// fall in one component's band.
+static bool apply_sub_layer_profiles(Slic3r::Model& model) {
+    // Sub-layer boundaries within a base layer: even base layers run each
+    // mix's tools in reverse (see VirtualExtruder::resolve_all_layers).
+    std::vector<double> cuts[2];   // [0] = even (reversed), [1] = odd (in order)
+    double base = 0., first = 0.;
+    for (const FS::VirtualExtruder& m : model.virtual_extruders) {
+        if (!m.sub_layers || m.sub_layer_heights.size() < 2 || !model_uses_tool(model, int(m.id))) continue;
+        base  = std::accumulate(m.sub_layer_heights.begin(), m.sub_layer_heights.end(), 0.);
+        first = m.sub_layer_first_height;
+        double z_in = 0., z_rev = 0.;
+        const size_t n = m.sub_layer_heights.size();
+        for (size_t k = 0; k + 1 < n; ++k) {
+            cuts[1].push_back(z_in  += m.sub_layer_heights[k]);
+            cuts[0].push_back(z_rev += m.sub_layer_heights[n - 1 - k]);
+        }
+    }
+    if (cuts[1].empty() || base <= EPSILON) return false;
+    std::vector<double> heights[2];   // sub-layers of one base layer
+    for (int parity = 0; parity < 2; ++parity) {
+        cuts[parity].push_back(base);
+        std::sort(cuts[parity].begin(), cuts[parity].end());
+        double previous = 0.;
+        for (double cut : cuts[parity])
+            if (cut - previous > 0.02) { heights[parity].push_back(cut - previous); previous = cut; }
+        heights[parity].back() += base - previous;
+    }
+
+    for (Slic3r::ModelObject* obj : model.objects) {
+        if (obj->instances.empty()) continue;
+        // The height OrcaSlicer slices to (a profile must end there).
+        const double top = obj->max_z();
+        // [z, layer height] pairs; two per sub-layer so its height holds across it.
+        std::vector<coordf_t> profile{0., first};
+        double z = first;
+        for (size_t layer = 0; z < top - EPSILON; ++layer)
+            for (double h : heights[layer % 2]) {
+                if (z >= top - EPSILON) break;
+                profile.insert(profile.end(), {z, h, std::min(z + h - 0.001, top - 0.001), h});
+                z += h;
+            }
+        profile.insert(profile.end(), {top, profile.back()});
+        obj->layer_height_profile.set(std::move(profile));
+    }
+    return true;
 }
 
 static void update_mixes_json(SlicerContext* ctx) {
     ctx->mixes_json = FS::serialize_virtual_extruders_to_json({}, ctx->mixes);
 }
 
-// Settings holding a filament number (the *_filament_id ones: 0 = inherit).
-static const char* const k_tool_keys[] = {
-    "extruder", "outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
-    "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id" };
 
 static void remap_config_tools(Slic3r::ModelConfig& cfg, const ToolRemap& remap) {
     for (const char* key : k_tool_keys)
@@ -1080,7 +1179,7 @@ static void remap_object_tools(Slic3r::ModelObject& obj, const ToolRemap& remap)
 
 // The same mix, ignoring its number and display colour.
 static bool same_mix(const FS::VirtualExtruder& a, const FS::VirtualExtruder& b) {
-    return a.components == b.components && a.gradient == b.gradient;
+    return a.components == b.components && a.gradient == b.gradient && a.sub_layers == b.sub_layers;
 }
 
 // Adds a file's mixes (libslic3r numbering) to the session's, reusing an

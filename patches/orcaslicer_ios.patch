@@ -189,10 +189,10 @@ index 89e83029..f7ae09b7 100644
  
 diff --git a/src/libslic3r/Feature/FullSpectrum/VirtualExtruder.cpp b/src/libslic3r/Feature/FullSpectrum/VirtualExtruder.cpp
 new file mode 100644
-index 00000000..5f1e11c7
+index 00000000..d1162b61
 --- /dev/null
 +++ b/src/libslic3r/Feature/FullSpectrum/VirtualExtruder.cpp
-@@ -0,0 +1,1325 @@
+@@ -0,0 +1,1405 @@
 +#include "VirtualExtruder.hpp"
 +
 +#include <algorithm>
@@ -481,6 +481,36 @@ index 00000000..5f1e11c7
 +        return std::vector<unsigned int>(num_layers, components[0].extruder_id);
 +    }
 +
++    // Sub-layers: each layer's middle picks the component band it falls in
++    // within its base layer. Odd base layers run the components in reverse,
++    // so consecutive sub-layers across a layer boundary share a tool (one
++    // tool change per base layer). The first layer prints with the last
++    // component, which the first base layer then continues with.
++    if (sub_layers && sub_layer_heights.size() == components.size()) {
++        const double base = std::accumulate(sub_layer_heights.begin(), sub_layer_heights.end(), 0.);
++        std::vector<unsigned int> resolved_per_layer(num_layers, components.back().extruder_id);
++        double previous_z = 0.;
++        for (size_t layer_index = 0; layer_index < num_layers; ++layer_index) {
++            const double mid = 0.5 * (previous_z + print_z_per_layer[layer_index]);
++            previous_z = print_z_per_layer[layer_index];
++            if (base <= EPSILON || mid < sub_layer_first_height)
++                continue;
++            const double from_first = mid - sub_layer_first_height;
++            const bool reversed = (long(std::floor(from_first / base)) % 2) == 0;
++            double t = std::fmod(from_first, base);
++            const size_t n = sub_layer_heights.size();
++            for (size_t i = 0; i < n; ++i) {
++                const size_t k = reversed ? n - 1 - i : i;
++                if (t < sub_layer_heights[k] || i + 1 == n) {
++                    resolved_per_layer[layer_index] = components[k].extruder_id;
++                    break;
++                }
++                t -= sub_layer_heights[k];
++            }
++        }
++        return resolved_per_layer;
++    }
++
 +    const std::vector<unsigned int> canonical_sequence = this->build_sequence();
 +    if (canonical_sequence.empty())
 +        return std::vector<unsigned int>(num_layers, components[0].extruder_id);
@@ -606,6 +636,7 @@ index 00000000..5f1e11c7
 +    for (const VirtualExtruder& raw_virtual_extruder : raw_virtual_extruders) {
 +        VirtualExtruder normalized_virtual_extruder;
 +        normalized_virtual_extruder.id    = raw_virtual_extruder.id;
++        normalized_virtual_extruder.sub_layers = raw_virtual_extruder.sub_layers;
 +        normalized_virtual_extruder.color = raw_virtual_extruder.color;
 +
 +        if (raw_virtual_extruder.gradient.has_value()) {
@@ -1004,6 +1035,8 @@ index 00000000..5f1e11c7
 +            entry["components"] = components_array;
 +        } else {
 +            entry["kind"]           = "fullspectrum";
++            if (virtual_extruder.sub_layers)
++                entry["sublayers"] = true;
 +            const std::string color = virtual_extruder.effective_color(physical_extruders_colors);
 +            if (!color.empty()) {
 +                entry["color"] = color;
@@ -1205,6 +1238,7 @@ index 00000000..5f1e11c7
 +            continue;
 +        }
 +
++        virtual_extruder.sub_layers = entry.value("sublayers", false);
 +        if (entry.contains("color") && entry["color"].is_string()) {
 +            const std::string color_raw = entry["color"].get<std::string>();
 +            if (color_raw.size() >= 2 && color_raw.compare(0, 2, "g:") == 0) {
@@ -1518,12 +1552,58 @@ index 00000000..5f1e11c7
 +}
 +
 +} // namespace Slic3r::FullSpectrum
++
++namespace Slic3r::FullSpectrum {
++
++std::vector<double> VirtualExtruder::compute_sub_layer_heights(double base_height, double min_height, double max_height,
++                                                               double lo, double hi) const
++{
++    const size_t n = components.size();
++    if (n == 0 || base_height <= 0.)
++        return {};
++    double total_ratio = 0.;
++    for (const VirtualExtruderComponent& c : components)
++        total_ratio += std::max(0., c.ratio);
++    if (total_ratio <= 0.)
++        total_ratio = double(n);
++    // Snapmaker's weights, scaled so the sub-layers fill the base layer.
++    std::vector<double> heights(n);
++    double sum = 0.;
++    for (size_t k = 0; k < n; ++k) {
++        const double share = std::max(0., components[k].ratio) / total_ratio;
++        heights[k] = lo + share * (hi - lo);
++        sum += heights[k];
++    }
++    for (double& h : heights)
++        h *= base_height / sum;
++    // Keep each within the printer's limits, moving the difference to the others.
++    for (int pass = 0; pass < 8; ++pass) {
++        double excess = 0., free_weight = 0.;
++        for (double& h : heights) {
++            if (h < min_height) { excess -= min_height - h; h = min_height; }
++            else if (h > max_height) { excess += h - max_height; h = max_height; }
++        }
++        if (std::abs(excess) < 1e-9)
++            break;
++        for (double h : heights)
++            if ((excess > 0 && h < max_height) || (excess < 0 && h > min_height))
++                free_weight += h;
++        if (free_weight <= 0.)
++            break;
++        for (double& h : heights)
++            if ((excess > 0 && h < max_height) || (excess < 0 && h > min_height))
++                h += excess * h / free_weight;
++    }
++    return heights;
++}
++
++} // namespace Slic3r::FullSpectrum
 diff --git a/src/libslic3r/Feature/FullSpectrum/VirtualExtruder.hpp b/src/libslic3r/Feature/FullSpectrum/VirtualExtruder.hpp
 new file mode 100644
-index 00000000..38ed79cb
+index 00000000..d9971efe
 --- /dev/null
 +++ b/src/libslic3r/Feature/FullSpectrum/VirtualExtruder.hpp
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,345 @@
 +#pragma once
 +
 +#include <cstddef>
@@ -1612,6 +1692,20 @@ index 00000000..38ed79cb
 +    std::optional<std::string> color;
 +    VirtualExtruderComponents components;
 +    std::optional<VirtualExtruderGradient> gradient;
++    // PalmSlice sub-layer mixing (blends): each layer is split into one
++    // thinner sub-layer per component instead of whole layers alternating.
++    bool sub_layers = false;
++    // Set for slicing: each component's sub-layer height (component order,
++    // summing to the base layer height) and the first layer's height. Layers
++    // whose middle falls in a component's band print with it.
++    std::vector<double> sub_layer_heights;
++    double sub_layer_first_height = 0.;
++
++    // Sub-layer heights for a base layer height, as Snapmaker Orca's local-Z
++    // mixing sizes them: lo + share × (hi − lo), scaled to fill the layer and
++    // kept within [min_height, max_height].
++    std::vector<double> compute_sub_layer_heights(double base_height, double min_height, double max_height,
++                                                  double lo = 0.04, double hi = 0.16) const;
 +
 +    Type type() const
 +    {
@@ -1637,7 +1731,10 @@ index 00000000..38ed79cb
 +        return this->id == other.id
 +            && this->color == other.color
 +            && this->components == other.components
-+            && this->gradient == other.gradient;
++            && this->gradient == other.gradient
++            && this->sub_layers == other.sub_layers
++            && this->sub_layer_heights == other.sub_layer_heights
++            && this->sub_layer_first_height == other.sub_layer_first_height;
 +    }
 +
 +    bool operator!=(const VirtualExtruder& other) const

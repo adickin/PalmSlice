@@ -74,7 +74,8 @@ struct MixesView: View {
         return ToolMix(id: ToolMix.nextID(in: mixes), kind: kind,
                        components: kind == .blend
                            ? [.init(tool: 1, amount: 0.5), .init(tool: second, amount: 0.5)]
-                           : [.init(tool: 1, amount: 0), .init(tool: second, amount: 1)])
+                           : [.init(tool: 1, amount: 0), .init(tool: second, amount: 1)],
+                       subLayers: kind == .blend)
     }
 
     private func summary(_ mix: ToolMix) -> String {
@@ -181,8 +182,17 @@ struct MixEditorView: View {
                     Text(mix.kind == .blend ? "Tools" : "Stops (bottom to top)")
                 } footer: {
                     Text(mix.kind == .blend
-                         ? "Layers cycle through the tools in proportion to their shares, e.g. 2:1 prints two layers of the first tool for every one of the second."
+                         ? (mix.subLayers
+                            ? "Every layer is split into a thin sub-layer of each tool, sized by its share."
+                            : "Layers cycle through the tools in proportion to their shares, e.g. 2:1 prints two layers of the first tool for every one of the second.")
                          : "The mix shifts from the first stop's tool at the bottom to the last stop's at the top.")
+                }
+                if mix.kind == .blend {
+                    Section {
+                        Toggle("Sub-layers", isOn: $mix.subLayers)
+                    } footer: {
+                        Text("On: each layer prints a thin sub-layer of every tool, for an even colour (like Snapmaker Orca's mixing). Every object on the plate is then sliced in those thinner layers, with about one tool change per layer, and organic tree supports print as slim trees. Off: whole layers alternate between the tools.")
+                    }
                 }
                 if mix.kind == .gradient {
                     Section {

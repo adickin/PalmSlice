@@ -2,6 +2,13 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-11 (sub-layer mixing)
+
+- **Sub-layer mixing** for blends (on by default for new blends, a toggle in the mix editor): each layer is split into one thinner sub-layer per tool, sized like Snapmaker Orca's local-Z mixing (0.04 + share × 0.12 mm per 0.2 mm layer, within the printer's layer height limits), instead of whole layers alternating. The tool order alternates every layer, so it needs about one tool change per layer where Snapmaker Orca needs two. When a plate uses it, every object is sliced in the sub-layers (the prime tower needs matching layers), and organic tree supports print as slim trees (organic supports assume equal layer heights)
+- The chairlift frame in Snapmaker Orca's grey (39% black): 2h 13m, 22.5 g, 175 tool changes, 8.9 g of prime tower, vs Snapmaker Orca's 2h 36m, 26.7 g, 353 and 13.6 g, for the same part filament
+- Mix colour previews follow the sub-layer heights
+- Build 1.0 (8) to TestFlight
+
 ## 2026-11-11 (later)
 
 - **ColorMix is back** on the OrcaSlicer backend: PrusaSlicer 2.9.6's Full Spectrum virtual extruders (blends and gradients; whole objects, parts, height bands and painting) are ported into OrcaSlicer's libslic3r (`patches/orcaslicer_ios.patch`: `Feature/FullSpectrum`, region / MM-segmentation remapping, PrusaSlicer 3MF mixes), with the calibrated `prusa_fdm_mixer` colour predictor (MIT). Painting holds tools 1–8 and mixes 1–8 (OrcaSlicer stores 16 paint states). The ColorMix / mix import tests run again, plus a 70/30 blend slice on the Snapmaker U1
