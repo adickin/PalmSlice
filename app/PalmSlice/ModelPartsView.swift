@@ -1,4 +1,5 @@
 import SwiftUI
+import simd
 
 /// Picks a tool: physical tools 1…N, then mixes, as colour chips. `allowsDefault`
 /// adds "Default" (0 = the object's tool, for parts).
@@ -50,6 +51,10 @@ struct ModelPartsView: View {
     @Binding var model: PlacedModel
     let palette: ToolPalette
     @Binding var shownPart: Int?
+    /// The modifier the 3D view's arrows move and size.
+    @Binding var activeModifier: UUID?
+    /// The slice profile's values, shown as each setting's default.
+    let baseSettings: [String: String]
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -88,6 +93,23 @@ struct ModelPartsView: View {
                 } footer: {
                     Text("From each height up, the model prints with that tool. You can also add one at the current layer in the sliced preview.")
                 }
+                Section {
+                    ForEach($model.modifiers) { $modifier in
+                        modifierRow($modifier)
+                    }
+                    .onDelete { model.modifiers.remove(atOffsets: $0) }
+                    Menu {
+                        ForEach(ModelModifier.Shape.allCases, id: \.self) { shape in
+                            Button { addModifier(shape) } label: { Label(shape.label, systemImage: shape.icon) }
+                        }
+                    } label: {
+                        Label("Add Modifier", systemImage: "plus")
+                    }
+                } header: {
+                    Text("Modifiers")
+                } footer: {
+                    Text("A modifier changes settings (or the tool) where it overlaps the model, e.g. 100% infill around a screw hole. Tap one to move and size it with the arrows in the 3D view; the model's modifiers show see-through while it's selected.")
+                }
                 if !model.parts.isEmpty {
                     Section {
                         ForEach(model.parts.indices, id: \.self) { k in
@@ -96,7 +118,7 @@ struct ModelPartsView: View {
                     } header: {
                         Text("Parts")
                     } footer: {
-                        Text("Modifiers that set a tool are shown see-through in the 3D view. Tap a modifier, negative volume or support blocker to show it.")
+                        Text("From the model's file. Its modifiers, negative volumes and support blockers show see-through while the model is selected; tap the eye to highlight one.")
                     }
                 }
             }
@@ -106,6 +128,50 @@ struct ModelPartsView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
+    }
+
+    private func modifierRow(_ modifier: Binding<ModelModifier>) -> some View {
+        let m = modifier.wrappedValue
+        let isActive = activeModifier == m.id
+        return HStack {
+            Button { activeModifier = isActive ? nil : m.id } label: {
+                HStack {
+                    Image(systemName: m.shape.icon).foregroundStyle(.yellow).frame(width: 22)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(m.name).foregroundStyle(.primary)
+                        Text(ModifierEditorView.summary(m)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    if m.tool > 0 { ToolBadge(tool: m.tool, colour: palette.colour(m.tool), compact: true) }
+                    if isActive {
+                        Image(systemName: "move.3d").foregroundStyle(Color.accentColor)
+                            .accessibilityLabel("Editing in 3D view")
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            NavigationLink {
+                ModifierEditorView(modifier: modifier, palette: palette, baseSettings: baseSettings)
+                    .onAppear { activeModifier = m.id }
+            } label: { EmptyView() }
+            .frame(width: 20)
+        }
+        .listRowBackground(isActive ? Color.accentColor.opacity(0.15) : nil)
+    }
+
+    /// A new modifier at the model's centre, a third of its size.
+    private func addModifier(_ shape: ModelModifier.Shape) {
+        let info = model.meshInfo
+        var size = SIMD3<Float>(info?.sizeMMX ?? 30, info?.sizeMMY ?? 30, info?.sizeMMZ ?? 30) / 3
+        size = simd_max(size, SIMD3(repeating: 5))
+        if shape == .sphere { size = SIMD3(repeating: size.min()) }
+        if shape == .cylinder { size.x = min(size.x, size.y); size.y = size.x }
+        let modifier = ModelModifier(shape: shape, centreMM: .zero,
+                                     sizeMM: (size * 10).rounded(.toNearestOrAwayFromZero) / 10,
+                                     settings: ["sparse_infill_density": "100%"])
+        model.modifiers.append(modifier)
+        activeModifier = modifier.id
     }
 
     @ViewBuilder

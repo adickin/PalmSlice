@@ -107,6 +107,21 @@ extension SliceSetup {
         return nil
     }
 
+    /// The model's own modifiers, added to its object. Returns an error
+    /// message, or nil on success.
+    static func applyModifiers(_ handle: SlicerHandle, object: Int32, model: PlacedModel) -> String? {
+        for modifier in model.modifiers {
+            let text = SettingsText.serialize(modifier.settings)
+            var centre = [modifier.centreMM.x, modifier.centreMM.y, modifier.centreMM.z]
+            var size = [modifier.sizeMM.x, modifier.sizeMM.y, modifier.sizeMM.z]
+            if slicer_add_object_modifier(handle, object, Int32(modifier.shape.rawValue),
+                                          &centre, &size, text, Int32(modifier.tool)) != 0 {
+                return "\(modifier.name) modifier: \(String(cString: slicer_last_error(handle)))"
+            }
+        }
+        return nil
+    }
+
     /// Colour by height, merged into the object's height ranges. Call after
     /// the file settings. Returns an error message, or nil on success.
     static func applyToolBands(_ handle: SlicerHandle, object: Int32, model: PlacedModel) -> String? {

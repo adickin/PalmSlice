@@ -320,6 +320,22 @@ int slicer_add_model_object(SlicerHandle handle, const char* path, int keep_volu
 int slicer_set_object_extruder(SlicerHandle handle, int object_index, int tool);
 int slicer_set_volume_extruder(SlicerHandle handle, int object_index, int volume, int tool);
 
+typedef enum {
+    SLICER_SHAPE_BOX      = 0,
+    SLICER_SHAPE_CYLINDER = 1,   // upright (along the object's Z)
+    SLICER_SHAPE_SPHERE   = 2,
+} SlicerShape;
+
+// Adds a modifier volume to an added object: a box, cylinder or sphere
+// filling `size_mm` (x, y, z) around `centre_mm`, in the object's own frame
+// (mm, Z up, the centre of its printable parts' bounding box at the origin,
+// before the object's scale and rotation). `settings` is "key = value" lines
+// for where the modifier overlaps the object; tool is a PalmSlice tool
+// (0 = none). Returns 0 on success, negative on error.
+int slicer_add_object_modifier(SlicerHandle handle, int object_index, int shape,
+                               const float centre_mm[3], const float size_mm[3],
+                               const char* settings, int tool);
+
 // Name of the Nth object from the last slicer_import_model_file call ("" if out of range).
 // The pointer is valid until the next import call or slicer_destroy.
 const char* slicer_imported_object_name(SlicerHandle handle, int index);

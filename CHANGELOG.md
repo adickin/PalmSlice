@@ -2,6 +2,16 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-13
+
+- **Add modifiers** to a model (Parts & Tools → Add Modifier): a box, cylinder or sphere that changes settings (e.g. 100% infill around a screw hole) or the tool where it overlaps the model. Tap one to move and size it with the arrows in the 3D view; its detail screen sets shape, position and size (mm, in the model's frame), tool and settings. Modifiers follow the model's move, scale and rotation, and Duplicate / Fill Plate copies keep them
+- A selected model's modifiers (its own and those from its file, with negative volumes and support blockers) show see-through in the 3D view
+- **Fix: models with modifiers printed off their spot.** OrcaSlicer centred objects on their modifiers too, so a modifier reaching past the part moved the print (8.7 mm on a dowel bracket from Snapmaker Orca); objects are now centred on their printable parts, like the editor shows them
+- "Start printing after upload" (OctoPrint / Moonraker) is off each time the upload sheet opens
+- Bridge: `slicer_add_object_modifier`
+- DEBUG: `PALMSLICE_DEBUG_POS=x,y,z`, `PALMSLICE_DEBUG_MODIFIER=box|cylinder|sphere`
+- Build 1.0 (9) to TestFlight
+
 ## 2026-11-11 (sub-layer mixing)
 
 - **Sub-layer mixing** for blends (on by default for new blends, a toggle in the mix editor): each layer is split into one thinner sub-layer per tool, sized like Snapmaker Orca's local-Z mixing (0.04 + share × 0.12 mm per 0.2 mm layer, within the printer's layer height limits), instead of whole layers alternating. The tool order alternates every layer, so it needs about one tool change per layer where Snapmaker Orca needs two. When a plate uses it, every object is sliced in the sub-layers (the prime tower needs matching layers), and organic tree supports print as slim trees (organic supports assume equal layer heights)

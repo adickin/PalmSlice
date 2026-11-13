@@ -31,6 +31,39 @@ struct ModelPart: Equatable {
     }
 }
 
+/// A modifier the user added to a model: a box, cylinder or sphere where the
+/// model prints with other settings (and optionally another tool).
+/// Centre and size are mm in the model's own frame (Z up, the centre of its
+/// display mesh at the origin, before the model's scale and rotation).
+struct ModelModifier: Equatable, Identifiable {
+    enum Shape: Int, CaseIterable {
+        case box = 0, cylinder, sphere   // SLICER_SHAPE_*
+        var label: String {
+            switch self {
+            case .box: "Box"
+            case .cylinder: "Cylinder"
+            case .sphere: "Sphere"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .box: "cube"
+            case .cylinder: "cylinder"
+            case .sphere: "circle"
+            }
+        }
+    }
+    var id = UUID()
+    var shape: Shape
+    var centreMM: SIMD3<Float>
+    var sizeMM: SIMD3<Float>
+    /// PalmSlice tool; 0 = the model's.
+    var tool: Int = 0
+    var settings: [String: String] = [:]
+
+    var name: String { shape.label }
+}
+
 /// Colour by height: from `fromZ` (mm above the bed) up to the next band, the
 /// model prints with `tool` (PalmSlice number; 0 = its own tool).
 struct ToolBand: Equatable, Identifiable {
@@ -66,6 +99,8 @@ struct PlacedModel: Identifiable {
     var parts: [ModelPart] = []
     /// Colour by height, sorted by fromZ.
     var toolBands: [ToolBand] = []
+    /// Modifiers the user added (a file's own are in `parts`).
+    var modifiers: [ModelModifier] = []
     /// Painted triangles to draw over the model (display-STL frame).
     var paint: PaintMesh? = nil
     /// Support or seam painting being edited, drawn instead of `paint`.
@@ -85,6 +120,7 @@ struct PlacedModel: Identifiable {
             tools.formUnion(part.paintedTools)
         }
         for band in toolBands where band.tool > 0 { tools.insert(band.tool) }
+        for modifier in modifiers where modifier.tool > 0 { tools.insert(modifier.tool) }
         if useFileSettings, let fs = fileSettings {
             for range in fs.ranges { if let t = range.settings["extruder"].flatMap(Int.init), t > 0 { tools.insert(t) } }
         }
@@ -108,7 +144,7 @@ struct PlacedModel: Identifiable {
             && transform.rotationDeg == other.transform.rotationDeg && transform.scale == other.transform.scale
             && extruder == other.extruder && parts == other.parts && toolBands == other.toolBands
             && useFileSettings == other.useFileSettings && fileSettings == other.fileSettings
-            && partSettings == other.partSettings
+            && partSettings == other.partSettings && modifiers == other.modifiers
     }
 
     /// Triangle counts of the printable parts, in display-mesh order.

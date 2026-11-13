@@ -36,6 +36,10 @@ struct STLSceneView: UIViewRepresentable {
     var palette: ToolPalette? = nil
     /// A volume to show even if it isn't drawn normally (modifiers, negative volumes, …).
     var shownPart: ShownPart? = nil
+    /// The selected model's modifier being edited: the gizmo moves and sizes it.
+    var activeModifierID: UUID? = nil
+    /// A modifier was moved or resized in the 3D view.
+    var onModifierChange: ((UUID, ModelModifier) -> Void)? = nil
     /// The wipe tower to draw on the bed (draggable); nil = none.
     var wipeTower: WipeTowerFootprint? = nil
     /// Bed centre in printer coordinates (mm); models are positioned relative to it.
@@ -198,6 +202,7 @@ struct STLSceneView: UIViewRepresentable {
         coord.didSetCamera      = didSetCamera
         coord.lockScale         = lockScale
         coord.onWipeTowerMove   = onWipeTowerMove
+        coord.onModifierChange  = onModifierChange
         if coord.paintController !== paintController {
             coord.paintController = paintController
             let painting = paintController != nil
@@ -251,6 +256,13 @@ struct STLSceneView: UIViewRepresentable {
         if let id = selectedModelID,
            let t = models.first(where: { $0.id == id })?.transform {
             coord.currentTransform = t
+        }
+        let active = models.first { $0.id == selectedModelID }?.modifiers.first { $0.id == activeModifierID }
+        if coord.activeModifier?.id != active?.id {
+            coord.activeModifier = active
+            coord.updateGizmoGroupVisibility()
+        } else if let active {
+            coord.activeModifier = active
         }
 
         // 5. Add / update nodes for each model.
@@ -351,19 +363,33 @@ struct STLSceneView: UIViewRepresentable {
 
             // 5e. Tool tints and see-through volumes.
             let shown = shownPart?.model == model.id ? shownPart?.part : nil
+            let isSelected = model.id == selectedModelID
             let tintKey = TintKey(geometry: model.geometry.map(ObjectIdentifier.init), palette: palette,
                                   extruder: model.extruder, parts: model.parts,
                                   overlays: model.partGeometries.count, shown: shown,
-                                  paintVersion: model.paintVersion, centre: entry.centreMM)
+                                  paintVersion: model.paintVersion, centre: entry.centreMM,
+                                  selected: isSelected)
             if entry.tintKey != tintKey {
-                applyTint(model, shown: shown, to: &entry)
+                applyTint(model, shown: shown, selected: isSelected, to: &entry)
                 entry.tintKey = tintKey
                 coord.modelEntries[model.id] = entry
             }
+
+            // 5f. The model's own modifiers, see-through while it's selected.
+            syncModifierNodes(model, selected: isSelected,
+                              active: isSelected ? activeModifierID : nil, entry: &entry)
+            coord.modelEntries[model.id] = entry
         }
 
-        // 6. Update gizmo position / scale to the selected model.
-        if let id = selectedModelID, let entry = coord.modelEntries[id] {
+        // 6. Update gizmo position / scale to the selected model, or the modifier being edited.
+        if let id = selectedModelID, let entry = coord.modelEntries[id],
+           let active = coord.activeModifier, let node = entry.modifierNodes[active.id] {
+            coord.gizmoContainerNode?.position = node.worldPosition
+            let ts = entry.lastTransform.scale
+            let diag = simd_length(active.sizeMM / 100 * SIMD3<Float>(ts.x, ts.y, ts.z))
+            let s = max(diag * 0.55, 0.06)
+            coord.gizmoContainerNode?.scale = SCNVector3(s, s, s)
+        } else if let id = selectedModelID, let entry = coord.modelEntries[id] {
             let worldCenter = entry.pivot.convertPosition(
                 SCNVector3(0, entry.halfHeight, 0), to: nil)
             coord.gizmoContainerNode?.position = worldCenter
@@ -397,11 +423,43 @@ struct STLSceneView: UIViewRepresentable {
         var shown: Int?
         var paintVersion: Int
         var centre: SIMD3<Float>
+        var selected: Bool
+    }
+
+    /// Draws the model's modifiers (see-through, the edited one stronger) while
+    /// it's selected; hidden otherwise. Nodes are kept and moved, so dragging
+    /// one doesn't rebuild the others.
+    private func syncModifierNodes(_ model: PlacedModel, selected: Bool, active: UUID?,
+                                   entry: inout Coordinator.ModelEntry) {
+        let ids = Set(model.modifiers.map(\.id))
+        for (id, node) in entry.modifierNodes where !ids.contains(id) {
+            node.removeFromParentNode()
+            entry.modifierNodes[id] = nil
+        }
+        for modifier in model.modifiers {
+            let node: SCNNode
+            if let existing = entry.modifierNodes[modifier.id], existing.name == modifierNodeName(modifier) {
+                node = existing
+            } else {
+                entry.modifierNodes[modifier.id]?.removeFromParentNode()
+                node = makeModifierNode(modifier)
+                entry.mesh.addChildNode(node)
+                entry.modifierNodes[modifier.id] = node
+            }
+            node.isHidden = !selected
+            // Mesh-local frame: STL axes, centred on the display mesh, 1 unit = 100 mm.
+            node.position = SCNVector3(modifier.centreMM / 100)
+            node.scale = SCNVector3(modifier.sizeMM / 100)
+            let material = node.childNodes.first?.geometry?.firstMaterial
+            let colour = modifier.tool > 0 ? palette?.colour(modifier.tool).uiColor : nil
+            material?.diffuse.contents = colour ?? ModelPart.Kind.modifier.overlayColour
+            material?.transparency = modifier.id == active ? 0.6 : 0.3
+        }
     }
 
     /// Colours each printable part with its tool, and draws modifiers that set
     /// a tool (tinted) and the shown volume see-through over the model.
-    private func applyTint(_ model: PlacedModel, shown: Int?, to entry: inout Coordinator.ModelEntry) {
+    private func applyTint(_ model: PlacedModel, shown: Int?, selected: Bool, to entry: inout Coordinator.ModelEntry) {
         guard let geo = entry.mesh.geometry else { return }
         let faceMaterials = geo.materials.dropLast()   // the last one is the wireframe's
         let printable = model.parts.filter { $0.kind == .part }
@@ -430,11 +488,11 @@ struct STLSceneView: UIViewRepresentable {
         }
         for (k, part) in model.parts.enumerated() where part.kind != .part {
             let showsTool = palette != nil && part.kind == .modifier && part.extruder > 0
-            guard showsTool || shown == k, let source = model.partGeometries[k] else { continue }
+            guard showsTool || shown == k || selected, let source = model.partGeometries[k] else { continue }
             let overlay = source.copy() as! SCNGeometry
             let material = SCNMaterial()
             material.diffuse.contents = showsTool ? palette!.colour(part.extruder).uiColor : part.kind.overlayColour
-            material.transparency = shown == k ? 0.65 : 0.45
+            material.transparency = shown == k ? 0.65 : showsTool ? 0.45 : 0.3
             material.isDoubleSided = true
             material.writesToDepthBuffer = false
             material.lightingModel = .physicallyBased
@@ -453,6 +511,40 @@ struct STLSceneView: UIViewRepresentable {
         guard geo.materials.count > 1 else { return }
         geo.materials.last?.transparency = show ? 1.0 : 0.0
     }
+}
+
+// MARK: - Modifier nodes
+
+/// Changes with the shape, so a new shape gets a new node.
+private func modifierNodeName(_ modifier: ModelModifier) -> String {
+    "modifier_\(modifier.shape.rawValue)_\(modifier.id.uuidString)"
+}
+
+/// A unit shape (1 × 1 × 1, centred), sized by the node's scale. Cylinders
+/// stand along the mesh's Z (print up).
+private func makeModifierNode(_ modifier: ModelModifier) -> SCNNode {
+    let geometry: SCNGeometry
+    let shape = SCNNode()
+    switch modifier.shape {
+    case .box:
+        geometry = SCNBox(width: 1, height: 1, length: 1, chamferRadius: 0)
+    case .cylinder:
+        geometry = SCNCylinder(radius: 0.5, height: 1)
+        shape.eulerAngles.x = .pi / 2
+    case .sphere:
+        geometry = SCNSphere(radius: 0.5)
+    }
+    let material = SCNMaterial()
+    material.isDoubleSided = true
+    material.writesToDepthBuffer = false
+    material.lightingModel = .physicallyBased
+    geometry.materials = [material]
+    shape.geometry = geometry
+    shape.renderingOrder = 10
+    let node = SCNNode()
+    node.name = modifierNodeName(modifier)
+    node.addChildNode(shape)
+    return node
 }
 
 // MARK: - Bounding box wireframe helper
@@ -783,6 +875,8 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
         var overlayNodes:  [SCNNode] = []
         /// Centre of the model's display STL (mm), which its geometry is centred on.
         var centreMM:      SIMD3<Float> = .zero
+        /// The model's own modifiers, by id (children of `mesh`).
+        var modifierNodes: [UUID: SCNNode] = [:]
     }
     var modelEntries: [UUID: ModelEntry] = [:]
 
@@ -851,6 +945,9 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
     var dragMode:           GizmoMode = .translate
     var lastPanLocation:    CGPoint? = nil
     var currentTransform:   ModelTransform = .identity
+    /// The selected model's modifier being edited (the gizmo moves and sizes it).
+    var activeModifier:     ModelModifier?
+    var onModifierChange:   ((UUID, ModelModifier) -> Void)?
 
     // MARK: Callbacks
     var onTransformChange: ((UUID, ModelTransform) -> Void)? = nil
@@ -870,9 +967,11 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
         let show = entry.mesh.geometry != nil && paintController == nil   // no gizmo while painting
         gizmoContainerNode?.isHidden = !show
         guard show else { return }
-        gizmoTranslateGroup?.isHidden = gizmoMode != .translate
-        gizmoRotateGroup?.isHidden    = gizmoMode != .rotate
-        gizmoScaleGroup?.isHidden     = gizmoMode != .scale
+        // Modifiers don't turn: Rotate shows the move arrows for them.
+        let mode = activeModifier != nil && gizmoMode == .rotate ? .translate : gizmoMode
+        gizmoTranslateGroup?.isHidden = mode != .translate
+        gizmoRotateGroup?.isHidden    = mode != .rotate
+        gizmoScaleGroup?.isHidden     = mode != .scale
     }
 
     // MARK: Tap
@@ -1070,6 +1169,13 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
             let delta = CGPoint(x: cur.x - last.x, y: cur.y - last.y)
             lastPanLocation = cur
 
+            if var modifier = activeModifier, let node = entry.modifierNodes[modifier.id] {
+                dragModifier(&modifier, axis: axis, delta: delta, node: node, mesh: entry.mesh, in: scnView)
+                activeModifier = modifier
+                onModifierChange?(id, modifier)
+                return
+            }
+
             var t = currentTransform
             switch dragMode {
             case .translate:
@@ -1120,6 +1226,32 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
             onDragEnded?()
 
         default: break
+        }
+    }
+
+    /// Moves (along a print axis) or sizes the modifier being edited. The
+    /// modifier lives in the model's frame, so world moves are turned into it.
+    private func dragModifier(_ modifier: inout ModelModifier, axis: GizmoAxis, delta: CGPoint,
+                              node: SCNNode, mesh: SCNNode, in v: SCNView) {
+        let origin = node.worldPosition
+        // The world axis in the model's frame (STL axes, 1 unit = 100 mm of the unscaled model).
+        let dir = SCNVector3(axis.worldDir)
+        let local = SIMD3<Float>(mesh.convertVector(dir, from: nil))
+        switch dragMode {
+        case .translate, .rotate:
+            let dm = axisDeltaMM(screenDelta: delta, dir: axis.worldDir, in: v, origin: origin)
+            modifier.centreMM += local * dm
+        case .scale:
+            let proj = axisScreenPx(screenDelta: delta, dir: axis.worldDir, in: v, origin: origin)
+            let mult = max(0.01, 1 + proj / 200)
+            if lockScale || modifier.shape == .sphere {
+                modifier.sizeMM = simd_max(modifier.sizeMM * mult, SIMD3(repeating: 0.5))
+            } else {
+                // The model axis closest to the dragged world axis.
+                let a = simd_abs(local)
+                let k = a.x >= a.y && a.x >= a.z ? 0 : a.y >= a.z ? 1 : 2
+                modifier.sizeMM[k] = max(0.5, modifier.sizeMM[k] * mult)
+            }
         }
     }
 

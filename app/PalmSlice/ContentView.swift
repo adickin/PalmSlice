@@ -67,6 +67,8 @@ struct ContentView: View {
     @State private var arrangeMessage: String? = nil
     /// Volume shown in the 3D view from the Parts & Tools sheet.
     @State private var shownPart: STLSceneView.ShownPart? = nil
+    /// The modifier being moved / sized in the 3D view (of the selected model).
+    @State private var activeModifierID: UUID? = nil
     /// Wipe tower position dragged on the bed this session (printer mm); nil = the default.
     @State private var wipeTowerPosition: SIMD2<Double>? = nil
     /// The last slice's wipe tower depth (mm); nil = estimate it.
@@ -252,6 +254,29 @@ struct ContentView: View {
                 addCopies(of: models[0].id, count: nil)
                 while isArranging { try? await Task.sleep(for: .milliseconds(200)) }
             }
+            // `PALMSLICE_DEBUG_POS=x,y,z` moves the first model there (mm from the bed centre).
+            if let pos = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_POS"] {
+                while models.isEmpty || models.contains(where: { $0.geometry == nil }) {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                let v = pos.split(separator: ",").compactMap { Float($0) }
+                if v.count == 3 { models[0].transform.positionMM = SIMD3(v[0], v[1], v[2]) }
+            }
+            // `PALMSLICE_DEBUG_MODIFIER=box|cylinder|sphere` adds one to the first
+            // model, being edited (with PALMSLICE_DEBUG_SCREEN=parts, in Parts & Tools).
+            if let name = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_MODIFIER"],
+               let shape = ModelModifier.Shape.allCases.first(where: { $0.label.lowercased() == name }) {
+                while models.isEmpty || models.contains(where: { $0.geometry == nil }) {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                let size = models[0].meshInfo.map { SIMD3($0.sizeMMX, $0.sizeMMY, $0.sizeMMZ) / 3 } ?? SIMD3(repeating: 10)
+                let modifier = ModelModifier(shape: shape, centreMM: SIMD3(size.x, 0, 0), sizeMM: size,
+                                             settings: ["sparse_infill_density": "100%"])
+                models[0].modifiers.append(modifier)
+                selectedModelID = models[0].id
+                activeModifierID = modifier.id
+                isPanelExpanded = false
+            }
             // `PALMSLICE_DEBUG_SLICE=1` slices once the models have loaded.
             if ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_SLICE"] == "1" {
                 while models.isEmpty || models.contains(where: { $0.geometry == nil })
@@ -329,9 +354,14 @@ struct ContentView: View {
             if let id = partsModelID, let binding = modelBinding(id: id) {
                 ModelPartsView(model: binding, palette: toolPalette,
                                shownPart: Binding(get: { shownPart?.model == id ? shownPart?.part : nil },
-                                                  set: { shownPart = $0.map { .init(model: id, part: $0) } }))
+                                                  set: { shownPart = $0.map { .init(model: id, part: $0) } }),
+                               activeModifier: Binding(get: { activeModifierID },
+                                                       set: { activeModifierID = $0; if $0 != nil { selectedModelID = id } }),
+                               baseSettings: basePrintSettings.merging(
+                                  sliceProfileStore.selectedProfile?.slicerSettings() ?? [:]) { _, own in own })
                     .presentationDetents([.medium, .large])
                     .interactiveBehindMediumSheet()
+                    .onDisappear { activeModifierID = nil }
             }
         }
         .sheet(isPresented: $showTransformPanel) {
@@ -878,6 +908,13 @@ struct ContentView: View {
                 onPencilAction: { cycleGizmoMode() },
                 palette: showsToolColours ? toolPalette : nil,
                 shownPart: shownPart,
+                activeModifierID: activeModifierID,
+                onModifierChange: { id, modifier in
+                    if let i = models.firstIndex(where: { $0.id == id }),
+                       let k = models[i].modifiers.firstIndex(where: { $0.id == modifier.id }) {
+                        models[i].modifiers[k] = modifier
+                    }
+                },
                 wipeTower: wipeTower,
                 bedCentreMM: bedCentreMM,
                 onWipeTowerMove: { wipeTowerPosition = $0 },
@@ -2290,6 +2327,10 @@ struct ContentView: View {
                 return
             }
             if let msg = SliceSetup.applyTools(handle, object: objIdx, model: model) {
+                await MainActor.run { state = .failed(message: "\(model.name): \(msg)") ; showErrorAlert = true }
+                return
+            }
+            if let msg = SliceSetup.applyModifiers(handle, object: objIdx, model: model) {
                 await MainActor.run { state = .failed(message: "\(model.name): \(msg)") ; showErrorAlert = true }
                 return
             }

@@ -321,7 +321,7 @@ int slicer_load_stl(SlicerHandle handle, const char* path) {
             // After this call the mesh runs from -h/2 to +h/2 in Z with
             // all instance Z-offsets at 0, so we must shift each instance
             // up by h/2 to place the model bottom on the build plate (Z=0).
-            obj->center_around_origin();
+            obj->center_around_origin(/*include_modifiers=*/false);
             Slic3r::BoundingBoxf3 bb = obj->raw_bounding_box();
             double shift_z = -bb.min.z();  // distance from mesh bottom to Z=0
             for (auto* inst : obj->instances) {
@@ -887,7 +887,7 @@ int slicer_add_stl(SlicerHandle handle, const char* path) {
 
         for (auto* src : temp.objects) {
             auto* obj = ctx->model.add_object(*src);
-            obj->center_around_origin();
+            obj->center_around_origin(/*include_modifiers=*/false);
             Slic3r::BoundingBoxf3 bb = obj->raw_bounding_box();
             double shift_z = -bb.min.z();
             for (auto* inst : obj->instances) {
@@ -1522,7 +1522,9 @@ int slicer_add_model_object(SlicerHandle handle, const char* path, int keep_volu
         double cy = ctx->origin_at_center ? 0.0 : ctx->bed_y / 2.0;
         int idx = static_cast<int>(ctx->model.objects.size());
         auto* obj = ctx->model.add_object(*src);
-        obj->center_around_origin();
+        // Centred on the printable parts, like the display mesh; OrcaSlicer's
+        // default also counts modifiers, which moves the print off its spot.
+        obj->center_around_origin(/*include_modifiers=*/false);
         Slic3r::BoundingBoxf3 bb = obj->raw_bounding_box();
         for (auto* inst : obj->instances)
             inst->set_offset(Slic3r::Vec3d(cx, cy, inst->get_offset().z() - bb.min.z()));
@@ -1566,6 +1568,71 @@ int slicer_set_volume_extruder(SlicerHandle handle, int object_index, int volume
     if (k < 0 || k >= static_cast<int>(obj->volumes.size())) return set_err(ctx, "volume index out of range");
     set_config_tool(ctx, obj->volumes[k]->config, tool);
     return 0;
+}
+
+int slicer_add_object_modifier(SlicerHandle handle, int object_index, int shape,
+                               const float centre_mm[3], const float size_mm[3],
+                               const char* settings, int tool) {
+    auto ctx = CTX(handle);
+    if (object_index < 0 || object_index >= static_cast<int>(ctx->model.objects.size()))
+        return set_err(ctx, "object index out of range");
+    if (!centre_mm || !size_mm || !settings) return set_err(ctx, "null modifier");
+    if (tool < 0 || tool >= 2 * SLICER_MIX_BASE) return set_err(ctx, "tool out of range");
+    for (int i = 0; i < 3; ++i)
+        if (!(size_mm[i] > 0)) return set_err(ctx, "modifier size must be above 0");
+    // Parse fully before touching the object, so a bad line changes nothing.
+    Slic3r::DynamicPrintConfig config;
+    std::istringstream in(settings);
+    std::string line;
+    int line_no = 0;
+    try {
+        while (std::getline(in, line)) {
+            ++line_no;
+            if (line.empty()) continue;
+            size_t eq = line.find(" = ");
+            if (eq == std::string::npos) throw std::runtime_error("expected \"key = value\"");
+            Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::EnableSilent);
+            config.set_deserialize(line.substr(0, eq), line.substr(eq + 3), subst);
+        }
+    } catch (const std::exception& e) {
+        ctx->last_error = "modifier settings line " + std::to_string(line_no) + ": " + e.what();
+        return -1;
+    }
+    try {
+        // A unit shape centred on the origin, sized by the volume's scale.
+        Slic3r::TriangleMesh mesh;
+        switch (shape) {
+        case SLICER_SHAPE_BOX:
+            mesh = Slic3r::make_cube(1, 1, 1);
+            mesh.translate(-0.5f, -0.5f, -0.5f);
+            break;
+        case SLICER_SHAPE_CYLINDER:
+            mesh = Slic3r::make_cylinder(0.5, 1);
+            mesh.translate(0, 0, -0.5f);
+            break;
+        case SLICER_SHAPE_SPHERE:
+            mesh = Slic3r::make_sphere(0.5, PI / 36);
+            break;
+        default:
+            return set_err(ctx, "unknown modifier shape");
+        }
+        Slic3r::ModelObject* obj = ctx->model.objects[object_index];
+        Slic3r::ModelVolume* vol = obj->add_volume(std::move(mesh),
+                                                   Slic3r::ModelVolumeType::PARAMETER_MODIFIER,
+                                                   /*modify_to_center_geometry=*/false);
+        vol->name = shape == SLICER_SHAPE_BOX ? "Box" : shape == SLICER_SHAPE_CYLINDER ? "Cylinder" : "Sphere";
+        Slic3r::Geometry::Transformation t;
+        t.set_offset(Slic3r::Vec3d(centre_mm[0], centre_mm[1], centre_mm[2]));
+        t.set_scaling_factor(Slic3r::Vec3d(size_mm[0], size_mm[1], size_mm[2]));
+        vol->set_transformation(t);
+        for (const std::string& key : config.keys())
+            vol->config.set_key_value(key, config.option(key)->clone());
+        remap_config_tools(vol->config, mixes_to_slicer(ctx));
+        set_config_tool(ctx, vol->config, tool);
+        return 0;
+    } catch (const std::exception& e) {
+        return set_err(ctx, e);
+    }
 }
 
 const char* slicer_imported_object_name(SlicerHandle handle, int index) {

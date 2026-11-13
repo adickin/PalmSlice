@@ -282,7 +282,8 @@ private struct OctoPrintFolderView: View {
     let onUploaded: (String) -> Void
 
     @AppStorage("octoprint.selectAfterUpload") private var selectAfterUpload = false
-    @AppStorage("octoprint.printAfterUpload") private var printAfterUpload = false
+    /// Off each time the sheet opens, so a print never starts by accident.
+    @State private var printAfterUpload = false
 
     @State private var showNewFolder = false
     @State private var newFolderName = ""
