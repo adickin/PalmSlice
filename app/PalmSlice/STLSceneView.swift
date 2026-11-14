@@ -117,8 +117,9 @@ struct STLSceneView: UIViewRepresentable {
         scnView.addGestureRecognizer(tap)
         context.coordinator.tapGesture = tap
 
-        // Fingers (and trackpad) drag gizmo handles; Apple Pencil has its own recognizer
-        // below that also lets it grab a model directly and slide it across the bed.
+        // Fingers (and trackpad) drag gizmo handles, or grab a model and slide it across
+        // the bed (models only move in X/Y, so there are no move arrows); Apple Pencil has
+        // its own recognizer below that does the same.
         let pan = UIPanGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleGizmoPan(_:)))
@@ -977,9 +978,10 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
         let show = entry.mesh.geometry != nil && paintController == nil   // no gizmo while painting
         gizmoContainerNode?.isHidden = !show
         guard show else { return }
-        // Modifiers don't turn: Rotate shows the move arrows for them.
+        // Modifiers don't turn: Rotate shows the move arrows for them. Models have
+        // no move arrows: they're dragged across the bed directly.
         let mode = activeModifier != nil && gizmoMode == .rotate ? .translate : gizmoMode
-        gizmoTranslateGroup?.isHidden = mode != .translate
+        gizmoTranslateGroup?.isHidden = mode != .translate || activeModifier == nil
         gizmoRotateGroup?.isHidden    = mode != .rotate
         gizmoScaleGroup?.isHidden     = mode != .scale
     }
@@ -1137,8 +1139,7 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
                 scnView.allowsCameraControl = false
                 isHoverHighlighting = false
                 setGizmoAxisHighlight(active: info.axis, mode: info.mode)
-            } else if gesture === pencilPanGesture,
-                      let hit = hits.first(where: { modelID(for: $0.node) != nil }),
+            } else if let hit = hits.first(where: { modelID(for: $0.node) != nil }),
                       let id = modelID(for: hit.node) {
                 if id != selectedModelID { setSelected(id: id) }
                 let planeY = Float(hit.worldCoordinates.y)
@@ -1279,8 +1280,8 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
         if gizmoVisible, hits.contains(where: { gizmoNodeInfo($0.node) != nil }) { return true }
         // The wipe tower drags with a finger or the Pencil.
         if wipeTower != nil, hits.contains(where: { $0.node.name == wipeTowerNodeName }) { return true }
-        // Pencil can also grab any model body; on empty space it falls through to the camera.
-        return gr === pencilPanGesture && hits.contains { modelID(for: $0.node) != nil }
+        // A finger or the Pencil grabs any model body; on empty space it falls through to the camera.
+        return hits.contains { modelID(for: $0.node) != nil }
     }
 
     func gestureRecognizer(_ gr: UIGestureRecognizer,

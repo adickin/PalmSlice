@@ -80,8 +80,11 @@ struct PlacedModel: Identifiable {
     var geometry: SCNGeometry?
     /// Always sits on the bed: the slicer drops every object to Z=0
     /// (`ensure_on_bed`), so a raised or sunk model would preview wrongly.
-    var transform: ModelTransform { didSet { keepOnBed() } }
-    var meshInfo: STLMeshInfo? { didSet { keepOnBed() } }
+    /// Assigned directly in the observers: an assignment inside a property's own
+    /// didSet doesn't call it again, where one made from a method it calls
+    /// re-enters the accessor (a trap in optimised builds).
+    var transform: ModelTransform { didSet { transform.positionMM.z = Self.bedZ(transform, meshInfo) } }
+    var meshInfo: STLMeshInfo? { didSet { transform.positionMM.z = Self.bedZ(transform, meshInfo) } }
     var bvh: TriangleBVH?
     var isIntersecting: Bool = false
     /// PrusaSlicer settings stored on this object in its 3MF/AMF file.
@@ -113,10 +116,10 @@ struct PlacedModel: Identifiable {
     /// centred like `geometry`.
     var partGeometries: [Int: SCNGeometry] = [:]
 
-    private mutating func keepOnBed() {
-        guard let meshInfo else { return }
-        let z = transform.droppedToBed(meshInfo: meshInfo).positionMM.z
-        if transform.positionMM.z != z { transform.positionMM.z = z }
+    /// The height that puts the model on the bed; unchanged until its mesh is known.
+    private static func bedZ(_ transform: ModelTransform, _ meshInfo: STLMeshInfo?) -> Float {
+        // + 0 turns -0 into 0, so the Z field doesn't read "-0".
+        meshInfo.map { transform.droppedToBed(meshInfo: $0).positionMM.z + 0 } ?? transform.positionMM.z
     }
 
     /// Tools the model prints with (PalmSlice numbers, mixes included).

@@ -328,6 +328,30 @@ struct ContentView: View {
                 let v = pos.split(separator: ",").compactMap { Float($0) }
                 if v.count == 3 { models[0].transform.positionMM = SIMD3(v[0], v[1], v[2]) }
             }
+            // `PALMSLICE_DEBUG_ROTATE=x,y,z` rotates the first model (degrees, through the
+            // transform bar's path) and, a second later, taps its rotation Reset.
+            if let rot = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_ROTATE"] {
+                while models.isEmpty || models.contains(where: { $0.geometry == nil }) {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                selectedModelID = models[0].id
+                gizmoMode = .rotate
+                let v = rot.split(separator: ",").compactMap { Float($0) }
+                showTransformPanel = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_PANEL"] == "1"
+                try? await Task.sleep(for: .seconds(1))
+                // Like a rotate-handle drag: small steps through onTransformChange's path.
+                if v.count == 3 {
+                    for _ in 0..<60 {
+                        var t = models[0].transform
+                        t.rotationDeg += SIMD3(v[0], v[1], v[2]) / 60
+                        models[0].transform = t
+                        try? await Task.sleep(for: .milliseconds(16))
+                    }
+                    updateIntersections()
+                }
+                try? await Task.sleep(for: .seconds(1))
+                writeTransform { $0.rotationDeg = .zero }   // the Rotate bar's Reset
+            }
             // `PALMSLICE_DEBUG_MODIFIER=box|cylinder|sphere` adds one to the first
             // model, being edited (with PALMSLICE_DEBUG_SCREEN=parts, in Parts & Tools).
             if let name = ProcessInfo.processInfo.environment["PALMSLICE_DEBUG_MODIFIER"],

@@ -2,6 +2,14 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-14 (later)
+
+- Build 1.0 (12) to TestFlight
+- **Fix: rotating a model, then tapping Reset, crashed the app** (build 11, App Store / TestFlight builds only). Keeping the model on the bed re-entered its transform's setter from inside its own observer, which optimised builds turn into a trap; the observer now assigns the height directly
+- **Drag a model with a finger to move it** across the bed (as the Pencil already could); models have no move arrows any more, since they only move in X and Y. Modifiers keep theirs
+- The Z position no longer reads "-0"
+- DEBUG: `PALMSLICE_DEBUG_ROTATE=x,y,z` rotates the first model in small steps, then taps the Rotate bar's Reset (`PALMSLICE_DEBUG_PANEL=1` opens the transform panel first)
+
 ## 2026-11-14 (bug audit fixes)
 
 - Build 1.0 (11) to TestFlight

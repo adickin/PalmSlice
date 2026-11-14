@@ -121,3 +121,25 @@ final class ProjectExportTests: XCTestCase {
                        String(cString: slicer_last_error(h)))
     }
 }
+
+/// Models always sit on the bed, however their transform changes.
+final class OnBedTests: XCTestCase {
+    func testTransformChangesKeepTheModelOnTheBed() {
+        let info = STLMeshInfo(faces: [], vertices: [SIMD3(0, 0, 0), SIMD3(10, 0, 0), SIMD3(0, 20, 30)],
+                               boundingBoxMM: (min: SIMD3(0, 0, 0), max: SIMD3(10, 20, 30)))
+        var model = PlacedModel(id: UUID(), url: URL(fileURLWithPath: "/x.stl"), name: "x",
+                                geometry: nil, transform: ModelTransform())
+        model.transform.positionMM.z = 40          // before the mesh is known: kept
+        XCTAssertEqual(model.transform.positionMM.z, 40)
+        model.meshInfo = info                      // then dropped
+        XCTAssertEqual(model.transform.positionMM.z, 0)
+        for step in 1...60 {                       // like a rotate-handle drag, then Reset
+            model.transform.rotationDeg = SIMD3(Float(step), 0, Float(step) * 1.5)
+            XCTAssertEqual(model.transform.positionMM.z,
+                           model.transform.droppedToBed(meshInfo: info).positionMM.z, accuracy: 1e-4)
+        }
+        model.transform.rotationDeg = .zero
+        XCTAssertEqual(model.transform.positionMM.z, 0)
+        XCTAssertEqual(model.transform.positionMM.z.sign, .plus, "no -0 in the Z field")
+    }
+}
