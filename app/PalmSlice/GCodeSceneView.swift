@@ -22,7 +22,7 @@ struct GCodeSceneView: UIViewRepresentable {
     func makeCoordinator() -> GCodeCoordinator { GCodeCoordinator() }
 
     func makeUIView(context: Context) -> SCNView {
-        let scnView = SCNView()
+        let scnView = BedSCNView()
         scnView.backgroundColor = UIColor(white: 0.10, alpha: 1)
         scnView.antialiasingMode = .multisampling4X
         scnView.allowsCameraControl = true

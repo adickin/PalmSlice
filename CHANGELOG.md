@@ -4,6 +4,10 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-11-14
 
+- **Slice panel fits the screen**: the expanded panel takes at most 75% of the window, its details scroll (sized to their content when they fit), and Slice / Export stay pinned below them, so the handle to close it is always reachable. It has a plain sheet background instead of the blur (a material's vibrancy hid secondary text and bordered buttons inside the scroll view)
+- **Whole bed in view on a phone**: in portrait, the bed and sliced preview fit their field of view to the screen's width (a 45° vertical view was only ~22° wide and cropped the bed's sides, hiding the wipe tower at its back corner)
+- After slicing, the status says where the prime tower is ("Prime tower: 35 × 4 mm at X 184, Y 184"); on a tool changer like the Snapmaker U1 it can be a thin strip
+
 - **Clearer per-object filament on multi-tool printers**: the tool rows are labelled "Loaded Filaments" (what's in each tool, for the whole plate), and a "<model> prints with" tool picker for the selected model sits under them, so an object gets another filament by printing with another tool. The tool's material sheet is titled "T*n* Loaded Filament" and says it applies to every object on that tool
 
 ## 2026-11-13

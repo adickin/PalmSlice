@@ -58,7 +58,7 @@ struct STLSceneView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> SCNView {
-        let scnView = SCNView()
+        let scnView = BedSCNView()
         scnView.backgroundColor = UIColor(white: 0.10, alpha: 1)
         scnView.antialiasingMode = .multisampling4X
         scnView.allowsCameraControl = true
@@ -754,6 +754,19 @@ private func makeScaleGizmo() -> SCNNode {
 }
 
 // MARK: - Print bed grid
+
+/// An SCNView whose camera's field of view follows its shape: a 45° vertical
+/// view on a tall portrait phone is only ~22° wide and crops the bed's sides
+/// (and the wipe tower at its back corner), so portrait fits the width instead.
+final class BedSCNView: SCNView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, let camera = pointOfView?.camera else { return }
+        let portrait = bounds.width < bounds.height
+        camera.projectionDirection = portrait ? .horizontal : .vertical
+        camera.fieldOfView = portrait ? 50 : 45
+    }
+}
 
 func makePrintBedNode(bedX: Double, bedY: Double, bedZ: Double = 250) -> SCNNode {
     let scaleX = Float(bedX) / 100, scaleZ = Float(bedY) / 100

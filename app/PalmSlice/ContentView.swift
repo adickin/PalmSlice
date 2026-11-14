@@ -89,6 +89,10 @@ struct ContentView: View {
     @State private var configWarningOriginal: (walls: Int, top: Int, bottom: Int)?
     @State private var configDecisionContinuation: CheckedContinuation<SliceConfigDecision, Never>?
     @State private var isPanelExpanded = true
+    /// The phone layout's height; the expanded panel takes at most 75% of it.
+    @State private var windowHeight: CGFloat = 0
+    /// The expanded panel's details' natural height (its ScrollView is sized to it).
+    @State private var panelDetailsHeight: CGFloat = 0
 
     // iPad (regular width) layout: collapsible side columns around the viewer.
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -487,6 +491,11 @@ struct ContentView: View {
             bottomPanel
         }
         .ignoresSafeArea(edges: .top)
+        .background(GeometryReader { geo in
+            Color.clear
+                .onAppear { windowHeight = geo.size.height }
+                .onChange(of: geo.size.height) { windowHeight = $0 }
+        })
     }
 
     // MARK: - iPad layout
@@ -1541,7 +1550,10 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        // A plain colour, like a system sheet: a material's vibrancy doesn't
+        // reach into the expanded panel's ScrollView, where secondary text and
+        // bordered buttons would vanish.
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .shadow(color: .black.opacity(0.15), radius: 12, y: -4)
     }
 
@@ -1631,7 +1643,35 @@ struct ContentView: View {
         }
     }
 
+    /// The expanded panel's details, scrolling when they'd take the panel past
+    /// 75% of the window (a multi-tool printer's rows plus a slice summary can),
+    /// with the slice / export buttons pinned under them.
     private var expandedPanelContent: some View {
+        // Leave room for the handle, the action buttons and the bottom padding.
+        let maxDetailsHeight = windowHeight > 0 ? max(120, windowHeight * 0.75 - 200) : .infinity
+        return VStack(spacing: 0) {
+            // Exactly as tall as the details, up to the cap.
+            ScrollView {
+                expandedPanelDetails.background(GeometryReader { geo in
+                    Color.clear.preference(key: PanelDetailsHeightKey.self, value: geo.size.height)
+                })
+            }
+            .frame(height: panelDetailsHeight > 0 ? min(panelDetailsHeight, maxDetailsHeight) : nil)
+            .onPreferenceChange(PanelDetailsHeightKey.self) { panelDetailsHeight = $0 }
+
+            VStack(spacing: 16) {
+                Divider()
+                actionButtons
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
+
+            Color.clear.frame(height: 20)
+        }
+    }
+
+    private var expandedPanelDetails: some View {
         VStack(spacing: 0) {
             VStack(spacing: 16) {
                 // File row
@@ -1687,15 +1727,8 @@ struct ContentView: View {
                 }
 
                 sliceDetailsButton
-
-                Divider()
-
-                actionButtons
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 8)
-
-            Color.clear.frame(height: 20)
         }
     }
 
@@ -1930,6 +1963,11 @@ struct ContentView: View {
             if let t = time { msg += "\nTime: \(t)" }
             if let stats { msg += "\nFilament: \(stats.summaryText)" }
             else if let f = filament { msg += "\nFilament: \(f)" }
+            // A tool changer's tower can be a thin strip; say where it is.
+            if let tower = wipeTower, !tower.isEstimate {
+                msg += String(format: "\nPrime tower: %g × %g mm at X %g, Y %g", tower.width, (tower.depth * 10).rounded() / 10,
+                              tower.x.rounded(), tower.y.rounded())
+            }
             return msg
         case .failed(let msg):   return "Error: \(msg)"
         }
@@ -2628,4 +2666,10 @@ struct FileProfilesOffer {
 private struct MaterialPickerTool: Identifiable {
     let tool: Int
     var id: Int { tool }
+}
+
+/// The expanded panel's details' height, measured inside its ScrollView.
+private struct PanelDetailsHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
