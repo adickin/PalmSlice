@@ -34,12 +34,20 @@ final class MaterialProfileStore: ObservableObject {
         tool == 1 || (tool - 2 < toolMaterialIDs.count && profiles.contains { $0.id == toolMaterialIDs[tool - 2] })
     }
 
+    /// Stands in for tools before the one being set that have no material of
+    /// their own, so they keep following tool 1's.
+    static let followsToolOne = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+
     func setMaterial(_ id: UUID, forTool tool: Int) {
         guard tool > 1 else { return select(id: id) }
-        let fallback = selectedProfileId ?? id
-        while toolMaterialIDs.count < tool - 1 { toolMaterialIDs.append(fallback) }
+        while toolMaterialIDs.count < tool - 1 { toolMaterialIDs.append(Self.followsToolOne) }
         toolMaterialIDs[tool - 2] = id
         UserDefaults.standard.set(toolMaterialIDs.map(\.uuidString), forKey: Self.toolMaterialsKey)
+    }
+
+    /// The tools (1…count) a material is loaded in.
+    func tools(using id: UUID, count: Int) -> [Int] {
+        (1...max(1, count)).filter { material(forTool: $0)?.id == id }
     }
 
     /// Materials for tools 2…count.

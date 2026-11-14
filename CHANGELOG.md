@@ -4,8 +4,10 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-11-14
 
+- **Fix: picking T3's filament froze T2 on T1's.** A tool skipped over (no filament of its own) was stored as T1's filament at that moment, so later changing T1 no longer changed it; it now keeps following T1. Tools already saved that way keep their filament
+- The material editor says which tools a save changes on a multi-tool printer: "Loaded in T1, T2: changes apply to each." for your own materials, "Saving keeps your changes as your own material, loaded in T2." for an OrcaSlicer filament
 - **Fix: editing a material from T2's (or T3's…) sheet loaded the result in T1.** Changing an OrcaSlicer filament saves it as your own copy, and that copy now goes in the tool whose sheet you edited it from
-- Tests: `MaterialEditToolTests` (an edit for T2 leaves T1's filament alone, and the other way round); the copy is made by `MaterialProfileStore.keepEdit`
+- Tests: `MaterialEditToolTests` (an edit for T2 leaves T1's filament alone, and the other way round; setting T3 leaves T2 following T1; which tools use a material); the copy is made by `MaterialProfileStore.keepEdit`
 - **Slice panel fits the screen**: the expanded panel takes at most 75% of the window, its details scroll (sized to their content when they fit), and Slice / Export stay pinned below them, so the handle to close it is always reachable. It has a plain sheet background instead of the blur (a material's vibrancy hid secondary text and bordered buttons inside the scroll view)
 - **Whole bed in view on a phone**: in portrait, the bed and sliced preview fit their field of view to the screen's width (a 45° vertical view was only ~22° wide and cropped the bed's sides, hiding the wipe tower at its back corner)
 - After slicing, the status says where the prime tower is ("Prime tower: 35 × 4 mm at X 184, Y 184"); on a tool changer like the Snapmaker U1 it can be a thin strip

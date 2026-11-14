@@ -78,9 +78,24 @@ struct MaterialProfileEditorView: View {
     // MARK: - Sections
 
     private var nameSection: some View {
-        Section("Name") {
+        Section {
             TextField("Profile name", text: $draft.name)
+        } header: {
+            Text("Name")
+        } footer: {
+            if let usage { Text(usage) }
         }
+    }
+
+    /// Which tools a save changes, on a multi-tool printer.
+    private var usage: String? {
+        let count = profileStore.selectedProfile?.numberOfExtruders ?? 1
+        guard count > 1, mode == .edit else { return nil }
+        if draft.isSystem { return "Saving keeps your changes as your own material, loaded in T\(tool)." }
+        let tools = materialProfileStore.tools(using: draft.id, count: count)
+        guard !tools.isEmpty else { return nil }
+        let list = tools.map { "T\($0)" }.joined(separator: ", ")
+        return tools.count > 1 ? "Loaded in \(list): changes apply to each." : "Loaded in \(list)."
     }
 
     // PrusaSlicer filament_type values found in its vendor filament presets.
