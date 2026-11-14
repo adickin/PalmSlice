@@ -4,6 +4,7 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-11-14
 
+- Build 1.0 (10) to TestFlight
 - **Fix: picking T3's filament froze T2 on T1's.** A tool skipped over (no filament of its own) was stored as T1's filament at that moment, so later changing T1 no longer changed it; it now keeps following T1. Tools already saved that way keep their filament
 - The material editor says which tools a save changes on a multi-tool printer: "Loaded in T1, T2: changes apply to each." for your own materials, "Saving keeps your changes as your own material, loaded in T2." for an OrcaSlicer filament
 - **Fix: editing a material from T2's (or T3's…) sheet loaded the result in T1.** Changing an OrcaSlicer filament saves it as your own copy, and that copy now goes in the tool whose sheet you edited it from
