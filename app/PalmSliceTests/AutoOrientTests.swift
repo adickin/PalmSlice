@@ -75,7 +75,7 @@ final class AutoOrientTests: XCTestCase {
             }
             data.append(Data(count: 2))
         }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).stl")
+        let url = scratchDir().appendingPathComponent("\(UUID()).stl")
         try data.write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -90,7 +90,7 @@ final class AutoOrientTests: XCTestCase {
         t.rot_x_deg = deg.x; t.rot_y_deg = deg.z; t.rot_z_deg = deg.y   // as ContentView.runSlice
         XCTAssertEqual(slicer_set_object_transform(h, idx, &t), 0)
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
         let tops = try String(contentsOf: out, encoding: .utf8).split(separator: "\n")

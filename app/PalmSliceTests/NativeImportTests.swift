@@ -9,7 +9,7 @@ final class NativeImportTests: XCTestCase {
         .deletingLastPathComponent().appendingPathComponent("Fixtures")
 
     private func importFixture(_ name: String, mixes: [ToolMix] = []) throws -> ModelFileImport {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir().appendingPathComponent(UUID().uuidString)
         return try importModelFile(at: fixtures.appendingPathComponent(name), outputDir: dir, mixes: mixes)
     }
 
@@ -41,7 +41,7 @@ final class NativeImportTests: XCTestCase {
             XCTAssertNil(SliceSetup.applyToolBands(h, object: idx, model: model))
         }
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
         if let projectTo {
@@ -55,7 +55,7 @@ final class NativeImportTests: XCTestCase {
     }
 
     private func referenceSlice(at file: URL) throws -> String {
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         var err = [CChar](repeating: 0, count: 512)
         XCTAssertEqual(slicer_reference_slice_3mf(file.path, out.path, &err, 512), 0, String(cString: err))
@@ -199,7 +199,7 @@ final class NativeImportTests: XCTestCase {
     // own path: parts, modifiers and tool assignments survive the round trip.
     func testProjectExportRoundTrips() throws {
         let file = try importFixture("parts.3mf")
-        let project = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).3mf")
+        let project = scratchDir().appendingPathComponent("\(UUID()).3mf")
         defer { try? FileManager.default.removeItem(at: project) }
         let ours = toolsByLayer(try slice(file, projectTo: project))
         let desktop = toolsByLayer(try referenceSlice(at: project))

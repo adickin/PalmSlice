@@ -88,7 +88,7 @@ struct ExportSheetView: View {
                                 errorMessage = "Could not prepare the project: \(error.localizedDescription)"
                             }
                         } label: {
-                            Label("Save PrusaSlicer Project (.3mf)…", systemImage: "shippingbox")
+                            Label("Save OrcaSlicer Project (.3mf)…", systemImage: "shippingbox")
                         }
                     }
                 } header: {
@@ -410,13 +410,16 @@ private struct OctoPrintFolderView: View {
 
     private func upload() async {
         uploadProgress = 0
-        defer { uploadProgress = nil }
+        // Progress hops to the main actor in its own task; one landing after
+        // the upload ends must not bring the bar back.
+        let progress = UploadProgressGate()
+        defer { progress.close(); uploadProgress = nil }
         do {
             let client = try PrintHost.client(settings: .shared)
             try await client.upload(fileURL: sourceURL, as: fileName, to: path,
                                     select: selectAfterUpload || printAfterUpload,
                                     print: printAfterUpload) { p in
-                Task { @MainActor in uploadProgress = p }
+                Task { @MainActor in if progress.isOpen { uploadProgress = p } }
             }
             await model.load(force: true)
             onUploaded((path.isEmpty ? "/" : "/" + path + "/") + fileName)
@@ -492,6 +495,7 @@ struct OctoPrintSettingsView: View {
         .onChange(of: settings.hostType) { _ in testState = .idle }
         .onChange(of: settings.baseURL) { _ in testState = .idle }
         .onChange(of: settings.apiKey) { _ in testState = .idle }
+        .onDisappear { settings.saveAPIKeyNow() }
     }
 
     private func test() async {
@@ -583,4 +587,11 @@ private struct MoonrakerStatusRow: View {
             self.error = error.localizedDescription
         }
     }
+}
+
+/// Whether an upload's progress may still be shown (main actor only).
+@MainActor
+private final class UploadProgressGate: @unchecked Sendable {
+    private(set) var isOpen = true
+    func close() { isOpen = false }
 }

@@ -43,7 +43,7 @@ enum ProfileIni {
     /// exported config) is one flat section.
     static func sections(_ text: String) -> [Section] {
         var out = [Section(type: nil, name: nil, settings: [:])]
-        for raw in text.split(separator: "\n", omittingEmptySubsequences: true) {
+        for raw in SettingsText.lines(text) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("["), line.hasSuffix("]") {
                 let header = line.dropFirst().dropLast()
@@ -51,11 +51,7 @@ enum ProfileIni {
                 out.append(Section(type: parts.first, name: parts.count > 1 ? parts[1] : nil, settings: [:]))
                 continue
             }
-            guard !line.hasPrefix("#"), !line.hasPrefix(";"), let eq = line.firstIndex(of: "=") else { continue }
-            let key = line[..<eq].trimmingCharacters(in: .whitespaces)
-            var value = String(line[line.index(after: eq)...])
-            if value.hasPrefix(" ") { value.removeFirst() }
-            out[out.count - 1].settings[key] = value
+            if let (key, value) = SettingsText.keyValue(raw) { out[out.count - 1].settings[key] = value }
         }
         return out.filter { !$0.settings.isEmpty }
     }
@@ -154,7 +150,7 @@ struct IniImportModifier<P: IniProfile>: ViewModifier {
                 case .success(let url):
                     let scoped = url.startAccessingSecurityScopedResource()
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                    guard let data = try? Data(contentsOf: url), let text = SettingsText.decode(data) else {
                         message = "Couldn't read \(url.lastPathComponent)."
                         return
                     }

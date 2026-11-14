@@ -10,8 +10,10 @@ final class SliceProfileStore: ObservableObject {
     @Published private(set) var profiles: [SliceProfile] = []
     /// Remembered across launches.
     @Published var selectedProfileId: UUID? {
-        didSet { UserDefaults.standard.set(selectedProfileId?.uuidString, forKey: Self.selectedKey) }
+        didSet { defaults.set(selectedProfileId?.uuidString, forKey: Self.selectedKey) }
     }
+    /// A load or save problem to show the user.
+    @Published var storageError: String?
     private static let selectedKey = "lastSliceProfileID"
 
     /// The user's own qualities (changes only), persisted.
@@ -28,24 +30,35 @@ final class SliceProfileStore: ObservableObject {
 
     // Saved qualities were reset when defaults moved to OrcaSlicer (Nov 2026);
     // the old slice_profiles.json is left in place, unread.
-    private var storeURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("slice_qualities.json")
+    private var storeURL: URL { directory.appendingPathComponent("slice_qualities.json") }
+
+    /// Where the store's file and settings live: the app's Documents and
+    /// standard defaults, or a test's own.
+    private let directory: URL
+    private let defaults: UserDefaults
+
+    init(directory: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],
+         defaults: UserDefaults = .standard) {
+        self.directory = directory
+        self.defaults = defaults
     }
 
     // MARK: Load / Save
 
     func load(printerPreset: String? = nil) {
         self.printerPreset = printerPreset
-        if let data = try? Data(contentsOf: storeURL),
-           let decoded = try? JSONDecoder().decode([SliceProfile].self, from: data) {
+        switch ProfileFile.load([SliceProfile].self, from: storeURL) {
+        case .loaded(let decoded):
             custom = decoded
-        } else {
+        case .unreadable(let backup):
+            storageError = ProfileFile.unreadableMessage("slice profiles", backup: backup)
+            fallthrough
+        case .missing:
             custom = BuiltInSliceProfiles.all
             save()
         }
         if selectedProfileId == nil {
-            selectedProfileId = UserDefaults.standard.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:))
+            selectedProfileId = defaults.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:))
         }
         rebuild()
     }
@@ -87,8 +100,8 @@ final class SliceProfileStore: ObservableObject {
     }
 
     func save() {
-        guard let data = try? JSONEncoder().encode(custom) else { return }
-        try? data.write(to: storeURL, options: .atomic)
+        do { try ProfileFile.save(custom, to: storeURL) }
+        catch { storageError = ProfileFile.saveFailedMessage("slice profiles", error) }
     }
 
     // MARK: Mutations

@@ -24,7 +24,7 @@ final class SnapmakerU1Tests: XCTestCase {
 
     /// `tower`: the wipe tower's front-left corner (printer mm), or the default.
     private func sliceOnU1(tower: SIMD2<Float>? = nil) throws -> String {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir().appendingPathComponent(UUID().uuidString)
         let file = try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir)
         guard let h = slicer_create() else { throw XCTSkip("slicer_create") }
         defer { slicer_destroy(h) }
@@ -83,7 +83,7 @@ final class SnapmakerU1Tests: XCTestCase {
     // The U1 asks for 48×48 and 300×300 PNGs; PalmSlice renders and embeds them.
     @MainActor
     func testThumbnailsAreEmbedded() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir().appendingPathComponent(UUID().uuidString)
         let object = try XCTUnwrap(try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir).objects.first)
         guard let h = slicer_create() else { throw XCTSkip("slicer_create") }
         defer { slicer_destroy(h) }

@@ -8,11 +8,10 @@ final class OrcaDefaultsTests: XCTestCase {
     private let ender = "Creality Ender-3 S1 0.4 nozzle"
     private let u1 = "Snapmaker U1 (0.4 nozzle)"
 
-    // The stores remember their selection in the app's defaults; don't leave
-    // the tests' choice behind in the host app.
-    private var savedSelection: Any?
-    override func setUp() { savedSelection = UserDefaults.standard.object(forKey: "lastSliceProfileID") }
-    override func tearDown() { UserDefaults.standard.set(savedSelection, forKey: "lastSliceProfileID") }
+    /// A store with its own file and defaults, not the host app's.
+    private func makeStore() -> SliceProfileStore {
+        SliceProfileStore(directory: scratchDir(), defaults: scratchDefaults())
+    }
 
     func testEachPrinterHasItsOwnQualities() {
         let enderQualities = PresetLibrary.qualities(forPrinter: ender)
@@ -28,7 +27,7 @@ final class OrcaDefaultsTests: XCTestCase {
     }
 
     func testSwitchingPrinterSelectsItsDefaultQuality() {
-        let store = SliceProfileStore()
+        let store = makeStore()
         store.load(printerPreset: ender)
         store.select(id: PresetLibrary.stableID(.print, "0.20mm Standard @Creality Ender3S1"))
         XCTAssertEqual(store.selectedProfile?.basePreset, "0.20mm Standard @Creality Ender3S1")
@@ -44,7 +43,7 @@ final class OrcaDefaultsTests: XCTestCase {
     }
 
     func testUserQualityKeepsOnlyItsChanges() {
-        let store = SliceProfileStore()
+        let store = makeStore()
         store.load(printerPreset: ender)
         var mine = SliceProfile.from(printPreset: "0.20mm Standard @Creality Ender3S1", name: "Five walls")
         mine.wallCount = 5

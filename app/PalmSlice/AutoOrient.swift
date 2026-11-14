@@ -30,7 +30,7 @@ enum AutoOrient {
     static func score(_ info: STLMeshInfo, down d: SIMD3<Float>) -> Float {
         // With d pointing down, a point's height is -p·d and a normal's z is -n·d.
         var zMin = Float.infinity, zMax = -Float.infinity
-        for v in info.vertices {
+        for v in info.distinctVertices {
             let z = -simd_dot(v, d)
             zMin = min(zMin, z); zMax = max(zMax, z)
         }

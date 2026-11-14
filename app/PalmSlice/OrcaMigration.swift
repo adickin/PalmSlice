@@ -14,11 +14,13 @@ enum OrcaMigration {
     }
 
     /// Runs `migrate` the first time it's called for `store`; returns whether it ran.
-    static func once(_ store: String, _ migrate: () -> Void) -> Bool {
+    /// Waits for the OrcaSlicer presets: a migration without them would do
+    /// nothing yet be marked done, and never retry.
+    static func once(_ store: String, defaults: UserDefaults = .standard, _ migrate: () -> Void) -> Bool {
         let key = "orcaMigrated." + store
-        guard !UserDefaults.standard.bool(forKey: key) else { return false }
+        guard PresetLibrary.isLoaded, !defaults.bool(forKey: key) else { return false }
         migrate()
-        UserDefaults.standard.set(true, forKey: key)
+        defaults.set(true, forKey: key)
         return true
     }
 

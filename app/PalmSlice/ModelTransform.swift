@@ -41,9 +41,9 @@ struct ModelTransform: Equatable {
         let minBZ: Float = bb.min.z
         let mm2u: Float = 1.0 / 100.0
 
-        if !meshInfo.vertices.isEmpty {
+        if !meshInfo.distinctVertices.isEmpty {
             var minY: Float = .infinity
-            for v in meshInfo.vertices {
+            for v in meshInfo.distinctVertices {
                 let p = SIMD3<Float>((v.x - cx) * mm2u * s.x,
                                     (v.z - minBZ) * mm2u * s.z,
                                     (cy - v.y) * mm2u * s.y)
@@ -90,7 +90,7 @@ struct ModelTransform: Equatable {
         let cx = (bb.min.x + bb.max.x) * 0.5
         let cy = (bb.min.y + bb.max.y) * 0.5
         // Same mapping as minWorldY, in mm; SceneKit -Z is print Y.
-        let points = meshInfo.vertices.map { v -> SIMD2<Float> in
+        let points = meshInfo.distinctVertices.map { v -> SIMD2<Float> in
             let w = simd_act(q, SIMD3<Float>((v.x - cx) * s.x, (v.z - bb.min.z) * s.z, (cy - v.y) * s.y))
             return SIMD2(w.x, -w.z)
         }

@@ -153,6 +153,8 @@ enum PlateArrange {
 
         /// The rows of cells a convex footprint centred on a cell covers.
         func spans(_ polygon: [SIMD2<Float>]) -> [Span] {
+            // No points: no bounds (converting ±infinity to Int would trap).
+            guard !polygon.isEmpty else { return [] }
             let lo = polygon.reduce(SIMD2<Float>(repeating: .infinity)) { simd_min($0, $1) }
             let hi = polygon.reduce(SIMD2<Float>(repeating: -.infinity)) { simd_max($0, $1) }
             var out: [Span] = []

@@ -29,7 +29,7 @@ final class SliceProfileTests: XCTestCase {
     // models use. Regular slicing fills the inner cube in (one outer wall
     // only); Even/Odd treats it as a hole, adding an inner wall loop.
     func testRCPlaneProfileUsesEvenOddAndClassicWalls() throws {
-        let stl = FileManager.default.temporaryDirectory.appendingPathComponent("nested_cubes.stl")
+        let stl = scratchDir().appendingPathComponent("nested_cubes.stl")
         try nestedCubesSTL().write(to: stl, atomically: true, encoding: .utf8)
 
         let evenOdd = try slice(stl, with: BuiltInSliceProfiles.rcPlane)
@@ -58,7 +58,7 @@ final class SliceProfileTests: XCTestCase {
         try SliceSetup.apply(profile, label: "Slice profile", to: h)
         XCTAssertEqual(slicer_load_stl(h, stl.path), 0, String(cString: slicer_last_error(h)))
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory
+        let out = scratchDir()
             .appendingPathComponent("\(profile.slicingMode.bridgeInt).gcode")
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
         return try String(contentsOf: out, encoding: .utf8)
@@ -186,15 +186,14 @@ final class ProfileSettingsTests: XCTestCase {
     }
 
     private func sliceSphere(base: PresetBase, apply: (SlicerHandle) throws -> Void) throws -> String {
-        let stl = "/Users/adickin/ios-sources/PrusaSlicer/resources/shapes/sphere.stl"
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: stl))
+        let stl = Fixtures.url("sphere.stl").path
         guard let h = slicer_create() else { throw XCTSkip("slicer_create") }
         defer { slicer_destroy(h) }
         XCTAssertTrue(PresetLibrary.apply(base, to: h), String(cString: slicer_last_error(h)))
         try apply(h)
         XCTAssertEqual(slicer_load_stl(h, stl), 0, String(cString: slicer_last_error(h)))
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("import-\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("import-\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
         return try String(contentsOf: out, encoding: .utf8)

@@ -5,21 +5,12 @@ import XCTest
 @MainActor
 final class MaterialEditToolTests: XCTestCase {
     private var store: MaterialProfileStore!
-    private var savedDefaults: [String: Any?] = [:]
-    private var added: [UUID] = []
-    private let keys = ["lastMaterialID", "toolMaterialIDs"]
 
     override func setUp() async throws {
-        for k in keys { savedDefaults[k] = UserDefaults.standard.object(forKey: k) }
-        UserDefaults.standard.removeObject(forKey: "toolMaterialIDs")   // no tool has its own yet
-        store = MaterialProfileStore()
+        // A store of the test's own: no tool has its own material yet.
+        store = MaterialProfileStore(directory: scratchDir(), defaults: scratchDefaults())
         let u1 = try XCTUnwrap(BuiltInProfiles.all.first { $0.builtInKey == "snapmaker-u1" })
         store.load(printerPreset: u1.systemPreset)
-    }
-
-    override func tearDown() async throws {
-        for id in added { store.delete(id: id) }
-        for (k, v) in savedDefaults { UserDefaults.standard.set(v ?? nil, forKey: k) }
     }
 
     /// Both tools on the printer's default filament, as after a fresh install.
@@ -33,7 +24,7 @@ final class MaterialEditToolTests: XCTestCase {
     func testEditFromT2LeavesT1Alone() throws {
         let system = try sameFilamentInBothTools()
         var draft = system; draft.colour = "#FF0000"
-        let id = store.keepEdit(ofSystem: draft, forTool: 2); added.append(id)
+        let id = store.keepEdit(ofSystem: draft, forTool: 2)
 
         XCTAssertEqual(store.selectedProfileId, system.id, "T1 should keep the OrcaSlicer filament")
         XCTAssertEqual(store.material(forTool: 1)?.colour, system.colour)
@@ -45,7 +36,7 @@ final class MaterialEditToolTests: XCTestCase {
     func testEditFromT1LeavesT2Alone() throws {
         let system = try sameFilamentInBothTools()
         var draft = system; draft.colour = "#00FF00"
-        let id = store.keepEdit(ofSystem: draft, forTool: 1); added.append(id)
+        let id = store.keepEdit(ofSystem: draft, forTool: 1)
 
         XCTAssertEqual(store.selectedProfileId, id)
         XCTAssertEqual(store.material(forTool: 2)?.id, system.id)

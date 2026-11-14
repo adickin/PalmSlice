@@ -17,7 +17,7 @@ final class ModelModifierTests: XCTestCase {
             text += "endloop\nendfacet\n"
         }
         text += "endsolid box\n"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).stl")
+        let url = scratchDir().appendingPathComponent("\(UUID()).stl")
         try text.write(to: url, atomically: true, encoding: .utf8)
         return url
     }
@@ -39,7 +39,7 @@ final class ModelModifierTests: XCTestCase {
         XCTAssertNil(SliceSetup.applyTools(h, object: idx, model: model))
         XCTAssertNil(SliceSetup.applyModifiers(h, object: idx, model: model))
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
         return (try String(contentsOf: out, encoding: .utf8), printer.bedX)

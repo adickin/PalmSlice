@@ -17,7 +17,7 @@ final class MixSliceTests: XCTestCase {
             text += "endloop\nendfacet\n"
         }
         text += "endsolid box\n"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).stl")
+        let url = scratchDir().appendingPathComponent("\(UUID()).stl")
         try text.write(to: url, atomically: true, encoding: .utf8)
         return url
     }
@@ -78,7 +78,7 @@ final class MixSliceTests: XCTestCase {
         XCTAssertEqual(slicer_set_object_transform(h, idx, &t), 0)
         XCTAssertEqual(slicer_set_object_extruder(h, idx, Int32(mix.id)), 0)
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
         return (try String(contentsOf: out, encoding: .utf8),
@@ -123,7 +123,7 @@ final class MixSliceTests: XCTestCase {
         XCTAssertEqual(slicer_set_object_transform(h, idx, &t), 0)
         XCTAssertEqual(slicer_set_object_extruder(h, idx, Int32(grey.id)), 0)
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
         let gcode = try String(contentsOf: out, encoding: .utf8)

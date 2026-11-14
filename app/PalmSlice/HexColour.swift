@@ -43,7 +43,8 @@ struct HexColour: Equatable {
 
     /// A stand-in for the tool, preferring its own slot, else the first one not yet used.
     static func standIn(forTool tool: Int, avoiding used: [HexColour]) -> HexColour {
-        let own = toolStandIns[(tool - 1) % toolStandIns.count]
+        let n = toolStandIns.count
+        let own = toolStandIns[((tool - 1) % n + n) % n]   // tool 0 or below wraps instead of trapping
         if !used.contains(own) { return own }
         return toolStandIns.first { !used.contains($0) } ?? own
     }

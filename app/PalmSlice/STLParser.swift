@@ -43,6 +43,18 @@ struct STLMeshInfo {
     let vertices: [SIMD3<Float>]
     /// Bounding box in raw STL coordinates (mm).
     let boundingBoxMM: (min: SIMD3<Float>, max: SIMD3<Float>)
+    /// Each distinct vertex once (an STL repeats each about six times). Enough
+    /// for anything that only needs extremes (lowest point, outline from
+    /// above), at a sixth of the work of walking `vertices`.
+    let distinctVertices: [SIMD3<Float>]
+
+    init(faces: [Face], vertices: [SIMD3<Float>], boundingBoxMM: (min: SIMD3<Float>, max: SIMD3<Float>)) {
+        self.faces = faces
+        self.vertices = vertices
+        self.boundingBoxMM = boundingBoxMM
+        var seen = Set<SIMD3<Float>>(minimumCapacity: vertices.count / 4)
+        distinctVertices = vertices.filter { seen.insert($0).inserted }
+    }
 
     /// Size in the STL X direction (mm) — maps to viewer X (left/right).
     var sizeMMX: Float { boundingBoxMM.max.x - boundingBoxMM.min.x }
@@ -50,6 +62,8 @@ struct STLMeshInfo {
     var sizeMMY: Float { boundingBoxMM.max.y - boundingBoxMM.min.y }
     /// Size in the STL Z direction (mm) — maps to viewer Y (height).
     var sizeMMZ: Float { boundingBoxMM.max.z - boundingBoxMM.min.z }
+    /// Unscaled size (mm) per STL axis. Component i pairs with `ModelTransform.scale[i]`.
+    var sizeMM: SIMD3<Float> { boundingBoxMM.max - boundingBoxMM.min }
 
     /// STL has no embedded unit — every slicer treats raw coordinates as millimeters by
     /// convention. If a file was authored in meters, its "millimeter" bounding box comes out
@@ -68,13 +82,34 @@ struct STLMeshInfo {
 }
 
 func parseSTLMeshInfo(url: URL) throws -> STLMeshInfo {
+    meshInfo(triangles: try readTriangles(url: url))
+}
+
+/// Reads and parses the file once for both the display geometry and the mesh info.
+func loadSTL(url: URL, colorMode: ViewerColorMode = .solid,
+             partFacetCounts: [Int] = []) throws -> (SCNGeometry, STLMeshInfo) {
+    let info = meshInfo(triangles: try readTriangles(url: url))
+    return (geometry(of: info, colorMode: colorMode, partFacetCounts: partFacetCounts), info)
+}
+
+/// The display geometry of an already parsed mesh (e.g. in another colour mode).
+func geometry(of info: STLMeshInfo, colorMode: ViewerColorMode = .solid,
+              partFacetCounts: [Int] = [], centreMM: SIMD3<Float>? = nil) -> SCNGeometry {
+    buildGeometry(vertices: info.vertices, colorMode: colorMode, partFacetCounts: partFacetCounts,
+                  centreMM: centreMM)
+}
+
+private func readTriangles(url: URL) throws -> [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] {
     let data = try Data(contentsOf: url)
     guard data.count > 84 else { throw STLParseError.cannotReadFile }
     let triangles: [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)]
     if isASCII(data) { triangles = try parseASCII(data) }
     else              { triangles = try parseBinary(data) }
     guard !triangles.isEmpty else { throw STLParseError.emptyMesh }
+    return triangles
+}
 
+private func meshInfo(triangles: [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)]) -> STLMeshInfo {
     var faces: [STLMeshInfo.Face] = []
     faces.reserveCapacity(triangles.count)
     var verts: [SIMD3<Float>] = []
@@ -110,20 +145,11 @@ enum STLParseError: Error {
 /// box (a part's mesh, positioned in its object's display geometry).
 func parseSTL(url: URL, colorMode: ViewerColorMode = .solid, partFacetCounts: [Int] = [],
               centreMM: SIMD3<Float>? = nil) throws -> SCNGeometry {
-    let data = try Data(contentsOf: url)
-    guard data.count > 84 else { throw STLParseError.cannotReadFile }
-
-    let triangles: [(v0: SIMD3<Float>, v1: SIMD3<Float>, v2: SIMD3<Float>)]
-
-    if isASCII(data) {
-        triangles = try parseASCII(data)
-    } else {
-        triangles = try parseBinary(data)
-    }
-
-    guard !triangles.isEmpty else { throw STLParseError.emptyMesh }
-
-    return buildGeometry(triangles: triangles, colorMode: colorMode, partFacetCounts: partFacetCounts,
+    let triangles = try readTriangles(url: url)
+    var vertices: [SIMD3<Float>] = []
+    vertices.reserveCapacity(triangles.count * 3)
+    for (v0, v1, v2) in triangles { vertices.append(v0); vertices.append(v1); vertices.append(v2) }
+    return buildGeometry(vertices: vertices, colorMode: colorMode, partFacetCounts: partFacetCounts,
                          centreMM: centreMM)
 }
 
@@ -134,7 +160,7 @@ private func isASCII(_ data: Data) -> Bool {
     let startsWithSolid = prefix.elementsEqual("solid".utf8)
     if !startsWithSolid { return false }
 
-    let n = data[80..<84].withUnsafeBytes { $0.load(as: UInt32.self) }
+    let n = data[80..<84].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
     let expectedBinarySize = 84 + Int(n) * 50
     return expectedBinarySize != data.count
 }
@@ -142,7 +168,7 @@ private func isASCII(_ data: Data) -> Bool {
 // MARK: - Binary parser
 
 private func parseBinary(_ data: Data) throws -> [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] {
-    let count = data[80..<84].withUnsafeBytes { $0.load(as: UInt32.self) }
+    let count = data[80..<84].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
     guard data.count >= 84 + Int(count) * 50 else { throw STLParseError.cannotReadFile }
 
     var result: [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] = []
@@ -180,10 +206,11 @@ private func parseASCII(_ data: Data) throws -> [(SIMD3<Float>, SIMD3<Float>, SI
     var verts: [SIMD3<Float>] = []
     verts.reserveCapacity(3)
 
-    for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+    // isNewline covers "\r\n": CRLF is one Character, so splitting on "\n" alone misses it.
+    for line in text.split(whereSeparator: \.isNewline) {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         if trimmed.hasPrefix("vertex") {
-            let parts = trimmed.split(separator: " ")
+            let parts = trimmed.split(whereSeparator: \.isWhitespace)
             guard parts.count >= 4,
                   let x = Float(parts[1]),
                   let y = Float(parts[2]),
@@ -200,13 +227,15 @@ private func parseASCII(_ data: Data) throws -> [(SIMD3<Float>, SIMD3<Float>, SI
 
 // MARK: - SCNGeometry builder
 
+/// `vertices`: 3 per triangle, raw STL coordinates (mm).
 private func buildGeometry(
-    triangles: [(v0: SIMD3<Float>, v1: SIMD3<Float>, v2: SIMD3<Float>)],
+    vertices: [SIMD3<Float>],
     colorMode: ViewerColorMode,
     partFacetCounts: [Int],
     centreMM: SIMD3<Float>?
 ) -> SCNGeometry {
-    let vertexCount = triangles.count * 3
+    let triangleCount = vertices.count / 3
+    let vertexCount = triangleCount * 3
     var positions = [SCNVector3]()
     var normals   = [SCNVector3]()
     var colors    = [SIMD4<Float>]()
@@ -217,16 +246,14 @@ private func buildGeometry(
     // Compute AABB
     var minPt = SIMD3<Float>(repeating:  Float.infinity)
     var maxPt = SIMD3<Float>(repeating: -Float.infinity)
-    for tri in triangles {
-        for v in [tri.v0, tri.v1, tri.v2] { minPt = min(minPt, v); maxPt = max(maxPt, v) }
-    }
+    for v in vertices { minPt = min(minPt, v); maxPt = max(maxPt, v) }
     let center = centreMM ?? (minPt + maxPt) * 0.5
     let scale: Float = 1.0 / 100.0
 
-    for tri in triangles {
-        let p0 = (tri.v0 - center) * scale
-        let p1 = (tri.v1 - center) * scale
-        let p2 = (tri.v2 - center) * scale
+    for t in 0..<triangleCount {
+        let p0 = (vertices[t * 3] - center) * scale
+        let p1 = (vertices[t * 3 + 1] - center) * scale
+        let p2 = (vertices[t * 3 + 2] - center) * scale
 
         let edge1 = p1 - p0
         let edge2 = p2 - p0
@@ -286,7 +313,7 @@ private func buildGeometry(
 
     // Triangle elements: one per part when the counts match the mesh.
     var parts = partFacetCounts
-    if parts.reduce(0, +) != triangles.count || parts.count < 2 { parts = [triangles.count] }
+    if parts.reduce(0, +) != triangleCount || parts.count < 2 { parts = [triangleCount] }
     var triElements: [SCNGeometryElement] = []
     var first: Int32 = 0
     for count in parts {
@@ -298,8 +325,8 @@ private func buildGeometry(
     // Wireframe lines element — always built; hidden via material transparency until toggled on.
     // Each triangle contributes 3 line segments: (3i→3i+1), (3i+1→3i+2), (3i+2→3i).
     var lineIndices = [Int32]()
-    lineIndices.reserveCapacity(triangles.count * 6)
-    for i in 0..<triangles.count {
+    lineIndices.reserveCapacity(triangleCount * 6)
+    for i in 0..<triangleCount {
         let b = Int32(i * 3)
         lineIndices.append(contentsOf: [b, b+1, b+1, b+2, b+2, b])
     }

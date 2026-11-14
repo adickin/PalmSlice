@@ -9,8 +9,10 @@ final class MaterialProfileStore: ObservableObject {
     @Published private(set) var profiles: [MaterialProfile] = []
     /// Remembered across launches.
     @Published var selectedProfileId: UUID? {
-        didSet { UserDefaults.standard.set(selectedProfileId?.uuidString, forKey: Self.selectedKey) }
+        didSet { defaults.set(selectedProfileId?.uuidString, forKey: Self.selectedKey) }
     }
+    /// A load or save problem to show the user.
+    @Published var storageError: String?
     private static let selectedKey = "lastMaterialID"
 
     var selectedProfile: MaterialProfile? {
@@ -42,7 +44,7 @@ final class MaterialProfileStore: ObservableObject {
         guard tool > 1 else { return select(id: id) }
         while toolMaterialIDs.count < tool - 1 { toolMaterialIDs.append(Self.followsToolOne) }
         toolMaterialIDs[tool - 2] = id
-        UserDefaults.standard.set(toolMaterialIDs.map(\.uuidString), forKey: Self.toolMaterialsKey)
+        defaults.set(toolMaterialIDs.map(\.uuidString), forKey: Self.toolMaterialsKey)
     }
 
     /// The tools (1…count) a material is loaded in.
@@ -58,7 +60,7 @@ final class MaterialProfileStore: ObservableObject {
     /// The user's own materials (changes only), persisted.
     private var custom: [MaterialProfile] = []
     /// OrcaSlicer filaments picked from the full list, kept on the list.
-    private var pinned: [String] = UserDefaults.standard.stringArray(forKey: "pinnedFilaments") ?? []
+    private var pinned: [String]
     private(set) var printerPreset: String?
 
     var systemProfiles: [MaterialProfile] { profiles.filter(\.isSystem) }
@@ -66,26 +68,38 @@ final class MaterialProfileStore: ObservableObject {
 
     // Saved materials were reset when defaults moved to OrcaSlicer (Nov 2026);
     // the old material_profiles.json is left in place, unread.
-    private var storeURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("materials.json")
+    private var storeURL: URL { directory.appendingPathComponent("materials.json") }
+
+    /// Where the store's file and settings live: the app's Documents and
+    /// standard defaults, or a test's own.
+    private let directory: URL
+    private let defaults: UserDefaults
+
+    init(directory: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],
+         defaults: UserDefaults = .standard) {
+        self.directory = directory
+        self.defaults = defaults
+        pinned = defaults.stringArray(forKey: "pinnedFilaments") ?? []
     }
 
     // MARK: Load / Save
 
     func load(printerPreset: String? = nil) {
         self.printerPreset = printerPreset
-        if let data = try? Data(contentsOf: storeURL),
-           let decoded = try? JSONDecoder().decode([MaterialProfile].self, from: data) {
+        switch ProfileFile.load([MaterialProfile].self, from: storeURL) {
+        case .loaded(let decoded):
             custom = decoded
-        } else {
+        case .unreadable(let backup):
+            storageError = ProfileFile.unreadableMessage("materials", backup: backup)
+            fallthrough
+        case .missing:
             custom = BuiltInMaterialProfiles.all
             save()
         }
         if selectedProfileId == nil {
-            selectedProfileId = UserDefaults.standard.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:))
+            selectedProfileId = defaults.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:))
         }
-        toolMaterialIDs = (UserDefaults.standard.stringArray(forKey: Self.toolMaterialsKey) ?? [])
+        toolMaterialIDs = (defaults.stringArray(forKey: Self.toolMaterialsKey) ?? [])
             .compactMap(UUID.init)
         rebuild()
     }
@@ -143,15 +157,15 @@ final class MaterialProfileStore: ObservableObject {
     func pin(_ preset: String) -> UUID {
         if !pinned.contains(preset) {
             pinned.append(preset)
-            UserDefaults.standard.set(pinned, forKey: "pinnedFilaments")
+            defaults.set(pinned, forKey: "pinnedFilaments")
         }
         rebuild()
         return PresetLibrary.stableID(.filament, preset)
     }
 
     func save() {
-        guard let data = try? JSONEncoder().encode(custom) else { return }
-        try? data.write(to: storeURL, options: .atomic)
+        do { try ProfileFile.save(custom, to: storeURL) }
+        catch { storageError = ProfileFile.saveFailedMessage("materials", error) }
     }
 
     // MARK: Mutations
@@ -186,7 +200,7 @@ final class MaterialProfileStore: ObservableObject {
     func delete(id: UUID) {
         if let name = pinned.first(where: { PresetLibrary.stableID(.filament, $0) == id }) {
             pinned.removeAll { $0 == name }
-            UserDefaults.standard.set(pinned, forKey: "pinnedFilaments")
+            defaults.set(pinned, forKey: "pinnedFilaments")
         }
         custom.removeAll { $0.id == id }
         save()

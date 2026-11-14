@@ -88,6 +88,11 @@ final class PaintController: ObservableObject {
     private var saveCount = 0
     /// The tool last used on each layer.
     private var toolByLayer: [PaintLayer: Int] = [:]
+    /// Paint of the parts not being painted, for the layer shown: read from the
+    /// saved object once, not on every brush move. Nil = read it again.
+    private var otherPartsPaint: PaintMesh?
+    /// Paint saves this controller wrote; one replaced by a newer save is deleted.
+    private var ownSaves: Set<URL> = []
     /// Called with the updated model after each stroke (paint display) and when a part is saved.
     var onModelChange: ((PlacedModel) -> Void)?
 
@@ -119,6 +124,7 @@ final class PaintController: ObservableObject {
         }
         volume = k
         sessionLayer = layer
+        otherPartsPaint = nil
         undoDepth = 0; redoDepth = 0
         updateUndoState()
         return true
@@ -129,8 +135,11 @@ final class PaintController: ObservableObject {
     /// `point` and `camera` in the display-STL frame (mm).
     func touchBegan(element: Int, facet: Int, point: SIMD3<Float>, camera: SIMD3<Float>) {
         guard let k = volumeIndex(forPart: element), begin(volume: k) else { return }
-        slicer_paint_stroke_begin(handle)
-        undoDepth += 1; redoDepth = 0
+        guard slicer_paint_stroke_begin(handle) == 0 else {
+            errorMessage = String(cString: slicer_last_error(handle))
+            return
+        }
+        undoDepth = min(undoDepth + 1, Int(SLICER_PAINT_UNDO_LIMIT)); redoDepth = 0
         lastPoint = nil
         strokeOpen = true
         apply(facet: facet, point: point, camera: camera, first: true)
@@ -195,8 +204,11 @@ final class PaintController: ObservableObject {
     /// Clears the painting of the part being painted.
     func clearPart() {
         guard volume >= 0 else { return }
-        slicer_paint_clear(handle)
-        undoDepth += 1; redoDepth = 0
+        guard slicer_paint_clear(handle) == 0 else {
+            errorMessage = String(cString: slicer_last_error(handle))
+            return
+        }
+        undoDepth = min(undoDepth + 1, Int(SLICER_PAINT_UNDO_LIMIT)); redoDepth = 0
         changed = true
         refreshDisplay()
         updateUndoState()
@@ -210,15 +222,19 @@ final class PaintController: ObservableObject {
     /// Rebuilds the model's display of the layer being painted: the active
     /// part from the session, the others from the saved object.
     private func refreshDisplay() {
-        var mesh = PaintMesh()
-        if let url = model.nativeURL, let h = slicer_create() {
-            for (k, part) in model.parts.enumerated() where part.kind == .part && part.isPainted(layer) && k != volume {
-                guard slicer_paint_begin_layer(h, url.path, Int32(k), layer.rawValue) == 0 else { continue }
-                append(h, to: &mesh)
-                slicer_paint_end(h, nil)
+        if otherPartsPaint == nil {
+            var others = PaintMesh()
+            if let url = model.nativeURL, let h = slicer_create() {
+                for (k, part) in model.parts.enumerated() where part.kind == .part && part.isPainted(layer) && k != volume {
+                    guard slicer_paint_begin_layer(h, url.path, Int32(k), layer.rawValue) == 0 else { continue }
+                    append(h, to: &others)
+                    slicer_paint_end(h, nil)
+                }
+                slicer_destroy(h)
             }
-            slicer_destroy(h)
+            otherPartsPaint = others
         }
+        var mesh = otherPartsPaint ?? PaintMesh()
         if volume >= 0 { append(handle, to: &mesh) }
         if layer == .colour {
             model.paint = mesh.isEmpty ? nil : mesh
@@ -234,6 +250,7 @@ final class PaintController: ObservableObject {
         saveCurrent()
         toolByLayer[old] = tool
         tool = toolByLayer[layer] ?? (layer == .colour ? 1 : Int(SLICER_PAINT_ENFORCE))
+        otherPartsPaint = nil
         undoDepth = 0; redoDepth = 0
         updateUndoState()
         refreshDisplay()
@@ -260,7 +277,12 @@ final class PaintController: ObservableObject {
             errorMessage = String(cString: slicer_last_error(handle))
             return
         }
+        // The previous save of this session is now unused (the file painting
+        // started from may be shared with copies of the model, so it stays).
+        if ownSaves.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
+        ownSaves.insert(saved)
         model.nativeURL = saved
+        otherPartsPaint = nil
         if volume < model.parts.count {
             switch sessionLayer {
             case .colour:

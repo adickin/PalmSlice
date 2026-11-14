@@ -25,6 +25,57 @@ private enum SliceConfigDecision {
 
 private final class ProgressRelay: @unchecked Sendable {
     var handler: (Float) -> Void = { _ in }
+    private var lastPct: Float = -1
+    private var lastTime: TimeInterval = 0
+
+    /// Passes progress on at most ~5 times a second (and every whole percent
+    /// step at most), so the main actor isn't flooded with tasks.
+    func report(_ pct: Float) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard pct >= 100 || (abs(pct - lastPct) >= 1 && now - lastTime >= 0.2) else { return }
+        lastPct = pct
+        lastTime = now
+        handler(pct)
+    }
+}
+
+/// The slicer context of the slice in progress, shared by the slice task and
+/// the cancel paths (buttons, background expiry). Cancel and destroy take the
+/// same lock, so a cancel can't reach a destroyed handle, and a cancel that
+/// comes before the context exists is applied when it's attached.
+final class ActiveSlice: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handle: SlicerHandle?
+    private var cancelRequested = false
+
+    func begin() {
+        lock.lock(); defer { lock.unlock() }
+        cancelRequested = false
+    }
+
+    func attach(_ h: SlicerHandle) {
+        lock.lock(); defer { lock.unlock() }
+        handle = h
+        if cancelRequested { slicer_cancel(h) }
+    }
+
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        cancelRequested = true
+        if let handle { slicer_cancel(handle) }
+    }
+
+    var isCancelRequested: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelRequested
+    }
+
+    /// Detaches and destroys the context.
+    func destroy() {
+        lock.lock(); defer { lock.unlock() }
+        if let handle { slicer_destroy(handle) }
+        handle = nil
+    }
 }
 
 // MARK: - ContentView
@@ -85,6 +136,7 @@ struct ContentView: View {
     @State private var showConfigWarningAlert = false
     /// The last slice's colliding paths (an object and the wipe tower, or two objects).
     @State private var pathConflictMessage: String?
+    @State private var projectExportMessage: String?
     @State private var configWarningCheck: SlicerSliceConfigCheck?
     @State private var configWarningOriginal: (walls: Int, top: Int, bottom: Int)?
     @State private var configDecisionContinuation: CheckedContinuation<SliceConfigDecision, Never>?
@@ -131,7 +183,10 @@ struct ContentView: View {
     @State private var currentLayerIndex: Int = 0
 
     /// Retained while a slice is in progress; lets the cancel button reach slicer_cancel().
-    @State private var activeHandle: SlicerHandle? = nil
+    @State private var activeSlice = ActiveSlice()
+    /// Set from the slice tap until the slice ends, so a second tap can't
+    /// start another (state only becomes .slicing once the task runs).
+    @State private var slicePending = false
 
     /// Debounce token for the precise (mesh-BVH) collision check. Each call
     /// to updateIntersections cancels the prior task; the precise check only
@@ -149,6 +204,7 @@ struct ContentView: View {
         return models.firstIndex { $0.id == id }
     }
     private var isBusy: Bool {
+        if slicePending { return true }
         if case .slicing = state { return true }
         return false
     }
@@ -160,11 +216,14 @@ struct ContentView: View {
     private var bedZVal: Double { profileStore.selectedProfile?.bedZ ?? 250 }
 
     // Transform binding for the selected model — used by the transform panel and bar.
+    // Bound to the model selected now, not whichever is selected when it's
+    // written: the panel's auto-orient writes after an await.
     private var selectedTransformBinding: Binding<ModelTransform> {
-        Binding(
-            get: { self.selectedModel?.transform ?? .identity },
+        let id = selectedModelID
+        return Binding(
+            get: { self.models.first { $0.id == id }?.transform ?? .identity },
             set: { newVal in
-                if let idx = self.selectedIndex {
+                if let idx = self.models.firstIndex(where: { $0.id == id }) {
                     self.models[idx].transform = newVal
                     self.updateIntersections()
                 }
@@ -200,10 +259,13 @@ struct ContentView: View {
             let mode = viewerColorMode
             for model in models {
                 let url     = model.url
+                let info    = model.meshInfo
                 let modelID = model.id
                 let parts   = model.partFacetCounts
                 Task.detached(priority: .userInitiated) {
-                    let geo = try? parseSTL(url: url, colorMode: mode, partFacetCounts: parts)
+                    // Recolour the mesh already parsed; read the file only if it isn't yet.
+                    let geo = info.map { geometry(of: $0, colorMode: mode, partFacetCounts: parts) }
+                        ?? (try? parseSTL(url: url, colorMode: mode, partFacetCounts: parts))
                     await MainActor.run {
                         if let i = models.firstIndex(where: { $0.id == modelID }) {
                             models[i].geometry = geo
@@ -433,11 +495,24 @@ struct ContentView: View {
         } message: {
             Text(arrangeMessage ?? "")
         }
+        .alert("Project Not Saved", isPresented: Binding(get: { projectExportMessage != nil && pathConflictMessage == nil },
+                                                         set: { if !$0 { projectExportMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(projectExportMessage ?? "")
+        }
         .alert("Paths Collide", isPresented: Binding(get: { pathConflictMessage != nil },
                                                      set: { if !$0 { pathConflictMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(pathConflictMessage ?? "")
+        }
+        .onChange(of: showConfigWarningAlert) { shown in
+            // Dismissed without a button (e.g. the scene went away): don't leave the slice waiting.
+            if !shown, let continuation = configDecisionContinuation {
+                configDecisionContinuation = nil
+                continuation.resume(returning: .cancel)
+            }
         }
         .alert("Settings May Not Print Cleanly", isPresented: $showConfigWarningAlert) {
             Button("Auto-Adjust") {
@@ -704,7 +779,7 @@ struct ContentView: View {
                     if let info = model.meshInfo {
                         let s = model.transform.scale
                         Text(String(format: "%.1f \u{00d7} %.1f \u{00d7} %.1f mm",
-                                    info.sizeMMX * s.x, info.sizeMMZ * s.y, info.sizeMMY * s.z))
+                                    info.sizeMM.x * s.x, info.sizeMM.y * s.y, info.sizeMM.z * s.z))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -836,7 +911,9 @@ struct ContentView: View {
     }
 
     private func removeModel(id: UUID) {
+        let removed = models.filter { $0.id == id }
         models.removeAll { $0.id == id }
+        TempFiles.remove(filesOf: removed, keeping: models)
         if selectedModelID == id {
             selectedModelID = models.first?.id
         }
@@ -868,8 +945,7 @@ struct ContentView: View {
                     try FileManager.default.copyItem(at: url, to: staged)
                 } catch { return }
                 DispatchQueue.main.async {
-                    importModel(from: staged)
-                    try? FileManager.default.removeItem(at: stagingDir)
+                    importModel(from: staged) { try? FileManager.default.removeItem(at: stagingDir) }
                 }
             }
         }
@@ -1078,9 +1154,9 @@ struct ContentView: View {
                         Text("\u{d7}").font(.caption2).foregroundStyle(.secondary)
                     }
                     HStack(spacing: 6) {
-                        axisField("X", color: .red,   binding: sizeMMBinding(base: info.sizeMMX, scale: scaleXBinding), fmt: "%.4g", width: 54)
-                        axisField("Y", color: .green, binding: sizeMMBinding(base: info.sizeMMZ, scale: scaleYBinding), fmt: "%.4g", width: 54)
-                        axisField("Z", color: .blue,  binding: sizeMMBinding(base: info.sizeMMY, scale: scaleZBinding), fmt: "%.4g", width: 54)
+                        axisField("X", color: .red,   binding: sizeMMBinding(base: info.sizeMM.x, scale: scaleXBinding), fmt: "%.4g", width: 54)
+                        axisField("Y", color: .green, binding: sizeMMBinding(base: info.sizeMM.y, scale: scaleYBinding), fmt: "%.4g", width: 54)
+                        axisField("Z", color: .blue,  binding: sizeMMBinding(base: info.sizeMM.z, scale: scaleZBinding), fmt: "%.4g", width: 54)
                         Text("mm").font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
                     }
                 }
@@ -1089,6 +1165,7 @@ struct ContentView: View {
                     axisField("X", color: .red,   binding: currentXBinding)
                     axisField("Y", color: .green, binding: currentYBinding)
                     axisField("Z", color: .blue,  binding: currentZBinding)
+                        .disabled(gizmoMode == .translate)
                     if !currentUnit.isEmpty {
                         Text(currentUnit).font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
                     }
@@ -1112,7 +1189,6 @@ struct ContentView: View {
                 }
             case .translate:
                 HStack(spacing: 6) {
-                    Button("Drop to Bed") { dropToBed() }
                     if let id = selectedModelID {
                         Button("Duplicate") { addCopies(of: id, count: 1) }
                         Button { addCopies(of: id, count: nil) } label: {
@@ -1161,30 +1237,6 @@ struct ContentView: View {
         )
     }
 
-    @ViewBuilder
-    private func dimensionRows(info: STLMeshInfo, transform: ModelTransform) -> some View {
-        let w = info.sizeMMX * transform.scale.x
-        let h = info.sizeMMZ * transform.scale.y
-        let d = info.sizeMMY * transform.scale.z
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Dimensions").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                dimDot(Color.red,   value: w)
-                dimDot(Color.green, value: h)
-                dimDot(Color.blue,  value: d)
-                Text("mm").font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func dimDot(_ color: Color, value: Float) -> some View {
-        HStack(spacing: 3) {
-            Circle().fill(color).frame(width: 5, height: 5)
-            Text(String(format: "%.2f", value)).font(.caption2.monospacedDigit()).lineLimit(1).fixedSize()
-        }
-    }
-
     // MARK: - Transform bar helpers
 
     private var gizmoModeTitle: String {
@@ -1218,9 +1270,9 @@ struct ContentView: View {
     }
     private var currentZBinding: Binding<Float> {
         switch gizmoMode {
-        case .translate: Binding(
+        case .translate: Binding(   // read-only: models stay on the bed
             get: { self.selectedModel?.transform.positionMM.z ?? 0 },
-            set: { v in self.writeTransform { $0.positionMM.z = v } })
+            set: { _ in })
         case .rotate: Binding(
             get: { self.selectedModel?.transform.rotationDeg.z ?? 0 },
             set: { v in self.writeTransform { $0.rotationDeg.z = v } })
@@ -1266,8 +1318,23 @@ struct ContentView: View {
         }
     }
 
-    private func centerOnBed() {
-        writeTransform { $0.positionMM.x = 0; $0.positionMM.y = 0 }
+    /// Moves a new import that landed off the plate to the nearest free spot on it
+    /// (imports are placed side by side before their size is known).
+    private func moveOntoBedIfOff(_ id: UUID) {
+        guard let printer = profileStore.selectedProfile,
+              let idx = models.firstIndex(where: { $0.id == id }), let info = models[idx].meshInfo else { return }
+        let t = models[idx].transform
+        let bed = PlateArrange.bed(printer)
+        let footprint = t.footprintMM(meshInfo: info)
+        let at = SIMD2(t.positionMM.x, -t.positionMM.y)
+        guard !footprint.allSatisfy({ PlateArrange.contains(bed, $0 + at) }) else { return }
+        var fixed = models.filter { $0.id != id }.compactMap { m in
+            m.meshInfo.map { i in m.transform.footprintMM(meshInfo: i).map { $0 + SIMD2(m.transform.positionMM.x, -m.transform.positionMM.y) } }
+        }
+        if let tower = wipeTower.map({ PlateArrange.footprint($0, bedCentre: bedCentreMM) }) { fixed.append(tower) }
+        guard let spot = PlateArrange.place([footprint], around: fixed, bed: bed, prefer: at).first ?? nil else { return }
+        models[idx].transform.positionMM.x = spot.x
+        models[idx].transform.positionMM.y = -spot.y
     }
 
     // MARK: Duplicate / Fill Plate
@@ -1323,16 +1390,6 @@ struct ContentView: View {
         }
     }
 
-    private func dropToBed() {
-        guard let idx = selectedIndex else { return }
-        if let info = selectedModel?.meshInfo {
-            models[idx].transform = models[idx].transform.droppedToBed(meshInfo: info)
-        } else {
-            models[idx].transform.positionMM.z = 0
-        }
-        updateIntersections()
-    }
-
     /// Turns the selected model the way that needs the least support.
     private func autoOrient() {
         guard let id = selectedModelID, let info = selectedModel?.meshInfo else { return }
@@ -1347,21 +1404,6 @@ struct ContentView: View {
                 updateIntersections()
             }
         }
-    }
-
-    private func layFlatInline() {
-        guard let info = selectedModel?.meshInfo, let idx = selectedIndex else { return }
-
-        var bestScore: Float = -.infinity
-        var bestNormal = SIMD3<Float>(0, 0, -1)
-        for face in info.faces {
-            let score = -face.normal.z * face.area
-            if score > bestScore { bestScore = score; bestNormal = face.normal }
-        }
-
-        models[idx].transform.rotationDeg = AutoOrient.rotationDeg(placing: bestNormal)
-        models[idx].transform = models[idx].transform.droppedToBed(meshInfo: info)
-        updateIntersections()
     }
 
     private var scaleXBinding: Binding<Float> {
@@ -1602,7 +1644,7 @@ struct ContentView: View {
 
             if isBusy {
                 Button(role: .destructive) {
-                    if let h = activeHandle { slicer_cancel(h) }
+                    activeSlice.cancel()
                 } label: {
                     Image(systemName: "xmark.circle.fill").imageScale(.large)
                 }
@@ -1892,16 +1934,29 @@ struct ContentView: View {
     /// Paints the selected model; an STL model first becomes a native object.
     private func startPainting() {
         guard let id = selectedModelID, let i = models.firstIndex(where: { $0.id == id }) else { return }
-        if models[i].nativeURL == nil {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("paint-" + UUID().uuidString)
-            guard let object = try? importModelFile(at: models[i].url, outputDir: dir).objects.first else {
-                state = .failed(message: "Could not prepare \(models[i].name) for painting.")
-                showErrorAlert = true
-                return
+        guard models[i].nativeURL == nil else { return beginPainting(i) }
+        // Converting the STL to an object reads and writes files: off the main thread.
+        let url = models[i].url, name = models[i].name
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("paint-" + UUID().uuidString)
+        isParsingSTL = true
+        Task.detached(priority: .userInitiated) {
+            let object = try? importModelFile(at: url, outputDir: dir).objects.first
+            await MainActor.run {
+                isParsingSTL = false
+                guard let object else {
+                    state = .failed(message: "Could not prepare \(name) for painting.")
+                    showErrorAlert = true
+                    return
+                }
+                guard let j = models.firstIndex(where: { $0.id == id }) else { return }
+                models[j].nativeURL = object.nativeURL
+                models[j].parts = object.parts
+                if selectedModelID == id, paintController == nil { beginPainting(j) }
             }
-            models[i].nativeURL = object.nativeURL
-            models[i].parts = object.parts
         }
+    }
+
+    private func beginPainting(_ i: Int) {
         guard let controller = PaintController(model: models[i]) else { return }
         controller.tool = toolCount > 1 ? 2 : 1
         // With one tool there's no colour to paint, only supports and seams.
@@ -2007,7 +2062,7 @@ struct ContentView: View {
 
             if isBusy {
                 Button(role: .destructive) {
-                    if let h = activeHandle { slicer_cancel(h) }
+                    activeSlice.cancel()
                 } label: {
                     Label("Cancel", systemImage: "xmark.circle")
                         .labelStyle(.titleAndIcon)
@@ -2050,44 +2105,52 @@ struct ContentView: View {
 
     /// Imports an STL directly, or converts a 3MF / OBJ / AMF file into one STL per
     /// object via libslic3r and imports each of those.
-    private func importModel(from url: URL) {
+    /// `afterCopy` runs (off the main thread) once the file has been copied in.
+    private func importModel(from url: URL, afterCopy: (@Sendable () -> Void)? = nil) {
         let ext = url.pathExtension.lowercased()
         guard supportedModelExtensions.contains(ext) else {
             state = .failed(message: "\(url.lastPathComponent) isn't a supported model file. PalmSlice can open STL, 3MF, OBJ and AMF files.")
             showErrorAlert = true
+            afterCopy?()
             return
         }
-
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
 
         let importID = UUID()
         let dest = FileManager.default.temporaryDirectory
             .appendingPathComponent(importID.uuidString + "_" + url.lastPathComponent)
-        do {
-            if FileManager.default.fileExists(atPath: dest.path) {
-                try FileManager.default.removeItem(at: dest)
-            }
-            try FileManager.default.copyItem(at: url, to: dest)
-        } catch {
-            state = .failed(message: "Could not import \(url.lastPathComponent): \(error.localizedDescription)")
-            showErrorAlert = true
-            return
-        }
-
-        let checkUnits = modelFormatLacksUnits(ext)
-        if ext == "stl" {
-            addModels([ConvertedModelObject(url: dest, name: url.lastPathComponent, offsetMM: .zero)],
-                      checkUnits: checkUnits)
-            return
-        }
-
         let fileName = url.lastPathComponent
+        let checkUnits = modelFormatLacksUnits(ext)
         let outputDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("import-" + importID.uuidString, isDirectory: true)
-        isParsingSTL = true
         let sessionMixes = mixes
+        isParsingSTL = true
+        // Copying (a big file, maybe from iCloud) and converting happen off the main thread.
         Task.detached(priority: .userInitiated) {
+            let accessing = url.startAccessingSecurityScopedResource()
+            let copied = Result {
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    try FileManager.default.removeItem(at: dest)
+                }
+                try FileManager.default.copyItem(at: url, to: dest)
+            }
+            if accessing { url.stopAccessingSecurityScopedResource() }
+            afterCopy?()
+            if case .failure(let error) = copied {
+                await MainActor.run {
+                    isParsingSTL = false
+                    state = .failed(message: "Could not import \(fileName): \(error.localizedDescription)")
+                    showErrorAlert = true
+                }
+                return
+            }
+            if ext == "stl" {
+                await MainActor.run {
+                    addModels([ConvertedModelObject(url: dest, name: fileName, offsetMM: .zero)],
+                              checkUnits: checkUnits)
+                }
+                return
+            }
+
             let result = Result { try importModelFile(at: dest, outputDir: outputDir, mixes: sessionMixes) }
             try? FileManager.default.removeItem(at: dest)
             await MainActor.run {
@@ -2153,10 +2216,7 @@ struct ContentView: View {
 
         Task.detached(priority: .userInitiated) {
             for model in added {
-                let parsed = Result { () throws -> (SCNGeometry, STLMeshInfo) in
-                    (try parseSTL(url: model.url, colorMode: mode, partFacetCounts: model.parts),
-                     try parseSTLMeshInfo(url: model.url))
-                }
+                let parsed = Result { try loadSTL(url: model.url, colorMode: mode, partFacetCounts: model.parts) }
                 let bvh = (try? parsed.get()).flatMap { TriangleBVH.build(triangleVertices: $0.1.vertices) }
                 // Colour painting from the file, drawn over the model.
                 let paint = model.native.flatMap { loadPaintMesh(nativeURL: $0.url, parts: $0.parts) }
@@ -2178,6 +2238,7 @@ struct ContentView: View {
                         models[idx].partGeometries = volumeGeometries
                         models[idx].paint = paint
                         models[idx].paintVersion += 1
+                        moveOntoBedIfOff(model.id)
                         updateIntersections()
 
                         if checkUnits, !showUnitScaleAlert, let scale = info.suspectedUnitScale {
@@ -2187,7 +2248,8 @@ struct ContentView: View {
                             showUnitScaleAlert = true
                         }
                     case .failure(let error):
-                        models.remove(at: idx)
+                        let removed = models.remove(at: idx)
+                        TempFiles.remove(filesOf: [removed], keeping: models)
                         if selectedModelID == model.id { selectedModelID = models.last?.id }
                         updateIntersections()
                         state = .failed(message: "Could not read \(model.name): \(error.localizedDescription)")
@@ -2202,6 +2264,8 @@ struct ContentView: View {
     // MARK: - Slice trigger (checks for intersection first)
 
     private func triggerSlice() {
+        guard !isBusy else { return }
+        slicePending = true
         guard anyIntersecting else { startSlice(); return }
         // The quick box check flags models whose boxes overlap (e.g. nested
         // copies from Fill Plate); confirm with the mesh check before warning.
@@ -2212,16 +2276,25 @@ struct ContentView: View {
                 preciseIntersectionResults(models: snapshot, bedX: bx, bedY: by)
             }.value
             for i in models.indices { models[i].isIntersecting = ids.contains(models[i].id) }
-            if anyIntersecting { showIntersectingAlert = true } else { startSlice() }
+            if anyIntersecting { slicePending = false; showIntersectingAlert = true } else { startSlice() }
         }
     }
 
     /// Slices in the background-capable way and taps out the result.
     private func startSlice() {
-        SliceActivity.shared.begin { if let h = activeHandle { slicer_cancel(h) } }
+        slicePending = true
+        // The last slice's output and its export copies are replaced by this one.
+        if case .done(let url, _, _, _) = state {
+            TempFiles.delete([url, url.deletingPathExtension().appendingPathExtension("3mf")])
+        }
+        try? FileManager.default.removeItem(at: TempFiles.root.appendingPathComponent("Export", isDirectory: true))
+        let slice = activeSlice
+        slice.begin()
+        SliceActivity.shared.begin { slice.cancel() }
         Task.detached(priority: .userInitiated) {
             await runSlice()
             await MainActor.run {
+                slicePending = false
                 let success: Bool
                 switch state {
                 case .done: success = true
@@ -2287,7 +2360,7 @@ struct ContentView: View {
         let customName = await MainActor.run(body: { exportFileName.trimmingCharacters(in: .whitespaces) })
         let stem: String
         if !customName.isEmpty {
-            stem = customName.hasSuffix(".gcode") ? String(customName.dropLast(6)) : customName
+            stem = Self.safeFileName(customName.hasSuffix(".gcode") ? String(customName.dropLast(6)) : customName)
         } else {
             stem = await MainActor.run(body: { autoOutputStem(for: snapshotModels) })
         }
@@ -2301,11 +2374,9 @@ struct ContentView: View {
             await MainActor.run { state = .failed(message: "slicer_create() returned nil") ; showErrorAlert = true }
             return
         }
-        await MainActor.run { activeHandle = handle }
-        defer {
-            slicer_destroy(handle)
-            Task { @MainActor in activeHandle = nil }
-        }
+        let slice = await MainActor.run(body: { activeSlice })
+        slice.attach(handle)
+        defer { slice.destroy() }
 
         // 5. Settings: PrusaSlicer presets, then the printer, material and
         //    slice profiles on top (SliceSetup).
@@ -2326,11 +2397,19 @@ struct ContentView: View {
         var sliceCfg = sliceProfile.bridgeConfig()
 
         // Keep the printer's G-code thumbnails; they're rendered after slicing.
-        slicer_enable_thumbnails(handle, 1)
+        if slicer_enable_thumbnails(handle, 1) != 0 {
+            let msg = String(cString: slicer_last_error(handle))
+            await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+            return
+        }
 
         // The wipe tower where the bed view shows it.
         let tower = await MainActor.run(body: { wipeTowerXY })
-        slicer_set_wipe_tower_position(handle, Float(tower.x), Float(tower.y), 0)
+        if slicer_set_wipe_tower_position(handle, Float(tower.x), Float(tower.y), 0) != 0 {
+            let msg = String(cString: slicer_last_error(handle))
+            await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+            return
+        }
 
         // Mixes before the models: their tool numbers depend on them.
         let sessionMixes = await MainActor.run(body: { mixes })
@@ -2465,6 +2544,7 @@ struct ContentView: View {
 
         let relay = ProgressRelay()
         relay.handler = { pct in
+            // Throttled by ProgressRelay.report.
             Task { @MainActor in
                 if case .slicing(let phase, _) = state {
                     state = .slicing(phase: phase, progress: Double(pct) / 100.0)
@@ -2482,7 +2562,7 @@ struct ContentView: View {
                     Int32(sliceProfile.infillDensity),
                     { pct, ctx in
                         guard let ctx else { return }
-                        Unmanaged<ProgressRelay>.fromOpaque(ctx).takeUnretainedValue().handler(pct)
+                        Unmanaged<ProgressRelay>.fromOpaque(ctx).takeUnretainedValue().report(pct)
                     },
                     relayPtr
                 )
@@ -2518,7 +2598,10 @@ struct ContentView: View {
         await setPhase("Generating G-code…", progress: 0.95)
         if slicer_export_gcode(handle, gcodeURL.path) != 0 {
             let msg = String(cString: slicer_last_error(handle))
-            await MainActor.run { state = .failed(message: msg) ; showErrorAlert = true }
+            await MainActor.run {
+                if msg == "canceled" { state = .idle }
+                else { state = .failed(message: msg) ; showErrorAlert = true }
+            }
             return
         }
 
@@ -2531,13 +2614,17 @@ struct ContentView: View {
         // The same plate as a PrusaSlicer project, offered next to the G-code.
         let projectURL = gcodeURL.deletingPathExtension().appendingPathExtension("3mf")
         try? FileManager.default.removeItem(at: projectURL)
-        slicer_export_project_3mf(handle, projectURL.path)
+        // The G-code is still good without it: say so, and offer only the G-code.
+        let projectError = slicer_export_project_3mf(handle, projectURL.path) != 0
+            ? "The project file (.3mf) couldn't be saved: \(String(cString: slicer_last_error(handle))). The G-code is fine."
+            : nil
         let stats = SliceStats(json: String(cString: slicer_print_stats(handle)))
         // Free the slice before reading the G-code back: big plates need both otherwise.
         slicer_release_print(handle)
-        let summary = GCodeSummary(url: gcodeURL)
-        let layers = parseGCode(url: gcodeURL)
-        let severalTools = layers.contains { $0.moves.contains { $0.tool != 0 } }
+        let parsed = parseGCodeFile(url: gcodeURL)
+        let summary = parsed?.summary
+        let layers = parsed?.layers ?? []
+        let severalTools = parsed?.usesSeveralTools ?? false
 
         await MainActor.run {
             var filament = summary?.filamentText
@@ -2555,7 +2642,18 @@ struct ContentView: View {
             currentLayerIndex = max(0, layers.count - 1)
             showLayerPreview = !layers.isEmpty
             pathConflictMessage = conflict
+            projectExportMessage = projectError
         }
+    }
+
+    /// A user-typed name usable as a file name: no path separators, colons or
+    /// control characters, and not empty or hidden.
+    static func safeFileName(_ name: String) -> String {
+        let bad = CharacterSet(charactersIn: "/\\:").union(.controlCharacters).union(.newlines)
+        var out = String(String.UnicodeScalarView(name.unicodeScalars.map { bad.contains($0) ? "_" : $0 }))
+            .trimmingCharacters(in: .whitespaces)
+        while out.hasPrefix(".") { out.removeFirst() }
+        return out.isEmpty ? "model" : String(out.prefix(200))
     }
 
     /// Explains slicer_path_conflict's "<name>\n<name>\n<height>", or nil.

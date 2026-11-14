@@ -22,7 +22,7 @@ final class PartSettingsTests: XCTestCase {
             XCTAssertEqual(slicer_set_object_file_settings(h, idx, text), 0, String(cString: slicer_last_error(h)))
         }
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0)
         let gcode = try String(contentsOf: out, encoding: .utf8)

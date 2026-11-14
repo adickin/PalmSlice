@@ -11,7 +11,7 @@ final class ColorMixTests: XCTestCase {
 
     func testReferenceSliceResolvesMixesToPhysicalTools() throws {
         let file = fixtures.appendingPathComponent("colormix.3mf")
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         var err = [CChar](repeating: 0, count: 512)
         XCTAssertEqual(slicer_reference_slice_3mf(file.path, out.path, &err, 512), 0, String(cString: err))

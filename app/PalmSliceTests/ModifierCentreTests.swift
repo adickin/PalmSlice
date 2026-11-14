@@ -11,7 +11,7 @@ final class ModifierCentreTests: XCTestCase {
     /// modifier_offset.3mf: a 180 × 229 mm box with two infill modifiers past
     /// its +X side (their centre is 8.7 mm right of, and 1.3 mm in front of, the box's).
     func testModifiersDontMoveTheObject() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir().appendingPathComponent(UUID().uuidString)
         let object = try XCTUnwrap(importModelFile(at: fixtures.appendingPathComponent("modifier_offset.3mf"),
                                                    outputDir: dir).objects.first)
         XCTAssertEqual(object.parts.map(\.kind), [.part, .modifier, .modifier])
@@ -27,7 +27,7 @@ final class ModifierCentreTests: XCTestCase {
         t.scale_x = 1; t.scale_y = 1; t.scale_z = 1
         XCTAssertEqual(slicer_set_object_transform(h, idx, &t), 0)
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
+        let out = scratchDir().appendingPathComponent("\(UUID()).gcode")
         defer { try? FileManager.default.removeItem(at: out) }
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
 

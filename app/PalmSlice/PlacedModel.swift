@@ -78,8 +78,10 @@ struct PlacedModel: Identifiable {
     var url: URL
     var name: String
     var geometry: SCNGeometry?
-    var transform: ModelTransform
-    var meshInfo: STLMeshInfo?
+    /// Always sits on the bed: the slicer drops every object to Z=0
+    /// (`ensure_on_bed`), so a raised or sunk model would preview wrongly.
+    var transform: ModelTransform { didSet { keepOnBed() } }
+    var meshInfo: STLMeshInfo? { didSet { keepOnBed() } }
     var bvh: TriangleBVH?
     var isIntersecting: Bool = false
     /// PrusaSlicer settings stored on this object in its 3MF/AMF file.
@@ -110,6 +112,12 @@ struct PlacedModel: Identifiable {
     /// Display geometry of volumes that aren't printable parts, by volume index,
     /// centred like `geometry`.
     var partGeometries: [Int: SCNGeometry] = [:]
+
+    private mutating func keepOnBed() {
+        guard let meshInfo else { return }
+        let z = transform.droppedToBed(meshInfo: meshInfo).positionMM.z
+        if transform.positionMM.z != z { transform.positionMM.z = z }
+    }
 
     /// Tools the model prints with (PalmSlice numbers, mixes included).
     /// The default tool counts as tool 1.

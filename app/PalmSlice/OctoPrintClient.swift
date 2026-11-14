@@ -27,8 +27,26 @@ final class OctoPrintSettings: ObservableObject {
     @Published var baseURL: String {
         didSet { UserDefaults.standard.set(baseURL, forKey: Self.urlKey) }
     }
+    /// Saved to the Keychain once typing pauses (or on saveAPIKeyNow), not per keystroke.
     @Published var apiKey: String {
-        didSet { Self.saveKeychain(apiKey) }
+        didSet { scheduleKeychainSave() }
+    }
+    private var pendingKeychainSave: DispatchWorkItem?
+
+    private func scheduleKeychainSave() {
+        pendingKeychainSave?.cancel()
+        let value = apiKey
+        let save = DispatchWorkItem { Self.saveKeychain(value) }
+        pendingKeychainSave = save
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: save)
+    }
+
+    /// Writes a pending API key change now (e.g. when its settings close).
+    func saveAPIKeyNow() {
+        guard let save = pendingKeychainSave else { return }
+        pendingKeychainSave = nil
+        save.cancel()
+        Self.saveKeychain(apiKey)
     }
     @Published var hostType: PrintHostType {
         didSet { UserDefaults.standard.set(hostType.rawValue, forKey: Self.hostTypeKey) }
@@ -260,7 +278,7 @@ struct OctoPrintClient: PrintHostClient {
         var req = request("api/files/local", method: "POST")
         req.setValue(form.contentType, forHTTPHeaderField: "Content-Type")
         let delegate = UploadProgressDelegate(onProgress: progress)
-        let (data, resp) = try await Self.session.upload(for: req, fromFile: bodyURL, delegate: delegate)
+        let (data, resp) = try await uploadSession.upload(for: req, fromFile: bodyURL, delegate: delegate)
         try check(data, resp)
     }
 }
@@ -372,7 +390,7 @@ struct MoonrakerClient: PrintHostClient {
         var req = request("server/files/upload", method: "POST")
         req.setValue(form.contentType, forHTTPHeaderField: "Content-Type")
         let delegate = UploadProgressDelegate(onProgress: progress)
-        let (data, resp) = try await Self.session.upload(for: req, fromFile: bodyURL, delegate: delegate)
+        let (data, resp) = try await uploadSession.upload(for: req, fromFile: bodyURL, delegate: delegate)
         guard let http = resp as? HTTPURLResponse else { throw OctoPrintError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             throw OctoPrintError.http(http.statusCode, String((String(data: data, encoding: .utf8) ?? "").prefix(200)))
@@ -406,6 +424,15 @@ private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @u
     }
 }
 
+/// For uploads: the host may take well over the 15 s other requests allow
+/// to answer once a large file has arrived (OctoPrint analyses it first).
+private let uploadSession: URLSession = {
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.timeoutIntervalForRequest = 180
+    cfg.timeoutIntervalForResource = 600   // large G-code uploads over slow Wi-Fi
+    return URLSession(configuration: cfg)
+}()
+
 // MARK: - Multipart encoding
 
 private struct MultipartForm {
@@ -415,7 +442,18 @@ private struct MultipartForm {
     var contentType: String { "multipart/form-data; boundary=\(boundary)" }
 
     mutating func addField(_ name: String, _ value: String) {
-        data.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
+        data.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(Self.headerSafe(name))\"\r\n\r\n"
+                    + Self.lineSafe(value) + "\r\n")
+    }
+
+    /// A value on one line: a line break would end the part early.
+    static func lineSafe(_ s: String) -> String {
+        s.components(separatedBy: .newlines).joined(separator: " ")
+    }
+
+    /// A quoted header parameter: one line, no quotes.
+    static func headerSafe(_ s: String) -> String {
+        lineSafe(s).replacingOccurrences(of: "\"", with: "'")
     }
 
     mutating func finish() -> Data {
@@ -429,7 +467,7 @@ private struct MultipartForm {
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let out = try FileHandle(forWritingTo: url)
         defer { try? out.close() }
-        let safeName = fileName.replacingOccurrences(of: "\"", with: "'")
+        let safeName = Self.headerSafe(fileName)
         var head = data
         head.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(safeName)\"\r\nContent-Type: application/octet-stream\r\n\r\n")
         try out.write(contentsOf: head)

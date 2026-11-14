@@ -45,7 +45,7 @@ final class ToolMaterialsTests: XCTestCase {
 
     // A multi-part 3MF slices on the XL 5T with a different material per tool.
     func testMultiToolSliceOnXL() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir().appendingPathComponent(UUID().uuidString)
         let file = try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir)
         guard let h = slicer_create() else { return XCTFail("slicer_create") }
         defer { slicer_destroy(h) }

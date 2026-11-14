@@ -11,7 +11,7 @@ final class SliceStatsTests: XCTestCase {
     /// returns the stats.
     private func twoMaterialStats() throws -> SliceStats {
         let printer = try XCTUnwrap(BuiltInProfiles.all.first { $0.builtInKey == "snapmaker-u1" })
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir().appendingPathComponent(UUID().uuidString)
         let file = try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir)
         guard let h = slicer_create() else { throw XCTSkip("slicer_create") }
         defer { slicer_destroy(h) }

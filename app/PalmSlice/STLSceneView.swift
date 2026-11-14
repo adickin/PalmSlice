@@ -62,7 +62,8 @@ struct STLSceneView: UIViewRepresentable {
         scnView.backgroundColor = UIColor(white: 0.10, alpha: 1)
         scnView.antialiasingMode = .multisampling4X
         scnView.allowsCameraControl = true
-        scnView.rendersContinuously = true
+        // Draws on scene, camera and gesture changes only; idle frames drained the battery.
+        scnView.rendersContinuously = false
 
         let ctrl = scnView.defaultCameraController
         ctrl.interactionMode = .orbitTurntable
@@ -636,12 +637,8 @@ private func makeTranslateGizmo() -> SCNNode {
                    euler: SCNVector3(Float.pi/2, 0, 0))  // scene Z = print Y (bed depth)
     ya.name = "gizmo_y"
 
-    let za = arrow(shaft: shaft, shaftR: shaftR, head: head, headR: headR,
-                   color: UIColor(red: 0.3, green: 0.5, blue: 1.0, alpha: 1),
-                   euler: SCNVector3(0, 0, 0))            // scene Y = print Z (up)
-    za.name = "gizmo_z"
-
-    root.addChildNode(xa); root.addChildNode(ya); root.addChildNode(za)
+    // No Z arrow: models always sit on the bed (PlacedModel.transform), as they slice.
+    root.addChildNode(xa); root.addChildNode(ya)
     return root
 }
 
@@ -1197,7 +1194,7 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
                 switch axis {
                 case .x: t.positionMM.x += dm
                 case .y: t.positionMM.y += dm
-                case .z: t.positionMM.z += dm
+                case .z: break   // no Z arrow: models stay on the bed
                 }
 
             case .rotate:
@@ -1350,7 +1347,6 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
             switch cur.name {
             case "gizmo_x":       return (.x, .translate)
             case "gizmo_y":       return (.y, .translate)
-            case "gizmo_z":       return (.z, .translate)
             case "gizmo_rot_x":   return (.x, .rotate)
             case "gizmo_rot_y":   return (.y, .rotate)
             case "gizmo_rot_z":   return (.z, .rotate)
@@ -1366,7 +1362,7 @@ final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIPencilInteract
     private func setGizmoAxisHighlight(active: GizmoAxis, mode: GizmoMode) {
         let names: [(String, GizmoAxis)] = {
             switch mode {
-            case .translate: return [("gizmo_x",.x),("gizmo_y",.y),("gizmo_z",.z)]
+            case .translate: return [("gizmo_x",.x),("gizmo_y",.y)]
             case .rotate:    return [("gizmo_rot_x",.x),("gizmo_rot_y",.y),("gizmo_rot_z",.z)]
             case .scale:     return [("gizmo_scale_x",.x),("gizmo_scale_y",.y),("gizmo_scale_z",.z)]
             }

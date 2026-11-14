@@ -45,6 +45,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <atomic>
+#include <iomanip>
 #include <sstream>
 #include <filesystem>
 #include <boost/algorithm/string/predicate.hpp>
@@ -61,6 +63,9 @@ struct PaintSession {
     std::vector<Slic3r::TriangleSelector::TriangleSplittingData> undo, redo;
     std::vector<float> vertices;                           // display mesh, 9 floats per triangle
     std::vector<unsigned char> states;                     // state per triangle
+    // States the selector may hold: loaded or painted this session (undo
+    // only goes back to those). The display walks just these, not all of them.
+    std::vector<bool> seen_states;
 };
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -69,6 +74,11 @@ struct SlicerContext {
     Slic3r::Print              print;
     Slic3r::DynamicPrintConfig config;
     std::string                last_error;
+
+    // Set by slicer_cancel, and never cleared (one context per slice): a
+    // cancel that comes before slicing starts would otherwise be lost to
+    // Print::restart().
+    std::atomic<bool> cancel_requested{false};
 
     // Printer dimensions — derived from bed_shape whenever settings are
     // applied (sync_bed_from_config), used to centre models on the bed.
@@ -366,6 +376,7 @@ int slicer_slice_with_progress(SlicerHandle handle,
 
         ctx->print.clear();
         ctx->print.restart();  // clear any previous cancel flag
+        if (ctx->cancel_requested) throw Slic3r::CanceledException();
 
         if (progress_cb) {
             ctx->print.set_status_callback([=](const Slic3r::PrintBase::SlicingStatus& s) {
@@ -449,7 +460,9 @@ int slicer_wipe_tower_size(SlicerHandle handle, float* depth, float* brim_width,
 }
 
 void slicer_cancel(SlicerHandle handle) {
-    CTX(handle)->print.cancel();
+    auto ctx = CTX(handle);
+    ctx->cancel_requested = true;
+    ctx->print.cancel();
 }
 
 // Filament use by purpose and cost, as slicer_print_stats describes: the
@@ -462,13 +475,14 @@ static std::string print_stats_json(const Slic3r::PrintConfig& cfg,
         auto it = m.find(id);
         return it == m.end() ? 0.0 : it->second;
     };
-    char buf[512];
-    std::snprintf(buf, sizeof buf,
-                  "{\"time\":%.1f,\"filament_changes\":%u,\"change_time\":%.1f,\"time_cost\":%.4f,\"filaments\":[",
-                  time, changes,
-                  double(ps.total_filament_load_time + ps.total_filament_unload_time + ps.total_tool_change_time),
-                  cfg.time_cost.value * time / 3600.0);
-    std::string out = buf;
+    // Built with a stream, not a fixed buffer: a long colour string from an
+    // imported profile would otherwise truncate the JSON.
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(1)
+        << "{\"time\":" << time << ",\"filament_changes\":" << changes
+        << ",\"change_time\":"
+        << double(ps.total_filament_load_time + ps.total_filament_unload_time + ps.total_tool_change_time)
+        << std::setprecision(4) << ",\"time_cost\":" << cfg.time_cost.value * time / 3600.0 << ",\"filaments\":[";
     bool first = true;
     for ([[maybe_unused]] const auto& [id, total_volume] : ps.total_volumes_per_extruder) {
         const double density  = cfg.filament_density.get_at(id);
@@ -481,23 +495,21 @@ static std::string print_stats_json(const Slic3r::PrintConfig& cfg,
                           + volume(ps.wipe_tower_volumes_per_extruder, id) + volume(ps.flush_per_filament, id);
         const double total_g = grams(used);
         std::string colour = id < cfg.filament_colour.values.size() ? cfg.filament_colour.values[id] : "";
-        colour.erase(std::remove_if(colour.begin(), colour.end(), [](char c) { return c == '"' || c == '\\'; }),
+        colour.erase(std::remove_if(colour.begin(), colour.end(),
+                                    [](char c) { return c == '"' || c == '\\' || static_cast<unsigned char>(c) < 0x20; }),
                      colour.end());
-        std::snprintf(buf, sizeof buf,
-                      "%s{\"index\":%zu,\"colour\":\"%s\",\"model_g\":%.4f,\"support_g\":%.4f,\"tower_g\":%.4f,"
-                      "\"flush_g\":%.4f,\"total_g\":%.4f,\"total_m\":%.4f,\"price_per_kg\":%.4f,\"cost\":%.4f}",
-                      first ? "" : ",", id, colour.c_str(),
-                      grams(volume(ps.model_volumes_per_extruder, id)),
-                      grams(volume(ps.support_volumes_per_extruder, id)),
-                      grams(volume(ps.wipe_tower_volumes_per_extruder, id)),
-                      grams(volume(ps.flush_per_filament, id)),
-                      total_g,
-                      diameter > 0 ? used / (M_PI * 0.25 * diameter * diameter) * 0.001 : 0.0,
-                      price, total_g * price * 0.001);
-        out += buf;
+        out << (first ? "" : ",") << "{\"index\":" << id << ",\"colour\":\"" << colour << "\""
+            << ",\"model_g\":" << grams(volume(ps.model_volumes_per_extruder, id))
+            << ",\"support_g\":" << grams(volume(ps.support_volumes_per_extruder, id))
+            << ",\"tower_g\":" << grams(volume(ps.wipe_tower_volumes_per_extruder, id))
+            << ",\"flush_g\":" << grams(volume(ps.flush_per_filament, id))
+            << ",\"total_g\":" << total_g
+            << ",\"total_m\":" << (diameter > 0 ? used / (M_PI * 0.25 * diameter * diameter) * 0.001 : 0.0)
+            << ",\"price_per_kg\":" << price << ",\"cost\":" << total_g * price * 0.001 << "}";
         first = false;
     }
-    return out + "]}";
+    out << "]}";
+    return out.str();
 }
 
 int slicer_export_gcode(SlicerHandle handle, const char* output_path) {
@@ -524,6 +536,10 @@ int slicer_export_gcode(SlicerHandle handle, const char* output_path) {
         ctx->print_stats = print_stats_json(ctx->print.config(), result.print_statistics,
                                             unsigned(ctx->print.print_statistics().total_toolchanges));
         return 0;
+    } catch (const Slic3r::CanceledException&) {
+        // Same result as a cancel during slicing.
+        ctx->last_error = "canceled";
+        return -2;
     } catch (const std::exception& e) {
         return set_err(ctx, e);
     }
@@ -585,10 +601,10 @@ int slicer_export_project_3mf(SlicerHandle handle, const char* path) {
         // Objects, parts, painting and tools are already in libslic3r's
         // numbering, so desktop OrcaSlicer opens the same setup.
         Slic3r::Model model = ctx->model;
-        Slic3r::ThumbnailData* thumbnail = nullptr;
-        for (auto& t : ctx->thumbnails)
-            if (!thumbnail || t.width > thumbnail->width) thumbnail = &t;
-        if (!store_orca_3mf(path, model, &ctx->config, thumbnail))
+        // No thumbnail: OrcaSlicer's writer refuses one without plate data
+        // ("thumbnail_data size 1 > plate count 0"), which made every project
+        // with printer thumbnails fail to save.
+        if (!store_orca_3mf(path, model, &ctx->config))
             return set_err(ctx, "Could not write the project");
         return 0;
     } catch (const std::exception& e) {
@@ -703,95 +719,18 @@ int slicer_check_slice_config(SlicerHandle handle, const SlicerSliceConfig* cfg,
     }
 }
 
+static int apply_transform_to_object(SlicerContext* ctx,
+                                     Slic3r::ModelObject* obj,
+                                     const SlicerModelTransform* t);
+
 int slicer_set_model_transform(SlicerHandle handle,
                                const SlicerModelTransform* t)
 {
     auto ctx = CTX(handle);
     if (!t) return set_err(ctx, "null model transform");
     try {
-        double bed_cx = ctx->origin_at_center ? 0.0 : ctx->bed_x / 2.0;
-        double bed_cy = ctx->origin_at_center ? 0.0 : ctx->bed_y / 2.0;
-
-        // Scale mapping: SceneKit(X,Y,Z) → STL(X, -Z_sign, Y_stl)
-        //   SceneKit X → STL X: scale_x unchanged
-        //   SceneKit Y → STL Z: scale_y becomes STL Z scale
-        //   SceneKit Z → STL Y: scale_z becomes STL Y scale
-        double sx = static_cast<double>(t->scale_x);  // STL X scale
-        double sy = static_cast<double>(t->scale_z);  // STL Y scale  (SceneKit Z → STL Y)
-        double sz = static_cast<double>(t->scale_y);  // STL Z scale  (SceneKit Y → STL Z)
-
-        // Convert SceneKit ZYX Euler angles (degrees) to Slic3r ZYX Euler angles (radians)
-        // in STL/Slic3r space via: R_stl = Rx(+90°) * R_sc * Rx(-90°)
-        // where Rx(+90°) converts from STL space to SceneKit space.
-        double rx_d = static_cast<double>(t->rot_x_deg) * M_PI / 180.0;
-        double ry_d = static_cast<double>(t->rot_y_deg) * M_PI / 180.0;
-        double rz_d = static_cast<double>(t->rot_z_deg) * M_PI / 180.0;
-
-        double cxr = cos(rx_d), sxr = sin(rx_d);
-        double cyr = cos(ry_d), syr = sin(ry_d);
-        double czr = cos(rz_d), szr = sin(rz_d);
-
-        // R_stl elements (row 0, 1, 2 of Rx(+90°) * Rz(rz)*Ry(ry)*Rx(rx) * Rx(-90°)):
-        // Row 2 is needed for min-Z computation and Euler extraction.
-        double stl00 = czr * cyr;
-        double stl10 = syr;
-        double stl20 = szr * cyr;
-        double stl21 = czr * sxr - szr * syr * cxr;
-        double stl22 = szr * syr * sxr + czr * cxr;
-        // For gimbal lock branch:
-        double stl01 = -(czr * syr * cxr + szr * sxr);
-        double stl11 = cyr * cxr;
-
-        // Extract ZYX Euler angles for Slic3r from the R_stl matrix.
-        // R_stl = Rz(ez)*Ry(ey)*Rx(ex) → R[2][0] = -sin(ey)
-        double sin_ey = -stl20;
-        double rx_stl, ry_stl, rz_stl;
-        if (std::abs(sin_ey) < 0.9999) {
-            ry_stl = std::asin(sin_ey);
-            rx_stl = std::atan2(stl21, stl22);
-            rz_stl = std::atan2(stl10, stl00);
-        } else {
-            // Gimbal lock (ry ≈ ±90°): set rz=0 and recover rx from remaining DOF.
-            ry_stl = (sin_ey > 0) ? M_PI / 2.0 : -M_PI / 2.0;
-            rx_stl = std::atan2(-stl01, stl11);
-            rz_stl = 0.0;
-        }
-
-        // Compute min world Z of the scaled+rotated mesh (for drop-to-bed).
-        // Transform all 8 AABB corners of the raw (centered) mesh, apply scale
-        // then rotation, keep track of the minimum Z component.
-        double min_z = std::numeric_limits<double>::max();
-        for (auto* obj : ctx->model.objects) {
-            Slic3r::BoundingBoxf3 raw_bb = obj->raw_bounding_box();
-            double xs[2] = { raw_bb.min.x() * sx, raw_bb.max.x() * sx };
-            double ys[2] = { raw_bb.min.y() * sy, raw_bb.max.y() * sy };
-            double zs[2] = { raw_bb.min.z() * sz, raw_bb.max.z() * sz };
-            for (int i = 0; i < 2; ++i)
-            for (int j = 0; j < 2; ++j)
-            for (int k = 0; k < 2; ++k) {
-                double wz = stl20 * xs[i] + stl21 * ys[j] + stl22 * zs[k];
-                if (wz < min_z) min_z = wz;
-            }
-        }
-        double drop_z = (min_z < std::numeric_limits<double>::max()) ? -min_z : 0.0;
-
-        // Apply transform to every instance of every object.
-        // pos_x_mm: SceneKit X → STL X (same direction)
-        // pos_z_mm: SceneKit Z → -STL Y (sign-flipped depth axis)
-        double inst_x = bed_cx + static_cast<double>(t->pos_x_mm);
-        double inst_y = bed_cy - static_cast<double>(t->pos_z_mm);
-        double inst_z = drop_z;   // model bottom placed at Z=0
-
-        for (auto* obj : ctx->model.objects) {
-            for (auto* inst : obj->instances) {
-                inst->set_scaling_factor(Slic3r::Vec3d(sx, sy, sz));
-                inst->set_rotation(Slic3r::Vec3d(rx_stl, ry_stl, rz_stl));
-                inst->set_offset(Slic3r::Vec3d(inst_x, inst_y, inst_z));
-            }
-            // The box corners above reach below a rotated mesh that isn't a
-            // box; put the mesh itself on the bed.
-            obj->ensure_on_bed();
-        }
+        for (auto* obj : ctx->model.objects)
+            apply_transform_to_object(ctx, obj, t);
         return 0;
     } catch (const std::exception& e) {
         return set_err(ctx, e);
@@ -1100,7 +1039,9 @@ static bool apply_sub_layer_profiles(Slic3r::Model& model) {
         double previous = 0.;
         for (double cut : cuts[parity])
             if (cut - previous > 0.02) { heights[parity].push_back(cut - previous); previous = cut; }
-        heights[parity].back() += base - previous;
+        // Every cut within 0.02 mm of the last: one sub-layer of the whole base.
+        if (heights[parity].empty()) heights[parity].push_back(base);
+        else heights[parity].back() += base - previous;
     }
 
     for (Slic3r::ModelObject* obj : model.objects) {
@@ -1309,6 +1250,7 @@ int slicer_color_delta_e(const char* hex_a, const char* hex_b, double* out) {
 
 int slicer_import_model_file(SlicerHandle handle, const char* path, const char* out_dir) {
     auto ctx = CTX(handle);
+    if (!path || !out_dir) return set_err(ctx, "null path");
     try {
         ctx->imported.clear();
         ctx->imported_project.clear();
@@ -1816,7 +1758,7 @@ static Slic3r::Vec3f to_volume(const PaintSession& s, float x, float y, float z)
 
 static void push_undo(PaintSession& s) {
     s.undo.push_back(s.selector->serialize());
-    if (s.undo.size() > 64) s.undo.erase(s.undo.begin());
+    if (s.undo.size() > SLICER_PAINT_UNDO_LIMIT) s.undo.erase(s.undo.begin());
     s.redo.clear();
 }
 
@@ -1856,7 +1798,10 @@ int slicer_paint_begin_layer(SlicerHandle handle, const char* path, int volume, 
                                           : obj->instances.front()->get_matrix() * s->volume->get_matrix();
         s->layer = layer;
         s->selector = std::make_unique<Slic3r::TriangleSelector>(s->volume->mesh());
-        s->selector->deserialize(paint_facets(*s).get_data());
+        const auto& data = paint_facets(*s).get_data();
+        s->selector->deserialize(data);
+        s->seen_states = data.used_states;
+        s->seen_states.resize(size_t(k_paint_states), false);
         ctx->paint = std::move(s);
         return 0;
     } catch (const std::exception& e) {
@@ -1892,6 +1837,7 @@ int slicer_paint_brush(SlicerHandle handle, int facet, const float* point, const
             ? TS::DoublePointCursor::cursor_factory(to_volume(*s, previous[0], previous[1], previous[2]), center, cam, radius, type, trafo, TS::ClippingPlane())
             : TS::SinglePointCursor::cursor_factory(center, cam, radius, type, trafo, TS::ClippingPlane());
         s->selector->select_patch(facet, std::move(cursor), Slic3r::EnforcerBlockerType(state), no_translate, true);
+        s->seen_states[size_t(state)] = true;
         return 0;
     } catch (const std::exception& e) {
         return set_err(ctx, e);
@@ -1915,6 +1861,7 @@ int slicer_paint_fill(SlicerHandle handle, int facet, const float* point, int st
         else
             s->selector->bucket_fill_select_triangles(hit, facet, TS::ClippingPlane(), angle_deg, /*propagate=*/true);
         s->selector->seed_fill_apply_on_triangles(Slic3r::EnforcerBlockerType(state));
+        s->seen_states[size_t(state)] = true;
         return 0;
     } catch (const std::exception& e) {
         return set_err(ctx, e);
@@ -1963,6 +1910,7 @@ int slicer_paint_mesh_update(SlicerHandle handle) {
         s->states.clear();
         // Unpainted triangles (state 0) are the part's own tool, drawn by its mesh.
         for (int state = 1; state < paint_state_count(*s); ++state) {
+            if (!s->seen_states[size_t(state)]) continue;
             const indexed_triangle_set its = s->selector->get_facets_strict(Slic3r::EnforcerBlockerType(state));
             for (const auto& tri : its.indices) {
                 for (int k = 0; k < 3; ++k) {
@@ -2079,6 +2027,36 @@ bool is_preset_bookkeeping_key(const std::string& key) {
            key == "print_compatible_printers";
 }
 
+// Calls `fn(key, value)` for each "key = value" line of .ini settings text,
+// skipping blank, comment and preset bookkeeping lines; stops when `fn`
+// returns false. A line without '=' is an error (its message in `*error`)
+// unless `error` is null, when it's skipped. Returns false on error or stop.
+bool for_each_setting(const char* ini_text, std::string* error,
+                      const std::function<bool(const std::string&, const std::string&)>& fn) {
+    std::istringstream in(ini_text ? ini_text : "");
+    std::string line;
+    int line_no = 0;
+    while (std::getline(in, line)) {
+        ++line_no;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos || line[start] == '#' || line[start] == ';') continue;
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) {
+            if (!error) continue;
+            *error = "line " + std::to_string(line_no) + ": expected \"key = value\": " + line;
+            return false;
+        }
+        std::string key = line.substr(start, eq - start);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        std::string value = line.substr(eq + 1);
+        if (!value.empty() && value.front() == ' ') value.erase(0, 1);
+        if (is_preset_bookkeeping_key(key)) continue;
+        if (!fn(key, value)) return false;
+    }
+    return true;
+}
+
 std::string serialize_config(const Slic3r::DynamicPrintConfig& cfg) {
     std::ostringstream out;
     for (const std::string& key : cfg.keys()) {
@@ -2174,7 +2152,9 @@ const char* slicer_preset_name(int type, int index) {
     if (type < 0 || type > 2 || index < 0 ||
         index >= static_cast<int>(g_preset_refs[type].size()))
         return "";
-    return g_preset_refs[type][index].name.c_str();
+    // A copy: the list may change once the lock is released.
+    t_string_result = g_preset_refs[type][index].name;
+    return t_string_result.c_str();
 }
 
 const char* slicer_preset_config(int type, const char* name) {
@@ -2246,32 +2226,17 @@ int slicer_apply_settings(SlicerHandle handle, const char* ini_text) {
     if (!ini_text) return set_err(ctx, "null settings");
     // Validate into a scratch copy so a bad line leaves the context untouched.
     Slic3r::DynamicPrintConfig staged = ctx->config;
-    std::istringstream in(ini_text);
-    std::string line;
-    int line_no = 0;
-    while (std::getline(in, line)) {
-        ++line_no;
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start == std::string::npos || line[start] == '#' || line[start] == ';') continue;
-        size_t eq = line.find('=');
-        if (eq == std::string::npos) {
-            ctx->last_error = "line " + std::to_string(line_no) + ": expected \"key = value\": " + line;
-            return -1;
-        }
-        std::string key = line.substr(start, eq - start);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
-        std::string value = line.substr(eq + 1);
-        if (!value.empty() && value.front() == ' ') value.erase(0, 1);
-        if (is_preset_bookkeeping_key(key)) continue;
+    const bool ok = for_each_setting(ini_text, &ctx->last_error, [&](const std::string& key, const std::string& value) {
         try {
             Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::Disable);
             staged.set_deserialize(key, value, subst);
+            return true;
         } catch (const std::exception& e) {
             ctx->last_error = "setting \"" + key + "\": " + e.what();
-            return -1;
+            return false;
         }
-    }
+    });
+    if (!ok) return -1;
     ctx->config = std::move(staged);
     sync_bed_from_config(ctx);
     // Layer height / infill now come from settings, not slicer_slice's legacy parameters.
@@ -2281,19 +2246,7 @@ int slicer_apply_settings(SlicerHandle handle, const char* ini_text) {
 
 const char* slicer_normalize_settings(const char* ini_text) {
     Slic3r::DynamicPrintConfig parsed;
-    std::istringstream in(ini_text ? ini_text : "");
-    std::string line;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start == std::string::npos || line[start] == '#' || line[start] == ';') continue;
-        size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        std::string key = line.substr(start, eq - start);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
-        std::string value = line.substr(eq + 1);
-        if (!value.empty() && value.front() == ' ') value.erase(0, 1);
-        if (is_preset_bookkeeping_key(key)) continue;
+    for_each_setting(ini_text, nullptr, [&](const std::string& key, const std::string& value) {
         try {
             // Renames PrusaSlicer keys (PrintConfigDef::handle_legacy) and
             // silently drops unknown ones.
@@ -2302,7 +2255,8 @@ const char* slicer_normalize_settings(const char* ini_text) {
         } catch (const std::exception&) {
             // A value libslic3r can't parse: dropped.
         }
-    }
+        return true;
+    });
     t_string_result = serialize_config(parsed);
     return t_string_result.c_str();
 }
@@ -2326,32 +2280,17 @@ int slicer_apply_tool_settings(SlicerHandle handle, int tool, const char* ini_te
     if (!ini_text) return set_err(ctx, "null settings");
     if (tool < 1 || tool >= SLICER_MIX_BASE) return set_err(ctx, "tool out of range");
     Slic3r::DynamicPrintConfig parsed;
-    std::istringstream in(ini_text);
-    std::string line;
-    int line_no = 0;
-    while (std::getline(in, line)) {
-        ++line_no;
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start == std::string::npos || line[start] == '#' || line[start] == ';') continue;
-        size_t eq = line.find('=');
-        if (eq == std::string::npos) {
-            ctx->last_error = "line " + std::to_string(line_no) + ": expected \"key = value\": " + line;
-            return -1;
-        }
-        std::string key = line.substr(start, eq - start);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
-        std::string value = line.substr(eq + 1);
-        if (!value.empty() && value.front() == ' ') value.erase(0, 1);
-        if (is_preset_bookkeeping_key(key)) continue;
+    const bool ok = for_each_setting(ini_text, &ctx->last_error, [&](const std::string& key, const std::string& value) {
         try {
             Slic3r::ConfigSubstitutionContext subst(Slic3r::ForwardCompatibilitySubstitutionRule::Disable);
             parsed.set_deserialize(key, value, subst);
+            return true;
         } catch (const std::exception& e) {
             ctx->last_error = "setting \"" + key + "\": " + e.what();
-            return -1;
+            return false;
         }
-    }
+    });
+    if (!ok) return -1;
     try {
         Slic3r::DynamicPrintConfig staged = ctx->config;
         for (const std::string& key : parsed.keys())

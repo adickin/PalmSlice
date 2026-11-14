@@ -5,17 +5,27 @@ final class ProfileStore: ObservableObject {
     @Published var profiles: [PrinterProfile] = []
     /// Remembered across launches.
     @Published var selectedProfileId: UUID? {
-        didSet { UserDefaults.standard.set(selectedProfileId?.uuidString, forKey: Self.selectedKey) }
+        didSet { defaults.set(selectedProfileId?.uuidString, forKey: Self.selectedKey) }
     }
     private static let selectedKey = "lastPrinterID"
+    /// A load or save problem to show the user.
+    @Published var storageError: String?
 
     var selectedProfile: PrinterProfile? {
         profiles.first { $0.id == selectedProfileId }
     }
 
-    private var storeURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("printer_profiles.json")
+    private var storeURL: URL { directory.appendingPathComponent("printer_profiles.json") }
+
+    /// Where the store's file and settings live: the app's Documents and
+    /// standard defaults, or a test's own.
+    private let directory: URL
+    private let defaults: UserDefaults
+
+    init(directory: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],
+         defaults: UserDefaults = .standard) {
+        self.directory = directory
+        self.defaults = defaults
     }
 
     // Bump this any time BuiltInProfiles changes in a way that would break
@@ -27,20 +37,25 @@ final class ProfileStore: ObservableObject {
     // MARK: Load / Save
 
     func load() {
-        let savedVersion = UserDefaults.standard.integer(forKey: Self.seedVersionKey)
+        let savedVersion = defaults.integer(forKey: Self.seedVersionKey)
         let versionMatch = savedVersion >= Self.seedVersion
 
-        if versionMatch,
-           let data = try? Data(contentsOf: storeURL),
-           let decoded = try? JSONDecoder().decode([PrinterProfile].self, from: data),
-           !decoded.isEmpty {
+        var decoded: [PrinterProfile] = []
+        if versionMatch {
+            switch ProfileFile.load([PrinterProfile].self, from: storeURL) {
+            case .loaded(let p): decoded = p
+            case .unreadable(let backup): storageError = ProfileFile.unreadableMessage("printers", backup: backup)
+            case .missing: break
+            }
+        }
+        if !decoded.isEmpty {
             profiles = decoded
         } else {
             // Built-ins are generated from OrcaSlicer presets; if those failed
             // to load, don't save an empty list — retry on the next launch.
             profiles = BuiltInProfiles.all
             if !profiles.isEmpty {
-                UserDefaults.standard.set(Self.seedVersion, forKey: Self.seedVersionKey)
+                defaults.set(Self.seedVersion, forKey: Self.seedVersionKey)
                 save()
             }
         }
@@ -48,7 +63,7 @@ final class ProfileStore: ObservableObject {
         let added = mergeInMissingBuiltIns()
         let migrated = retireCustomEnder3S1()
         let linked = linkSystemPresets()
-        let orca = OrcaMigration.once("printer") {
+        let orca = OrcaMigration.once("printer", defaults: defaults) {
             for i in profiles.indices {
                 profiles[i].extraSettings = OrcaMigration.normalize(profiles[i].extraSettings)
                 if let key = profiles[i].builtInKey, let name = BuiltInProfiles.systemPresetNames[key] {
@@ -61,7 +76,7 @@ final class ProfileStore: ObservableObject {
         // Built-in printers copied before the move kept PrusaSlicer's preset
         // values (start G-code, limits…); take OrcaSlicer's, keeping the name,
         // identity and verified state.
-        let refreshed = OrcaMigration.once("printerDefaults") {
+        let refreshed = OrcaMigration.once("printerDefaults", defaults: defaults) {
             for i in profiles.indices {
                 guard let key = profiles[i].builtInKey,
                       let entry = BuiltInProfiles.entries.first(where: { $0.key == key }),
@@ -77,7 +92,7 @@ final class ProfileStore: ObservableObject {
         }
 
         if selectedProfileId == nil,
-           let saved = UserDefaults.standard.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:)),
+           let saved = defaults.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:)),
            profiles.contains(where: { $0.id == saved }) {
             selectedProfileId = saved
         }
@@ -107,8 +122,9 @@ final class ProfileStore: ObservableObject {
     private static let retiredEnderKey = "retiredCustomEnder3S1"
 
     private func retireCustomEnder3S1() -> Bool {
-        guard !UserDefaults.standard.bool(forKey: Self.retiredEnderKey) else { return false }
-        UserDefaults.standard.set(true, forKey: Self.retiredEnderKey)
+        // The replacement comes from the presets: without them, retry next launch.
+        guard PresetLibrary.isLoaded, !defaults.bool(forKey: Self.retiredEnderKey) else { return false }
+        defaults.set(true, forKey: Self.retiredEnderKey)
 
         let replacement = BuiltInProfiles.entries[0]
         profiles.removeAll { p in
@@ -152,8 +168,8 @@ final class ProfileStore: ObservableObject {
     }
 
     func save() {
-        guard let data = try? JSONEncoder().encode(profiles) else { return }
-        try? data.write(to: storeURL, options: .atomic)
+        do { try ProfileFile.save(profiles, to: storeURL) }
+        catch { storageError = ProfileFile.saveFailedMessage("printers", error) }
     }
 
     // MARK: Mutations

@@ -2,6 +2,28 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-14 (bug audit fixes)
+
+- Build 1.0 (11) to TestFlight
+- **Fix: the OrcaSlicer project (.3mf) offered next to the G-code was never written** when the printer asks for thumbnails (OrcaSlicer's writer refuses a thumbnail without plate data); it's now saved without one. Found because project export failures are now reported
+- **Fix: scale size fields swapped Y and Z.** Typing a depth in mm changed the height and the reverse (scale bar, transform panel and the model list's size text)
+- **Fix: no layer preview for Bambu Lab printers.** The preview and summary now read OrcaSlicer's Bambu G-code tags (`; CHANGE_LAYER`, `; Z_HEIGHT:`, `; FEATURE:`, `; total estimated time:`) as well as the generic ones
+- **Fix: arcs missing from the preview.** `G2`/`G3` moves (arc fitting, on in 207 bundled process presets) are drawn as short segments instead of dropped
+- **Fix: Windows (CRLF) files.** An ASCII STL or `.ini` saved with Windows line endings loaded empty / as one garbage setting; `.ini` import also reads UTF-16 and Latin-1 files
+- **Fix: an unreadable profile file was overwritten with the defaults.** It's now kept as `<name>.bad-<date>` and you're told; failed saves are reported too. Printer tool settings decode with defaults for missing fields, so a new field can't make saved printers unreadable
+- **Models always sit on the bed**, as they slice: OrcaSlicer drops every object to the bed, so a model raised in the editor used to preview in the air and print on the bed. Z is shown, not edited; the Z move arrow and Drop to Bed buttons are gone (rotating or scaling keeps the model on the bed)
+- **Fix: two quick taps could start two slices** sharing one slicer context and output file
+- Fix: Cancel tapped before slicing began was ignored; Cancel while writing G-code showed an error instead of cancelling; a background-expiry cancel could reach a freed slicer context; the "Settings May Not Print Cleanly" alert could leave the slice waiting if dismissed another way
+- Fix: auto-orient could turn the wrong model if the selection changed while it worked; upload progress could stay on screen after an upload; Undo stayed enabled past the 64 strokes painting keeps; failures of thumbnails, wipe tower placement, the project 3MF and painting calls are reported
+- Fix: a filament colour over ~400 characters broke the slice statistics; number fields accepted "nan" and "inf"; new imports could land off a small bed (they're moved to free space on it); a custom export name with "/" or ":" made an invalid path; Arrange / stand-in colours / sub-layer profiles / model import could crash on empty or out-of-range input
+- OctoPrint / Moonraker: uploads wait up to 3 minutes for the host's answer (was 15 s), form fields with line breaks no longer corrupt the request, and the API key is saved to the Keychain when typing pauses, not on every keystroke
+- Migrations no longer mark themselves done when the OrcaSlicer presets failed to load, so they retry; the splash stays until the presets and profiles have loaded (at least 1 s) instead of a fixed 2 s
+- Temp files are cleaned up: cleared at launch, a removed model's files are deleted (unless a copy uses them), the previous slice's output and export copies go when you slice again, and painting keeps one saved file per model instead of one per part switch
+- "Save OrcaSlicer Project (.3mf)…" (was labelled PrusaSlicer)
+- Performance: the G-code preview reads the file once, parses bytes without per-line strings, and shows / hides only the layers between slider positions; STL imports are read and parsed once, colour-mode changes reuse the parsed mesh; drop-to-bed, footprints and auto-orient scan each distinct vertex once; painting reads the other parts' paint once per part instead of on every brush move and draws only the paint states in use; the 3D views render on change instead of every frame; preset settings are parsed once; slice progress updates are throttled; importing and converting a model for painting run off the main thread; BVH queries don't allocate per leaf pair (none of this was profiled)
+- Bridge: `SLICER_PAINT_UNDO_LIMIT`; `slicer_set_model_transform` reuses the per-object transform code; the three `.ini` line loops share one helper; `slicer_preset_name` returns a copy
+- Tests: Bambu tags, arcs, CRLF G-code / STL / `.ini`, store backup, cancel before slicing and during export, empty arrange outline, long colour in statistics, file-name sanitising. Tests no longer use one developer's files: `sphere.stl` and `20mm_cube.obj` (PrusaSlicer test data) and a generated `ranges.3mf` are in `Fixtures/`; the Cub parity test runs only with `PALMSLICE_TEST_DATA` set. Each test's files go in a scratch folder removed afterwards, and the store tests use their own folder and defaults instead of the app's
+
 ## 2026-11-14
 
 - Build 1.0 (10) to TestFlight

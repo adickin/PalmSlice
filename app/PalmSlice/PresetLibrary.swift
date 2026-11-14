@@ -75,9 +75,22 @@ enum PresetLibrary {
     /// A system preset's full settings, keyed by OrcaSlicer option name, with
     /// values serialized as OrcaSlicer writes them. Nil if there's no such preset.
     static func settings(_ type: PresetType, _ name: String) -> [String: String]? {
+        let key = "\(type.rawValue)/\(name)"
+        cacheLock.lock()
+        let cached = settingsCache[key]
+        cacheLock.unlock()
+        if let cached { return cached }
         guard isLoaded, let ini = slicer_preset_config(type.rawValue, name) else { return nil }
-        return SettingsText.parse(String(cString: ini))
+        let parsed = SettingsText.parse(String(cString: ini))
+        cacheLock.lock()
+        settingsCache[key] = parsed
+        cacheLock.unlock()
+        return parsed
     }
+
+    // Presets don't change once loaded, so each is parsed once.
+    private static let cacheLock = NSLock()
+    private static var settingsCache: [String: [String: String]] = [:]
 
     static func isCompatible(_ type: PresetType, _ name: String, printer: String) -> Bool {
         isLoaded && slicer_preset_is_compatible(type.rawValue, name, printer) == 1
@@ -278,16 +291,36 @@ enum PresetLibrary {
 enum SettingsText {
     static func parse(_ text: String) -> [String: String] {
         var out: [String: String] = [:]
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty, !trimmed.hasPrefix("#"), !trimmed.hasPrefix(";"),
-                  let eq = trimmed.firstIndex(of: "=") else { continue }
-            let key = trimmed[..<eq].trimmingCharacters(in: .whitespaces)
-            var value = String(trimmed[trimmed.index(after: eq)...])
-            if value.hasPrefix(" ") { value.removeFirst() }
-            out[key] = value
+        for line in lines(text) {
+            if let (key, value) = keyValue(line) { out[key] = value }
         }
         return out
+    }
+
+    /// The lines of a settings file, whatever its line endings ("\r\n" is one
+    /// Character, so splitting on "\n" alone would leave the file one line).
+    static func lines(_ text: String) -> [Substring] {
+        text.split(whereSeparator: \.isNewline)
+    }
+
+    /// "key = value" → (key, value); nil for blank, comment and other lines.
+    static func keyValue(_ line: Substring) -> (String, String)? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("#"), !trimmed.hasPrefix(";"),
+              let eq = trimmed.firstIndex(of: "=") else { return nil }
+        let key = trimmed[..<eq].trimmingCharacters(in: .whitespaces)
+        var value = String(trimmed[trimmed.index(after: eq)...])
+        if value.hasPrefix(" ") { value.removeFirst() }
+        return (key, value)
+    }
+
+    /// A settings file's text: UTF-8, else UTF-16 (with a BOM), else Latin-1,
+    /// which decodes any bytes.
+    static func decode(_ data: Data) -> String? {
+        if let s = String(data: data, encoding: .utf8) { return s }
+        if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]),
+           let s = String(data: data, encoding: .utf16) { return s }
+        return String(data: data, encoding: .isoLatin1)
     }
 
     static func serialize(_ settings: [String: String]) -> String {

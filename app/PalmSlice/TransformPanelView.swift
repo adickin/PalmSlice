@@ -32,7 +32,7 @@ struct FloatField: View {
 
     private func commit() {
         let s = text.replacingOccurrences(of: ",", with: ".")
-        if let v = Float(s) { value = v }
+        if let v = Float(s), v.isFinite { value = v }   // Float() also accepts "nan" and "inf"
         text = render(value)
     }
 }
@@ -107,19 +107,15 @@ struct TransformPanelView: View {
         Section("Move (mm)") {
             axisRow(label: "X", color: .red)   { FloatField(value: $transform.positionMM.x, fmt: "%g") }
             axisRow(label: "Y", color: .green) { FloatField(value: $transform.positionMM.y, fmt: "%g") }
-            axisRow(label: "Z", color: .blue)  { FloatField(value: $transform.positionMM.z, fmt: "%g") }
+            // Read-only: models always sit on the bed, as they slice.
+            axisRow(label: "Z", color: .blue)  {
+                Text(String(format: "%g", transform.positionMM.z)).foregroundStyle(.secondary)
+            }
 
             HStack(spacing: 12) {
                 rowButton("Center on Bed") {
                     transform.positionMM.x = 0
                     transform.positionMM.y = 0
-                }
-                rowButton("Drop to Bed") {
-                    if let info = meshInfo {
-                        transform = transform.droppedToBed(meshInfo: info)
-                    } else {
-                        transform.positionMM.z = 0
-                    }
                 }
             }
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
@@ -152,9 +148,9 @@ struct TransformPanelView: View {
         Section("Scale") {
             Toggle("Lock Proportions", isOn: $lockScale)
 
-            scaleRow(label: "X", color: .red,   baseSizeMM: meshInfo?.sizeMMX, binding: scaleXBinding)
-            scaleRow(label: "Y", color: .green, baseSizeMM: meshInfo?.sizeMMZ, binding: scaleYBinding)
-            scaleRow(label: "Z", color: .blue,  baseSizeMM: meshInfo?.sizeMMY, binding: scaleZBinding)
+            scaleRow(label: "X", color: .red,   baseSizeMM: meshInfo?.sizeMM.x, binding: scaleXBinding)
+            scaleRow(label: "Y", color: .green, baseSizeMM: meshInfo?.sizeMM.y, binding: scaleYBinding)
+            scaleRow(label: "Z", color: .blue,  baseSizeMM: meshInfo?.sizeMM.z, binding: scaleZBinding)
 
             HStack(spacing: 12) {
                 if meshInfo != nil {

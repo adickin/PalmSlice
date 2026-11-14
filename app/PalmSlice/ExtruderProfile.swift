@@ -11,3 +11,23 @@ struct ExtruderProfile: Codable, Identifiable {
     var startGCode: String = ""
     var endGCode: String = ""
 }
+
+extension ExtruderProfile {
+    // Every field falls back to its default, so adding a field doesn't make
+    // saved printers undecodable (ProfileFile would set the file aside).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = ExtruderProfile()
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? d.id
+        nozzleDiameter = try c.decodeIfPresent(Double.self, forKey: .nozzleDiameter) ?? d.nozzleDiameter
+        compatibleMaterialDiameters = try c.decodeIfPresent([Double].self, forKey: .compatibleMaterialDiameters)
+            ?? d.compatibleMaterialDiameters
+        offsetX = try c.decodeIfPresent(Double.self, forKey: .offsetX) ?? d.offsetX
+        offsetY = try c.decodeIfPresent(Double.self, forKey: .offsetY) ?? d.offsetY
+        coolingFanNumber = try c.decodeIfPresent(Int.self, forKey: .coolingFanNumber) ?? d.coolingFanNumber
+        extruderChangeDuration = try c.decodeIfPresent(Double.self, forKey: .extruderChangeDuration)
+            ?? d.extruderChangeDuration
+        startGCode = try c.decodeIfPresent(String.self, forKey: .startGCode) ?? d.startGCode
+        endGCode = try c.decodeIfPresent(String.self, forKey: .endGCode) ?? d.endGCode
+    }
+}

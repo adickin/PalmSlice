@@ -199,6 +199,8 @@ int slicer_check_slice_config(SlicerHandle handle,
 //   SceneKit Z  → -STL Y     (depth axis, sign-flipped)
 //
 // pos_x_mm / pos_z_mm: XY offset from bed centre in mm (SceneKit X / SceneKit Z).
+// There's no height: objects always sit on the bed (ensure_on_bed), and the
+// app keeps models there too (PlacedModel.transform).
 // rot_*_deg: ZYX Euler angles as used by SceneKit, in degrees.
 // scale_*: per-axis scale factors (SceneKit X/Y/Z).
 typedef struct {
@@ -413,6 +415,8 @@ int slicer_paint_brush(SlicerHandle handle, int facet, const float* point, const
 int slicer_paint_fill(SlicerHandle handle, int facet, const float* point, int state, float angle_deg, int smart);
 int slicer_paint_clear(SlicerHandle handle);
 // Undo (redo = 0) or redo (1) a stroke. Returns 1 if there was nothing to do.
+// Only the last SLICER_PAINT_UNDO_LIMIT strokes can be undone.
+#define SLICER_PAINT_UNDO_LIMIT 64
 int slicer_paint_undo(SlicerHandle handle, int redo);
 // Drops the stroke begun last (a touch that turned out to be a two-finger
 // gesture), leaving nothing to redo. Returns 1 if there was nothing to do.

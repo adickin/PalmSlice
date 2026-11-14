@@ -1,63 +1,55 @@
 import XCTest
 @testable import PalmSlice
 
-/// PrusaSlicer settings stored on objects in 3MF files (read as OrcaSlicer
-/// settings), using 3DLabPrint's
-/// Piper J-3 Cub project files (skipped when they aren't on this machine).
+/// PrusaSlicer settings stored on objects in 3MF files (read as OrcaSlicer settings).
 final class FileSettingsTests: XCTestCase {
-    private let cub = URL(fileURLWithPath: "/Users/adickin/ios-sources/test-data/PS_3MF")
-
-    private func cubFile(_ path: String) throws -> URL {
-        let url = cub.appendingPathComponent(path)
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path), "Cub 3MF files not available")
-        return url
-    }
 
     private func convert(_ url: URL) throws -> ConvertedModelObject {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir()
         let objects = try convertModelFile(at: url, outputDir: dir)
         XCTAssertEqual(objects.count, 1)
         return try XCTUnwrap(objects.first)
     }
 
+    /// ranges.3mf: a 20 mm cube with object settings, two height ranges, a
+    /// layer height profile and project settings (scripts/fixtures/make_3mf_fixtures.py).
     func testReadsRangesLayerHeightsAndProjectSettings() throws {
-        let aileron = try convert(try cubFile("wing/CUB aileron L1.3mf"))
-        let fs = try XCTUnwrap(aileron.fileSettings)
+        let object = try convert(Fixtures.url("ranges.3mf"))
+        let fs = try XCTUnwrap(object.fileSettings)
         XCTAssertEqual(fs.ranges.count, 2)
         XCTAssertEqual(fs.ranges[0].minZ, 0)
         XCTAssertEqual(fs.ranges[0].maxZ, 2)
         XCTAssertEqual(fs.ranges[0].settings["bottom_shell_layers"], "4")
+        XCTAssertEqual(fs.ranges[1].minZ, 15)
         XCTAssertEqual(fs.ranges[1].settings["top_shell_layers"], "3")
-        XCTAssertEqual(aileron.projectSettings?["slicing_mode"], "even_odd")
-        XCTAssertEqual(aileron.projectSettings?["print_settings_id"], "0.3 mm 3DLabPrint")
+        XCTAssertEqual(object.projectSettings?["slicing_mode"], "even_odd")
+        XCTAssertEqual(object.projectSettings?["print_settings_id"], "Fixture print")
 
-        let fuselage = try convert(try cubFile("fuselage/CUB fuselage 1.3mf"))
-        let heights = try XCTUnwrap(fuselage.fileSettings?.layerHeightRange)
-        XCTAssertEqual(heights.lowerBound, 0.07, accuracy: 0.001)
+        let heights = try XCTUnwrap(fs.layerHeightRange)
+        XCTAssertEqual(heights.lowerBound, 0.08, accuracy: 0.001)
 
-        let mount = try convert(try cubFile("accessories/CUB motor mount 16x19.3mf"))
-        XCTAssertEqual(mount.fileSettings?.objectSettings["sparse_infill_density"], "100%")
-        XCTAssertEqual(mount.fileSettings?.objectSettings["wall_loops"], "5")
+        XCTAssertEqual(fs.objectSettings["sparse_infill_density"], "100%")
+        XCTAssertEqual(fs.objectSettings["wall_loops"], "5")
     }
 
-    // Height ranges add the aileron's solid end caps; without them it's an
-    // open single-wall shell, so it uses less filament.
-    func testHeightRangesChangeTheSlice() throws {
-        let aileron = try convert(try cubFile("wing/CUB aileron L1.3mf"))
-        let with = try slice(aileron, useFileSettings: true)
-        let without = try slice(aileron, useFileSettings: false)
+    // The file's settings (solid infill, five walls, the ranges) use more
+    // filament than the profile alone.
+    func testFileSettingsChangeTheSlice() throws {
+        let object = try convert(Fixtures.url("ranges.3mf"))
+        let with = try slice(object, useFileSettings: true)
+        let without = try slice(object, useFileSettings: false)
         XCTAssertGreaterThan(try filament(with), try filament(without) * 1.02)
     }
 
-    // The variable layer height profile reaches the G-code: fuselage 1 goes
-    // down to 0.07 mm layers where the profile says so.
+    // The variable layer height profile reaches the G-code: 0.08 mm layers
+    // from 5 to 10 mm.
     func testVariableLayerHeightsReachTheGCode() throws {
-        let fuselage = try convert(try cubFile("fuselage/CUB fuselage 1.3mf"))
-        let heights = try slice(fuselage, useFileSettings: true)
+        let object = try convert(Fixtures.url("ranges.3mf"))
+        let heights = try slice(object, useFileSettings: true)
             .split(separator: "\n").filter { $0.hasPrefix(";HEIGHT:") }
             .compactMap { Double($0.dropFirst(8)) }
         XCTAssertLessThan(try XCTUnwrap(heights.min()), 0.1)
-        let flat = try slice(fuselage, useFileSettings: false)
+        let flat = try slice(object, useFileSettings: false)
             .split(separator: "\n").filter { $0.hasPrefix(";HEIGHT:") }
             .compactMap { Double($0.dropFirst(8)) }
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(flat.filter { $0 > 0.05 }.min()), 0.2)
@@ -78,8 +70,7 @@ final class FileSettingsTests: XCTestCase {
             XCTAssertEqual(slicer_set_object_file_settings(h, idx, fs.text()), 0, String(cString: slicer_last_error(h)))
         }
         XCTAssertEqual(slicer_slice(h, 0, 0), 0, String(cString: slicer_last_error(h)))
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).gcode")
-        defer { try? FileManager.default.removeItem(at: out) }
+        let out = scratchDir().appendingPathComponent("out.gcode")
         XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
         return try String(contentsOf: out, encoding: .utf8)
     }
@@ -92,15 +83,20 @@ final class FileSettingsTests: XCTestCase {
 
 /// End to end: a Cub part imported the PalmSlice way (profiles created from
 /// the file + per-part file settings) slices like the 3MF project itself
-/// read by OrcaSlicer.
+/// read by OrcaSlicer. 3DLabPrint's Piper J-3 Cub files can't be shipped in
+/// the repo: set PALMSLICE_TEST_DATA to the folder holding PS_3MF to run it
+/// (`TEST_RUNNER_PALMSLICE_TEST_DATA=… xcodebuild test`).
 final class ProjectParityTests: XCTestCase {
     func testCubPartsMatchPrusaSlicerProject() throws {
-        let root = URL(fileURLWithPath: "/Users/adickin/ios-sources/test-data/PS_3MF")
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: root.path), "Cub 3MF files not available")
+        guard let data = ProcessInfo.processInfo.environment["PALMSLICE_TEST_DATA"] else {
+            throw XCTSkip("PALMSLICE_TEST_DATA not set: the Cub parity test needs third-party files")
+        }
+        let root = URL(fileURLWithPath: data).appendingPathComponent("PS_3MF")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.path), "no PS_3MF in PALMSLICE_TEST_DATA")
         for part in ["wing/CUB aileron L1.3mf", "fuselage/CUB fuselage 1.3mf",
                      "accessories/CUB motor mount 16x19.3mf", "floats/CUB float L2.3mf"] {
             let file = root.appendingPathComponent(part)
-            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let tmp = scratchDir().appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: tmp) }
 

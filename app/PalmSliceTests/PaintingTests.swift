@@ -11,7 +11,7 @@ final class PaintingTests: XCTestCase {
     func testBrushOnImportedSTLStaysInDisplayFrame() throws {
         let cube = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("PalmSlice/Resources/cube.stl")   // 0…20 mm
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir().appendingPathComponent(UUID().uuidString)
         let native = try XCTUnwrap(importModelFile(at: cube, outputDir: dir).objects.first?.nativeURL)
         guard let h = slicer_create() else { return XCTFail("slicer_create") }
         defer { slicer_destroy(h) }
@@ -31,7 +31,7 @@ final class PaintingTests: XCTestCase {
     /// native 3MF on their own layers (colour paint untouched), reported on
     /// import, and the object still slices with supports on.
     func testSupportAndSeamPaintingRoundTrip() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir().appendingPathComponent(UUID().uuidString)
         let object = try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir).objects[0]
         let native = try XCTUnwrap(object.nativeURL)
         guard let h = slicer_create() else { return XCTFail("slicer_create") }
@@ -81,7 +81,7 @@ final class PaintingTests: XCTestCase {
     }
 
     func testBrushUndoSaveAndSlice() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dir = scratchDir().appendingPathComponent(UUID().uuidString)
         let file = try importModelFile(at: fixtures.appendingPathComponent("parts.3mf"), outputDir: dir)
         let object = file.objects[0]
         let native = try XCTUnwrap(object.nativeURL)

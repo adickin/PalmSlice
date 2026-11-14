@@ -26,7 +26,8 @@ struct GCodeSceneView: UIViewRepresentable {
         scnView.backgroundColor = UIColor(white: 0.10, alpha: 1)
         scnView.antialiasingMode = .multisampling4X
         scnView.allowsCameraControl = true
-        scnView.rendersContinuously = true
+        // Draws on scene, camera and gesture changes only; idle frames drained the battery.
+        scnView.rendersContinuously = false
 
         let ctrl = scnView.defaultCameraController
         ctrl.interactionMode = .orbitTurntable
@@ -139,6 +140,7 @@ struct GCodeSceneView: UIViewRepresentable {
                         nodes.append(node)
                     }
                     coord.layerNodes = nodes
+                    coord.resetLayerVisibility()
                     // Apply the current slider position (may have changed while building)
                     coord.applyLayerVisibility(upTo: coord.lastCurrentLayer)
                 }
@@ -166,10 +168,27 @@ final class GCodeCoordinator: NSObject {
     var lastBedX: Double = 0
     var lastBedY: Double = 0
 
+    /// Layers 0...shownUpTo are visible; nil = not known (new nodes).
+    private var shownUpTo: Int?
+
+    func resetLayerVisibility() { shownUpTo = nil }
+
+    /// Shows layers up to `index`: only the layers between the old and new
+    /// slider positions change, not every node on every tick.
     func applyLayerVisibility(upTo index: Int) {
-        for (i, node) in layerNodes.enumerated() {
-            node.isHidden = i > index
+        guard !layerNodes.isEmpty else { shownUpTo = nil; return }
+        let new = min(max(index, -1), layerNodes.count - 1)
+        guard let old = shownUpTo, old < layerNodes.count else {
+            for (i, node) in layerNodes.enumerated() { node.isHidden = i > new }
+            shownUpTo = new
+            return
         }
+        if new > old {
+            for i in (old + 1)...new { layerNodes[i].isHidden = false }
+        } else if new < old {
+            for i in (new + 1)...old { layerNodes[i].isHidden = true }
+        }
+        shownUpTo = new
     }
 }
 

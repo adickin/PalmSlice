@@ -152,31 +152,27 @@ struct TriangleBVH {
         let bLeaf = bNode.triCount > 0
 
         if aLeaf && bLeaf {
-            // Pre-transform B's leaf triangles once.
+            // Pre-transform B's leaf triangles once, into stack scratch space
+            // (no heap allocation per leaf pair).
             let bCount = Int(bNode.triCount)
-            var bTris = [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)]()
-            bTris.reserveCapacity(bCount)
             let bBaseIdx = Int(bNode.firstTri) * 3
-            for j in 0..<bCount {
-                let off = bBaseIdx + j * 3
-                bTris.append((
-                    transformPoint(other.triangles[off],     otherTransform),
-                    transformPoint(other.triangles[off + 1], otherTransform),
-                    transformPoint(other.triangles[off + 2], otherTransform)
-                ))
-            }
-            let aCount = Int(aNode.triCount)
-            let aBaseIdx = Int(aNode.firstTri) * 3
-            for i in 0..<aCount {
-                let off = aBaseIdx + i * 3
-                let v0 = triangles[off]
-                let v1 = triangles[off + 1]
-                let v2 = triangles[off + 2]
-                for (u0, u1, u2) in bTris {
-                    if triTriIntersect(v0, v1, v2, u0, u1, u2) { return true }
+            return withUnsafeTemporaryAllocation(of: SIMD3<Float>.self, capacity: bCount * 3) { bTris in
+                for k in 0..<(bCount * 3) {
+                    bTris.initializeElement(at: k, to: transformPoint(other.triangles[bBaseIdx + k], otherTransform))
                 }
+                let aCount = Int(aNode.triCount)
+                let aBaseIdx = Int(aNode.firstTri) * 3
+                for i in 0..<aCount {
+                    let off = aBaseIdx + i * 3
+                    let v0 = triangles[off]
+                    let v1 = triangles[off + 1]
+                    let v2 = triangles[off + 2]
+                    for j in 0..<bCount {
+                        if triTriIntersect(v0, v1, v2, bTris[j * 3], bTris[j * 3 + 1], bTris[j * 3 + 2]) { return true }
+                    }
+                }
+                return false
             }
-            return false
         }
 
         // Descend the side that has children. If both have children, descend

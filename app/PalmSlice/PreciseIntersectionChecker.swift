@@ -42,7 +42,7 @@ func preciseIntersectionResults(
             continue
         }
         var outside = false
-        for v in e.info.vertices {
+        for v in e.info.distinctVertices {
             let w = transformPoint(v, e.worldM)
             if w.x < -bedHX || w.x > bedHX || w.z < -bedHZ || w.z > bedHZ {
                 outside = true

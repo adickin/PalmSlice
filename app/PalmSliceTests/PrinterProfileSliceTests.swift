@@ -6,14 +6,13 @@ import XCTest
 final class PrinterProfileSliceTests: XCTestCase {
 
     func testEveryBuiltInPrinterSlices() throws {
-        let stl = "/Users/adickin/ios-sources/PrusaSlicer/resources/shapes/sphere.stl"
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: stl), "sample STL not available")
+        let stl = Fixtures.url("sphere.stl").path
 
         var failures: [String] = []
         for profile in BuiltInProfiles.all {
             guard let h = slicer_create() else { XCTFail("slicer_create"); return }
             defer { slicer_destroy(h) }
-            let out = FileManager.default.temporaryDirectory
+            let out = scratchDir()
                 .appendingPathComponent("\(profile.builtInKey ?? "x").gcode")
 
             let systemPreset = try XCTUnwrap(profile.systemPreset, "\(profile.name) has no PrusaSlicer preset")

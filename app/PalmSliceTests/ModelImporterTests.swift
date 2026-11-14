@@ -8,7 +8,7 @@ final class ModelImporterTests: XCTestCase {
         .deletingLastPathComponent().appendingPathComponent("Fixtures")
 
     private func outputDir() -> URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("import-test-" + UUID().uuidString)
+        scratchDir().appendingPathComponent("import-test-" + UUID().uuidString)
     }
 
     /// two_objects.3mf: a 20×20×40 "Tower" at (70, 120) and a 60×15×10 "Bar"
@@ -40,15 +40,13 @@ final class ModelImporterTests: XCTestCase {
     }
 
     func testOBJConverts() throws {
-        let obj = "/Users/adickin/ios-sources/PrusaSlicer/tests/data/20mm_cube.obj"
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: obj), "sample OBJ not available")
-        let objects = try convertModelFile(at: URL(fileURLWithPath: obj), outputDir: outputDir())
+        let objects = try convertModelFile(at: Fixtures.url("20mm_cube.obj"), outputDir: outputDir())
         XCTAssertEqual(objects.count, 1)
         XCTAssertEqual(try parseSTLMeshInfo(url: objects[0].url).sizeMMZ, 20, accuracy: 0.01)
     }
 
     func testCorruptFileReportsError() throws {
-        let bad = FileManager.default.temporaryDirectory.appendingPathComponent("broken.3mf")
+        let bad = scratchDir().appendingPathComponent("broken.3mf")
         try Data("not a zip".utf8).write(to: bad)
         XCTAssertThrowsError(try convertModelFile(at: bad, outputDir: outputDir()))
     }
@@ -56,9 +54,8 @@ final class ModelImporterTests: XCTestCase {
     /// The PrusaSlicer project file carries its own print config; it should be ignored
     /// and the geometry should still convert and slice.
     func testConvertedThreeMFSlices() throws {
-        var files = [fixtures.appendingPathComponent("two_objects.3mf")]
-        let prusa = URL(fileURLWithPath: "/Users/adickin/ios-sources/PrusaSlicer/tests/data/seam_test_object.3mf")
-        if FileManager.default.fileExists(atPath: prusa.path) { files.append(prusa) }
+        // ranges.3mf is a PrusaSlicer project, with print settings and height ranges.
+        let files = [fixtures.appendingPathComponent("two_objects.3mf"), fixtures.appendingPathComponent("ranges.3mf")]
 
         for file in files {
             let objects = try convertModelFile(at: file, outputDir: outputDir())
@@ -78,7 +75,7 @@ final class ModelImporterTests: XCTestCase {
             }
             XCTAssertEqual(slicer_slice(h, 0.2, 15), 0,
                            "\(file.lastPathComponent): \(String(cString: slicer_last_error(h)))")
-            let out = FileManager.default.temporaryDirectory.appendingPathComponent("import-test.gcode")
+            let out = scratchDir().appendingPathComponent("import-test.gcode")
             XCTAssertEqual(slicer_export_gcode(h, out.path), 0, String(cString: slicer_last_error(h)))
             let size = (try FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
             XCTAssertGreaterThan(size, 1000)
