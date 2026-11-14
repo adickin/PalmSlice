@@ -154,6 +154,19 @@ final class MaterialProfileStore: ObservableObject {
         rebuild()
     }
 
+    /// Keeps an edited OrcaSlicer filament as the user's own copy (OrcaSlicer's
+    /// aren't changed) and loads it in the tool it was edited for.
+    @discardableResult
+    func keepEdit(ofSystem draft: MaterialProfile, forTool tool: Int) -> UUID {
+        var copy = draft
+        copy.id = UUID()
+        copy.isSystem = false
+        if copy.name == MaterialProfile.system(draft.basePreset ?? "").name { copy.name = "My " + copy.name }
+        add(copy)
+        setMaterial(copy.id, forTool: tool)
+        return copy.id
+    }
+
     func update(_ profile: MaterialProfile) {
         guard !profile.isSystem, let idx = custom.firstIndex(where: { $0.id == profile.id }) else { return }
         custom[idx] = changesOnly(profile)

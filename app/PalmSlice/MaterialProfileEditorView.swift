@@ -268,13 +268,7 @@ struct MaterialProfileEditorView: View {
 
     private func save() {
         if draft.isSystem {
-            // OrcaSlicer's filaments aren't changed; the edit becomes the user's own.
-            var copy = draft
-            copy.id = UUID()
-            copy.isSystem = false
-            if copy.name == MaterialProfile.system(draft.basePreset ?? "").name { copy.name = "My " + copy.name }
-            materialProfileStore.add(copy)
-            materialProfileStore.setMaterial(copy.id, forTool: tool)
+            materialProfileStore.keepEdit(ofSystem: draft, forTool: tool)
         } else if mode == .add {
             materialProfileStore.add(draft)
         } else {
