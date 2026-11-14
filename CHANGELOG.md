@@ -4,6 +4,7 @@ All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and 
 
 ## 2026-11-14
 
+- **Fix: editing a material from T2's (or T3's…) sheet loaded the result in T1.** Changing an OrcaSlicer filament saves it as your own copy, and that copy now goes in the tool whose sheet you edited it from
 - **Slice panel fits the screen**: the expanded panel takes at most 75% of the window, its details scroll (sized to their content when they fit), and Slice / Export stay pinned below them, so the handle to close it is always reachable. It has a plain sheet background instead of the blur (a material's vibrancy hid secondary text and bordered buttons inside the scroll view)
 - **Whole bed in view on a phone**: in portrait, the bed and sliced preview fit their field of view to the screen's width (a 45° vertical view was only ~22° wide and cropped the bed's sides, hiding the wipe tower at its back corner)
 - After slicing, the status says where the prime tower is ("Prime tower: 35 × 4 mm at X 184, Y 184"); on a tool changer like the Snapmaker U1 it can be a thin strip

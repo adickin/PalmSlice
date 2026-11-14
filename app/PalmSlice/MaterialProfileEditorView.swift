@@ -4,6 +4,9 @@ struct MaterialProfileEditorView: View {
     enum Mode { case add, edit }
 
     let mode: Mode
+    /// The tool (1-based) whose sheet opened the editor; an edited OrcaSlicer
+    /// filament's copy is loaded in that tool.
+    let tool: Int
     @EnvironmentObject var materialProfileStore: MaterialProfileStore
     @EnvironmentObject var profileStore: ProfileStore
     @Environment(\.dismiss) private var dismiss
@@ -13,8 +16,9 @@ struct MaterialProfileEditorView: View {
     @State private var baseSettings: [String: String] = [:]
     @State private var showBasePicker = false
 
-    init(mode: Mode, profile: MaterialProfile = MaterialProfile()) {
+    init(mode: Mode, profile: MaterialProfile = MaterialProfile(), tool: Int = 1) {
         self.mode = mode
+        self.tool = tool
         _draft = State(initialValue: profile)
     }
 
@@ -270,7 +274,7 @@ struct MaterialProfileEditorView: View {
             copy.isSystem = false
             if copy.name == MaterialProfile.system(draft.basePreset ?? "").name { copy.name = "My " + copy.name }
             materialProfileStore.add(copy)
-            materialProfileStore.select(id: copy.id)
+            materialProfileStore.setMaterial(copy.id, forTool: tool)
         } else if mode == .add {
             materialProfileStore.add(draft)
         } else {

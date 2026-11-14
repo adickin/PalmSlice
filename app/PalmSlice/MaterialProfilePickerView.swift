@@ -68,7 +68,7 @@ struct MaterialProfilePickerView: View {
                 }
             )
             .sheet(item: $newProfile) { draft in
-                MaterialProfileEditorView(mode: .add, profile: draft)
+                MaterialProfileEditorView(mode: .add, profile: draft, tool: tool)
             }
             .sheet(isPresented: $showPresetPicker) {
                 PresetPickerView(type: .filament, printerPreset: profileStore.selectedProfile?.systemPreset) { name in
@@ -76,7 +76,7 @@ struct MaterialProfilePickerView: View {
                 }
             }
             .sheet(item: $profileToEdit) { profile in
-                MaterialProfileEditorView(mode: .edit, profile: profile)
+                MaterialProfileEditorView(mode: .edit, profile: profile, tool: tool)
             }
         }
     }
