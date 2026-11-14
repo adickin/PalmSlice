@@ -242,7 +242,7 @@ extension ModelPart.Kind {
     var takesTool: Bool { self == .part || self == .modifier }
 }
 
-private extension Int {
+extension Int {
     /// The object tool shown as T1 when it's the default (0).
     var toolDefaultingToOne: Int {
         get { self == 0 ? 1 : self }

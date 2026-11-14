@@ -1751,10 +1751,15 @@ struct ContentView: View {
         }
     }
 
-    /// Tools 1…N with their materials, flagging tools the plate doesn't use.
+    /// Tools 1…N with their materials, flagging tools the plate doesn't use,
+    /// then the tool the selected model prints with.
     @ViewBuilder
     private var toolStrip: some View {
         let used = toolPalette.physicalTools(plateTools)
+        Text("Loaded Filaments")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
         ForEach(1...toolCount, id: \.self) { tool in
             let material = materialProfileStore.material(forTool: tool)
             Button { materialPickerTool = MaterialPickerTool(tool: tool) } label: {
@@ -1772,6 +1777,19 @@ struct ContentView: View {
                     Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
                 }
             }
+            .disabled(isBusy)
+        }
+        // A tool row changes the filament for everything on that tool; an
+        // object gets another filament by printing with another tool.
+        if let id = selectedModelID, let model = modelBinding(id: id) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(model.wrappedValue.name) prints with")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                ToolChips(tool: model.extruder.toolDefaultingToOne, palette: toolPalette)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .disabled(isBusy)
         }
         if ToolMix.isSupported {

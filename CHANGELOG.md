@@ -2,6 +2,10 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-14
+
+- **Clearer per-object filament on multi-tool printers**: the tool rows are labelled "Loaded Filaments" (what's in each tool, for the whole plate), and a "<model> prints with" tool picker for the selected model sits under them, so an object gets another filament by printing with another tool. The tool's material sheet is titled "T*n* Loaded Filament" and says it applies to every object on that tool
+
 ## 2026-11-13
 
 - **Add modifiers** to a model (Parts & Tools → Add Modifier): a box, cylinder or sphere that changes settings (e.g. 100% infill around a screw hole) or the tool where it overlaps the model. Tap one to move and size it with the arrows in the 3D view; its detail screen sets shape, position and size (mm, in the model's frame), tool and settings. Modifiers follow the model's move, scale and rotation, and Duplicate / Fill Plate copies keep them

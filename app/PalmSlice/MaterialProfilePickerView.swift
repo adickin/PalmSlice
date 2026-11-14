@@ -33,7 +33,14 @@ struct MaterialProfilePickerView: View {
                         Label("All OrcaSlicer Filaments…", systemImage: "magnifyingglass")
                     }
                 } header: {
-                    Text("OrcaSlicer · \(profileStore.selectedProfile?.name ?? "this printer")")
+                    VStack(alignment: .leading, spacing: 8) {
+                        if toolCount > 1 {
+                            Text("The filament loaded in T\(tool), for every object that prints with T\(tool). To print one object in another filament, choose its tool under the tool list or in Parts & Tools.")
+                                .font(.footnote)
+                                .textCase(nil)
+                        }
+                        Text("OrcaSlicer · \(profileStore.selectedProfile?.name ?? "this printer")")
+                    }
                 }
                 Section {
                     ForEach(materialProfileStore.customProfiles) { row($0) }
@@ -47,7 +54,7 @@ struct MaterialProfilePickerView: View {
                 for profile in imported { materialProfileStore.add(profile) }
                 if let last = imported.last { choose(last.id) }
             }
-            .navigationTitle(toolCount > 1 ? "Tool \(tool) Material" : "Material Profile")
+            .navigationTitle(toolCount > 1 ? "T\(tool) Loaded Filament" : "Material Profile")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarItems(
                 leading: Button("Done") { dismiss() },
