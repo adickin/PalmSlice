@@ -2,6 +2,10 @@
 
 All notable changes to PalmSlice, harvested from [PROGRESS.md](PROGRESS.md) and commit history. Dates reflect when a feature was completed, not necessarily committed. Entries are grouped by date, most recent first.
 
+## 2026-11-15
+
+- **Support filament pickers.** On printers with more than one tool, the slice profile's Support section picks the tool for the support base / raft (`support_filament`) and for the interface (`support_interface_filament`), "Default" using whichever tool is already loaded on the layer, plus "Keep Interface Filament out of Base" (`support_interface_not_for_body`)
+
 ## 2026-11-14 (later)
 
 - Build 1.0 (12) to TestFlight

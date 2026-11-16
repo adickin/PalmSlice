@@ -110,6 +110,13 @@ struct SliceProfileEditorView: View {
                 set: { draft.setSlicerSetting(key, SlicerValue.float(Double(integer ? $0.rounded() : $0))) })
     }
 
+    /// A tool number setting (0 = Default); one past the printer's tools reads as Default, as the slicer treats it.
+    private func toolSetting(_ key: String) -> Binding<Int> {
+        Binding(get: { setting(key).flatMap { Int($0) }.flatMap { (1...toolCount).contains($0) ? $0 : nil } ?? 0 },
+                set: { draft.setSlicerSetting(key, String($0)) })
+    }
+    private var toolCount: Int { max(1, profileStore.selectedProfile?.numberOfExtruders ?? 1) }
+
     /// Wipe tower and ooze control, for printers with more than one tool.
     @ViewBuilder
     private var multiMaterialSection: some View {
@@ -345,7 +352,7 @@ struct SliceProfileEditorView: View {
 
     @ViewBuilder
     private var supportSection: some View {
-        Section("Support") {
+        Section {
             Toggle("Generate Support", isOn: $draft.generateSupport)
 
             if draft.generateSupport {
@@ -380,7 +387,27 @@ struct SliceProfileEditorView: View {
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
+                if toolCount > 1 {
+                    toolPicker("Base Filament", key: "support_filament")
+                    toolPicker("Interface Filament", key: "support_interface_filament")
+                    if toolSetting("support_interface_filament").wrappedValue > 0 {
+                        Toggle("Keep Interface Filament out of Base", isOn: boolSetting("support_interface_not_for_body", true))
+                    }
+                }
             }
+        } header: {
+            Text("Support")
+        } footer: {
+            if draft.generateSupport && toolCount > 1 {
+                Text("Default prints supports with whichever tool is already loaded on that layer, to save tool changes. Pick a tool to use a support material, e.g. for the interface only.")
+            }
+        }
+    }
+
+    private func toolPicker(_ title: String, key: String) -> some View {
+        Picker(title, selection: toolSetting(key)) {
+            Text("Default").tag(0)
+            ForEach(1...toolCount, id: \.self) { Text("T\($0)").tag($0) }
         }
     }
 
